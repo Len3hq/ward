@@ -73,6 +73,18 @@ function extractPair(text: string): string | undefined {
   return undefined;
 }
 
+/** The token a data / assessment request is *about* — a ticker or 0x address. */
+function extractSubject(text: string): string | undefined {
+  const keyed = text.match(
+    /\b(?:assess|check|analy\w*|audit|score|risk|about|on|for|is)\s+(?:the\s+|token\s+|a\s+)?(0x[a-fA-F0-9]{40}|[A-Z][A-Z0-9]{1,9})\b/,
+  );
+  if (keyed) return keyed[1]!.toUpperCase();
+  const address = text.match(/\b0x[a-fA-F0-9]{40}\b/);
+  if (address) return address[0];
+  const ticker = text.match(/\b[A-Z]{2,10}\b/);
+  return ticker ? ticker[0] : undefined;
+}
+
 /** Obvious cases — no LLM. Returns `null` when the text is ambiguous. */
 export function tableIntent(text: string): ParsedIntent | null {
   const t = text.toLowerCase().trim();
@@ -93,14 +105,14 @@ export function tableIntent(text: string): ParsedIntent | null {
     return { action_type: "swap", amount_usd: parseUsd(t), pair: extractPair(t), source: "table" };
   }
   if (/\bhire\b.*\b(agent|someone)\b|\bacp\b.*\bjob\b|\bpost\b.*\bacp\b/.test(t)) {
-    return { action_type: "acp_job", token: extractPair(t), source: "table" };
+    return { action_type: "acp_job", token: extractSubject(text), source: "table" };
   }
   if (
     /\b(risk\s*(score|assessment|check|rating)|is\s+\S+\s+(a\s+)?(rug|scam|safe|honeypot)|assess\b.*\btoken|audit\b.*\btoken|whale|smart\s*money|holder|inflow|outflow|token\s*(flow|analytics|price|risk)|on-?chain\s*data|premium\s*data|liquidity\s*depth)\b/.test(
       t,
     )
   ) {
-    return { action_type: "x402_data_purchase", token: extractPair(t), source: "table" };
+    return { action_type: "x402_data_purchase", token: extractSubject(text), source: "table" };
   }
   if (
     /\b(my|the)\b.*\b(limit|cap|balance|authorization|risk profile|spent|allowance)\b/.test(t) ||

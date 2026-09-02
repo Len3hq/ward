@@ -4,7 +4,16 @@ import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { interrupt } from "@langchain/langgraph";
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 
-import { isRevoked, read, readWallet, spentToday, type ActionType } from "../../../memory/index.ts";
+import {
+  isRevoked,
+  read,
+  readWallet,
+  spentToday,
+  trustScore,
+  type ActionType,
+} from "../../../memory/index.ts";
+import { acpProvider } from "../../acp/index.ts";
+import { loadConfig } from "../../config.ts";
 import { evaluateGate } from "../../execution/gate.ts";
 import { searchCatalog, type X402Endpoint } from "../../execution/catalog.ts";
 import { walletProvider } from "../../wallet/index.ts";
@@ -28,24 +37,25 @@ export async function confirmNode(
   }
 
   const action = intent.action_type as ActionType;
-  if (action === "acp_job") {
-    return {
-      messages: [new AIMessage("Hiring an agent to assess a token lands in the next build phase.")],
-    };
-  }
-
   const lastHuman = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
   const query = typeof lastHuman?.content === "string" ? lastHuman.content : "";
 
   // --- resolve the concrete action + its cost ---
   let endpoint: X402Endpoint | null = null;
+  let acpSubject: string | undefined;
+  let acpCounterparty: string | undefined;
   let amountUsd: number;
+
   if (action === "x402_data_purchase") {
     endpoint = await searchCatalog(`${query} ${intent.token ?? ""}`);
     if (!endpoint) {
       return { messages: [new AIMessage(`I don't have an x402 endpoint for that.`)] };
     }
     amountUsd = endpoint.cost_usd;
+  } else if (action === "acp_job") {
+    acpSubject = intent.token ?? intent.pair ?? "the token";
+    acpCounterparty = await acpProvider().preferredCounterparty("token_risk");
+    amountUsd = intent.amount_usd ?? loadConfig().acpBudgetUsd;
   } else {
     amountUsd = intent.amount_usd ?? 0;
     if (amountUsd <= 0) {
@@ -53,10 +63,18 @@ export async function confirmNode(
     }
   }
 
-  const summary =
-    action === "x402_data_purchase" && endpoint
-      ? `Buy "${endpoint.name}" (~$${endpoint.cost_usd})`
-      : describeIntent(intent);
+  let summary: string;
+  if (action === "x402_data_purchase" && endpoint) {
+    summary = `Buy "${endpoint.name}" (~$${endpoint.cost_usd})`;
+  } else if (action === "acp_job" && acpCounterparty) {
+    const trust = await trustScore(state.tgId, acpCounterparty);
+    const seen = record.acp_job_history.filter((j) => j.counterparty_id === acpCounterparty).length;
+    summary =
+      `Hire ${acpCounterparty} (trust ${trust.toFixed(2)}${seen ? `, ${seen} prior job(s)` : ", unproven"}) ` +
+      `to assess ${acpSubject} for ~$${amountUsd}`;
+  } else {
+    summary = describeIntent(intent);
+  }
 
   // --- gate (for the confirmation copy; execute re-checks on fresh reads) ---
   const spent = await spentToday(state.tgId);
@@ -113,10 +131,24 @@ export async function confirmNode(
       : `on-chain allowance $${Math.max(0, onchainAllowanceUsd - spent).toFixed(2)} remaining`;
   const prompt = `${summary}. $${spent.toFixed(2)} of your $${record.standing_caps.daily_limit_usd} daily cap used, $${memRemaining.toFixed(2)} left; ${onchainLine}. Confirm? (yes / no)`;
 
+  const confirmed = (): ConfirmedIntent => ({
+    id: intentId(state, config),
+    action_type: action,
+    amount_usd: amountUsd,
+    pair: intent.pair,
+    endpoint: endpoint
+      ? {
+          name: endpoint.name,
+          url: endpoint.url,
+          method: endpoint.method,
+          cost_usd: endpoint.cost_usd,
+        }
+      : undefined,
+    acp: acpSubject ? { subject: acpSubject } : undefined,
+  });
+
   if (!gate.needsApproval) {
-    return {
-      confirmedIntent: buildConfirmed(state, config, action, amountUsd, intent.pair, endpoint),
-    };
+    return { confirmedIntent: confirmed() };
   }
 
   const decision = interrupt({
@@ -131,39 +163,15 @@ export async function confirmNode(
   if (!decision.approved) {
     return { messages: [new AIMessage("Cancelled — nothing moved.")] };
   }
-  return {
-    confirmedIntent: buildConfirmed(state, config, action, amountUsd, intent.pair, endpoint),
-  };
+  return { confirmedIntent: confirmed() };
 }
 
-function buildConfirmed(
-  state: WardStateType,
-  config: LangGraphRunnableConfig | undefined,
-  action: ActionType,
-  amountUsd: number,
-  pair: string | undefined,
-  endpoint: X402Endpoint | null,
-): ConfirmedIntent {
+function intentId(state: WardStateType, config: LangGraphRunnableConfig | undefined): string {
   const thread = String(config?.configurable?.thread_id ?? "t");
   const lastHuman = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
   const query = typeof lastHuman?.content === "string" ? lastHuman.content : "";
-  const id = createHash("sha256")
+  return createHash("sha256")
     .update(`${thread}:${state.messages.length}:${query}`)
     .digest("hex")
     .slice(0, 32);
-
-  return {
-    id,
-    action_type: action,
-    amount_usd: amountUsd,
-    pair,
-    endpoint: endpoint
-      ? {
-          name: endpoint.name,
-          url: endpoint.url,
-          method: endpoint.method,
-          cost_usd: endpoint.cost_usd,
-        }
-      : undefined,
-  };
 }

@@ -25,6 +25,12 @@ export interface CdpConfig {
   walletSecret: string;
 }
 
+export interface AcpConfig {
+  walletId: string;
+  signerKey: string;
+  builderCode: string | undefined;
+}
+
 export interface Config {
   telegramBotToken: string;
   /** Optional: when absent, the agent node falls back to a deterministic memory recall. */
@@ -39,6 +45,11 @@ export interface Config {
   cdp: CdpConfig | undefined;
   /** Spend-permission network: base-sepolia (default) or base. */
   baseNetwork: "base" | "base-sepolia";
+  /** ACP counterparty market: "stub" (default, simulated) or "virtuals" (real, go/no-go). */
+  acpMode: "stub" | "virtuals";
+  acp: AcpConfig | undefined;
+  /** Default escrow budget for an ACP job, in USD. */
+  acpBudgetUsd: number;
   nodeEnv: NodeEnv;
 }
 
@@ -68,6 +79,15 @@ function cdpConfig(): CdpConfig | undefined {
   return undefined;
 }
 
+function acpConfig(): AcpConfig | undefined {
+  const walletId = optional("ACP_WALLET_ID");
+  const signerKey = optional("ACP_SIGNER_KEY");
+  if (walletId && signerKey) {
+    return { walletId, signerKey, builderCode: optional("ACP_BUILDER_CODE") };
+  }
+  return undefined;
+}
+
 export function loadConfig(): Config {
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
@@ -79,6 +99,9 @@ export function loadConfig(): Config {
     cdpProxyUrl: optional("CDP_PROXY_URL"),
     cdp: cdpConfig(),
     baseNetwork: optional("BASE_NETWORK") === "base" ? "base" : "base-sepolia",
+    acpMode: optional("ACP_MODE") === "virtuals" ? "virtuals" : "stub",
+    acp: acpConfig(),
+    acpBudgetUsd: Number(optional("WARD_ACP_BUDGET_USD") ?? "0.5") || 0.5,
     nodeEnv: nodeEnv(),
   };
 }

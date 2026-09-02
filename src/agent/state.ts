@@ -26,6 +26,7 @@ export interface ConfirmedIntent {
   amount_usd: number;
   pair?: string;
   endpoint?: { name: string; url: string; method: string; cost_usd: number };
+  acp?: { subject: string };
 }
 
 export const WardState = Annotation.Root({

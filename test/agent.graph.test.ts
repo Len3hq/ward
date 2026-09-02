@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildGraph } from "../src/agent/graph.ts";
+import { resetAcpProvider } from "../src/acp/index.ts";
 import { resetWalletProvider } from "../src/wallet/index.ts";
 import { backend, resetBackend } from "../memory/backend.ts";
 import { read, readWallet, writeWallet } from "../memory/store.ts";
@@ -23,13 +24,16 @@ beforeEach(async () => {
   process.env.TELEGRAM_BOT_TOKEN = "test-token";
   delete process.env.OPENAI_API_KEY;
   delete process.env.CDP_API_KEY_ID;
+  delete process.env.ACP_MODE;
   await resetBackend();
   resetWalletProvider();
+  resetAcpProvider();
 });
 
 afterEach(async () => {
   await resetBackend();
   resetWalletProvider();
+  resetAcpProvider();
   delete process.env.WARD_MEMORY_DIR;
   delete process.env.SIBYL_MEMORY_MODE;
   await rm(dir, { recursive: true, force: true });
@@ -276,6 +280,30 @@ describe("wallet & spend permission", () => {
     expect(reply).toMatch(/paused swap/i);
     const blocked = await say(graph, "w4", "swap $10 usdc for eth");
     expect(blocked).toMatch(/swap is paused/i);
+  });
+});
+
+describe("ACP hire + trust write-back", () => {
+  test("hires a counterparty, records the job, and the next hire cites the accumulated trust", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "acp1");
+
+    const first = await askAction(graph, "acp1", "hire an agent to assess PEPE");
+    expect(first).toMatch(/hire agent:\/\//i);
+    expect(first).toMatch(/unproven|trust 0\.50/i);
+
+    const done = await resume(graph, "acp1", true);
+    expect(done).toMatch(/hired agent:\/\//i);
+    expect(done).toMatch(/trust in this counterparty: 0\.50 →/i);
+
+    const record = await read(TG);
+    expect(record?.acp_job_history).toHaveLength(1);
+    expect(record?.spent_ledger.at(-1)?.action_type).toBe("acp_job");
+
+    // second hire, fresh thread — reads the trust score from Sibyl Memory first
+    const second = await askAction(graph, "acp2-fresh", "hire an agent to check RUGZ");
+    expect(second).toMatch(/1 prior job/i);
+    expect(second).not.toMatch(/unproven/i);
   });
 });
 

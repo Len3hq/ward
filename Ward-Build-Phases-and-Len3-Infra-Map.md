@@ -329,6 +329,15 @@ The agent posts a real ACP job, pays via escrow (settles on Base), and **remembe
 
 **Exit:** a job lifecycle completes; `acp_job_history` gains an entry; a second hire request reads the trust score and the agent narrates it.
 
+**Status: trust loop done (stub); real ACP is an open go/no-go spike.**
+- `src/acp/` — `AcpProvider` interface (`preferredCounterparty`, `hire`), selector on `ACP_MODE`. `StubAcpProvider` — a **`[SIMULATED]`-labelled** counterparty (`agent://ward-analyst.stub`), deterministic per-subject token-risk result, the tested path. `VirtualsAcpProvider` — real skeleton against `@virtuals-protocol/acp-node-v2` v2 (event-driven `AcpAgent` + `createJobByOfferingName`), dynamic-imported so the beta dep isn't installed; `CdpEvmProviderAdapter` (`acp/cdp-adapter.ts`) is a spike skeleton that throws.
+- `src/execution/acp.ts::runAcpJob` — the loop: `preferredCounterparty` → `trustScore` (pre-hire read) → `evaluateGate(acp_job)` → `hire` → `validateExternalData` on the result → `appendSpend(acp_job)` (shared ledger) → `appendAcpJob({ …, trust_delta })` → re-derived `trustScore` narrated. `trust_delta` = delivery+integrity signal (`src/acp/trust-delta.ts`), not correctness.
+- Graph: `confirm` acp_job branch cites `agent://… (trust 0.NN, N prior job(s))` before hiring; `execute` acp_job branch runs `runAcpJob`. Intent: `extractSubject()` pulls the ticker/0x-address.
+- `scripts/seed-acp.ts` — pre-seed a hindsight-evaluated job for the fresh-session demo.
+- `ACP.md` — the go/no-go checklist + counterparty-disclosure rules. `ACP_MODE=stub` default.
+- Tests: `acp.stub.test.ts` (provider + `jobTrustDelta` + `runAcpJob` write-back + pre-seed), + ACP hire flow in `agent.graph.test.ts`. 88 pass / 7 skip.
+- **Open**: the real spike (register at app.virtuals.io, implement the CDP adapter, one job end-to-end). If it doesn't settle → `ACP_MODE=stub`, cut the acp_job intent from the demo, keep the pre-seeded trust for the memory story. Never fake it.
+
 ---
 
 ### Phase 7 — Judge test harness, refusal path, revocation

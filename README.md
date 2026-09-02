@@ -10,13 +10,12 @@ chain would still permit a spend.
 
 ## Status
 
-**Phase 5 — Base execution.** Two judge-recognised Base actions on one
-memory-enforced ledger: an **x402 data purchase** (`get me a risk score on PEPE` →
-resolve the catalog → pay → return the data + basescan link) and a **capped swap**
-(`swap $30 usdc for eth`). Every execution re-runs `evaluateGate` on fresh reads;
-`spent_ledger` is one number across both; hitting the daily cap or the on-chain
-allowance blocks the next action of either type. The full, dependency-ordered build
-plan is in
+**Phase 6 — Virtuals ACP + trust write-back.** `hire an agent to assess PEPE` posts
+a job, pays via escrow, runs the result through `validateExternalData`, and
+**records whether the counterparty was worth trusting** — the next hire reads the
+re-derived trust score first. The trust loop works against a `[SIMULATED]`
+counterparty; the real Virtuals path is a go/no-go spike ([ACP.md](./ACP.md)). The
+full, dependency-ordered build plan is in
 [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
 ## Architecture
@@ -25,9 +24,10 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
 
 - **Agent** — LangGraph with a `MemorySaver` checkpointer for per-thread turn
   state · [`src/agent/`](./src/agent/). Nodes: guard, intent, router, onboarding,
-  agent, refuse, confirm, execute, wallet, approval, tools.
+  agent, refuse, confirm, execute, wallet, approval, tools. Execution paths:
+  x402 payment, capped swap, ACP hire — all on one memory-enforced ledger.
 - **Base execution** — the shared authorization gate + a static x402 catalog + the
-  x402 payment / swap paths · [`src/execution/`](./src/execution/)
+  x402 payment / swap / ACP-job paths · [`src/execution/`](./src/execution/)
 - **Wallet** — Coinbase CDP smart account (user) + CDP Server Account (agent
   spender) + a revocable on-chain USDC Spend Permission ·
   [`src/wallet/`](./src/wallet/), [WALLET.md](./WALLET.md). Falls back to a
@@ -40,8 +40,9 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   stdio server. One accumulating authorization entity per user (standing caps,
   spent ledger, revocation log, counterparty trust) + an append-only journal.
   Adapter and domain API in [`memory/`](./memory/).
-- **Counterparty market** — Virtuals ACP job with trust write-back _(Phase 6,
-  conditional on a go/no-go spike)_
+- **Counterparty market** — Virtuals ACP hire with trust write-back ·
+  [`src/acp/`](./src/acp/), [ACP.md](./ACP.md). Simulated counterparty by default;
+  the real path is a go/no-go spike.
 
 Every execution runs the same two-limit gate: `executable = min(memory cap
 remaining, on-chain allowance remaining)`.

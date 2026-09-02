@@ -9,6 +9,7 @@ import {
   spentToday,
 } from "../../../memory/index.ts";
 import { loadConfig } from "../../config.ts";
+import { runAcpJob } from "../../execution/acp.ts";
 import { txUrl } from "../../execution/explorer.ts";
 import { evaluateGate } from "../../execution/gate.ts";
 import { walletProvider } from "../../wallet/index.ts";
@@ -125,7 +126,17 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
       };
     }
 
-    return { ...clear, messages: [new AIMessage("ACP jobs land in the next build phase.")] };
+    if (confirmed.action_type === "acp_job") {
+      const run = await runAcpJob({
+        tgId: state.tgId,
+        subject: confirmed.acp?.subject ?? "the token",
+        budgetUsd: confirmed.amount_usd,
+        idempotencyKey: confirmed.id,
+      });
+      return { ...clear, messages: [new AIMessage(run.message)] };
+    }
+
+    return { ...clear, messages: [new AIMessage("Nothing to execute.")] };
   } catch (error) {
     if (confirmed.endpoint) {
       await appendX402(state.tgId, {
