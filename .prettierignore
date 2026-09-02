@@ -1,0 +1,7 @@
+node_modules
+dist
+bun.lock
+memory/users
+
+# reference spec — kept as authored
+Ward-Build-Phases-and-Len3-Infra-Map.md

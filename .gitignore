@@ -1,0 +1,26 @@
+# --- secrets & environment ---
+.env
+.env.*
+!.env.example
+
+# --- local memory data & key material (lives on disk, never in git) ---
+# Sibyl Memory itself stores under ~/.sibyl-memory/. These are the `fs` backend's files.
+memory/users/
+memory/state/
+memory/journal.ndjson
+*.pem
+*.key
+*.keystore
+
+# --- dependencies & build output ---
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- editor / OS ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- logs ---
+*.log
