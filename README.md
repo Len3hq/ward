@@ -10,12 +10,12 @@ chain would still permit a spend.
 
 ## Status
 
-**Phase 6 — Virtuals ACP + trust write-back.** `hire an agent to assess PEPE` posts
-a job, pays via escrow, runs the result through `validateExternalData`, and
-**records whether the counterparty was worth trusting** — the next hire reads the
-re-derived trust score first. The trust loop works against a `[SIMULATED]`
-counterparty; the real Virtuals path is a go/no-go spike ([ACP.md](./ACP.md)). The
-full, dependency-ordered build plan is in
+**Phase 7 — judge test harness + episodic memory.** The eligibility gate is now
+four first-class CI test files (below) that run on both memory backends; a rolling
+conversation summary is written to Sibyl Memory's HOT-state tier so memory
+_accumulates_ turn over turn beyond the caps ledger; `scripts/demo-deletion.sh`
+scripts the live deletion for the video. The full, dependency-ordered build plan is
+in
 [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
 ## Architecture
@@ -76,6 +76,31 @@ runs against the `fs` backend, so it needs no Sibyl install).
 Persisted in [Sibyl Memory](./SIBYL-MEMORY.md). The tier map, the record format,
 and which function touches which field are in
 [memory/README.md](./memory/README.md).
+
+**Written:** the `ward.authorization/<tg_id>` entity (caps, spent ledger, revocation
+log, ACP job history, x402 ledger); the `ward.wallet/<tg_id>` entity (addresses,
+spend permission); the `ward.conversation.<tg_id>` HOT-state summary; and a COLD
+journal event on every mutation.
+
+**Read on every action:** `read()` (missing → refuse), `spentToday()` vs the daily
+cap, `isRevoked()` fresh, the on-chain allowance, `trustScore()` before an ACP hire.
+
+## Eligibility gate — checkable from the repo
+
+The judges' own tests, as first-class CI test files:
+
+| File                                                           | Asserts                                                                                                                                 |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test/deletion-gate.test.ts`](./test/deletion-gate.test.ts)   | with the record a swap executes; remove `ward.authorization` from Sibyl Memory → the same request refuses, **no transaction broadcast** |
+| [`test/revocation.test.ts`](./test/revocation.test.ts)         | pause `swap` mid-session → the next swap in that session is refused (fresh `revocation_log` read)                                       |
+| [`test/onchain-revoke.test.ts`](./test/onchain-revoke.test.ts) | revoke the Spend Permission on-chain → the next spend refuses even with memory intact                                                   |
+| [`test/daily-cap.test.ts`](./test/daily-cap.test.ts)           | `spent_ledger` sum at/over `daily_limit_usd` → the next action of either type is blocked                                                |
+
+`test/deletion-gate.test.ts` runs on the `fs` backend in CI and on the real
+`sibyl-mcp` backend under `SIBYL_MEMORY_MCP_TEST=1`
+([`test/memory.sibyl-mcp.test.ts`](./test/memory.sibyl-mcp.test.ts)).
+[`scripts/demo-deletion.sh`](./scripts/demo-deletion.sh) performs the deletion live
+on Telegram for the demo video.
 
 ## Troubleshooting
 

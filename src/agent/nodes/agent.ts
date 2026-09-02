@@ -1,7 +1,7 @@
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 
-import { read, readWallet, spentToday } from "../../../memory/index.ts";
+import { read, readConversation, readWallet, spentToday } from "../../../memory/index.ts";
 import { loadConfig } from "../../config.ts";
 import { sanitizeUrls, wrapUserInput } from "../guardrails.ts";
 import { describeIntent } from "../intent.ts";
@@ -21,17 +21,27 @@ import { boundTools } from "../tools.ts";
  */
 export async function agentNode(state: WardStateType): Promise<Partial<WardStateType>> {
   const { tgId } = state;
-  const [record, wallet, spent] = await Promise.all([
+  const [record, wallet, spent, conversation] = await Promise.all([
     read(tgId),
     readWallet(tgId),
     spentToday(tgId),
+    readConversation(tgId).catch(() => null),
   ]);
 
   const context = buildAuthorizationContext(record, wallet, spent);
+  const conversationBlock = conversation
+    ? `=== Earlier in our conversation (from Sibyl Memory) ===\n${conversation.summary}`
+    : "";
   const config = loadConfig();
 
   if (!config.openaiApiKey) {
-    return { messages: [new AIMessage(deterministicRecall(context))] };
+    return {
+      messages: [
+        new AIMessage(
+          [deterministicRecall(context), conversationBlock].filter(Boolean).join("\n\n"),
+        ),
+      ],
+    };
   }
 
   const hints: string[] = [];
@@ -46,7 +56,9 @@ export async function agentNode(state: WardStateType): Promise<Partial<WardState
     );
   }
 
-  const system = [BASE_SYSTEM, context, hints.join("\n")].filter(Boolean).join("\n\n");
+  const system = [BASE_SYSTEM, context, conversationBlock, hints.join("\n")]
+    .filter(Boolean)
+    .join("\n\n");
 
   const model = new ChatOpenAI({
     model: config.models.agent,

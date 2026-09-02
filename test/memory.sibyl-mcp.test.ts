@@ -3,6 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { HumanMessage } from "@langchain/core/messages";
+
+import { buildGraph } from "../src/agent/graph.ts";
 import { backend, resetBackend } from "../memory/backend.ts";
 import { appendSpend, initialize, isRevoked, read, spentToday } from "../memory/store.ts";
 
@@ -83,6 +86,28 @@ describe.skipIf(!enabled)("Sibyl Memory MCP backend", () => {
     await resetBackend();
     expect(await read(TG)).toBeNull();
     expect(await isRevoked(TG, "swap")).toBe(false);
+  });
+
+  test("deletion gate at the graph level, on the real MCP backend", async () => {
+    const graph = buildGraph();
+    const tg = String(TG);
+    const thread = { configurable: { thread_id: `mcp-gate-${Date.now()}` } };
+    await initialize(TG, {
+      risk_label: "moderate",
+      per_action_limit_usd: 50,
+      daily_limit_usd: 100,
+    });
+
+    await backend().forgetEntity("ward.authorization", tg);
+    await resetBackend();
+
+    const result = await graph.invoke(
+      { messages: [new HumanMessage("swap $20 usdc for eth")], tgId: tg },
+      thread,
+    );
+    const reply = (result.messages.at(-1) as { content?: unknown }).content;
+    expect(String(reply)).toMatch(/no authorization/i);
+    expect(await read(TG)).toBeNull();
   });
 });
 

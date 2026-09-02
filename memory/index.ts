@@ -28,4 +28,7 @@ export {
   spentToday,
   readWallet,
   writeWallet,
+  readConversation,
+  writeConversation,
+  type ConversationMemory,
 } from "./store.ts";

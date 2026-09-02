@@ -356,6 +356,17 @@ Rehearse the judges' own eligibility test on the real demo surface, and make it 
 
 **Exit:** `bun test` covers deletion, memory revocation, on-chain revocation, and cap enforcement; the deletion demo is scripted and rehearsed on Telegram.
 
+**Status: done.**
+- `test/support.ts` — shared harness (`hermeticSetup`/`Teardown`, `say`/`askAction`/`resume`/`confirmAction`/`onboard`, `walletCalls()` — the stub providers now log method calls so "no tx broadcast" is a real assertion).
+- `test/deletion-gate.test.ts` — with record → swap executes + `spent_ledger` grows; `backend().forgetEntity("ward.authorization", …)` → same swap refuses, `walletCalls()` unchanged, `read()` still null, refusal doesn't leak the deleted caps. Also x402. Graph-level check on the live MCP backend in `memory.sibyl-mcp.test.ts`.
+- `test/revocation.test.ts` — pause `swap` mid-session → next swap refused, no broadcast; other action types still work; broad revoke pauses all three.
+- `test/daily-cap.test.ts` — swap+x402 on one cap; blocked at the cap, no broadcast; cheap purchase still fits; per-action limit trips first.
+- `test/onchain-revoke.test.ts` — permission `status: "revoked"` (memory intact) → refused; `revocation_log` empty, caps unchanged; re-grant unblocks.
+- `test/agent.summary.test.ts` — `maybeSummarize` writes/accumulates the HOT-state summary.
+- **Episodic memory (done, not optional):** `memory/store.ts::readConversation`/`writeConversation` (Sibyl HOT state `ward.conversation.<id>`), `src/agent/summary.ts::maybeSummarize` (every 4 turns; LLM or deterministic key-line fallback), gateway calls it fire-and-forget, `agent` node folds it into the system prompt.
+- `scripts/forget-auth.ts` (does the delete, prints before/after) + `scripts/demo-deletion.sh` (the on-camera choreography).
+- 101 pass / 8 skip (fs); 105 pass / 4 skip (+ live MCP).
+
 ---
 
 ### Phase 8 — Demo, README, submission

@@ -15,11 +15,15 @@ const COUNTERPARTY = "agent://ward-analyst.stub";
 export class StubAcpProvider implements AcpProvider {
   readonly kind = "stub" as const;
 
+  /** Test observability — a hire must never land here after a refusal. */
+  readonly calls: string[] = [];
+
   async preferredCounterparty(): Promise<string> {
     return COUNTERPARTY;
   }
 
   async hire(tgId: string, job: AcpJobRequest): Promise<AcpJobResult> {
+    this.calls.push("hire");
     // A deterministic, plausible token-risk assessment.
     const seed = parseInt(createHash("sha256").update(job.subject).digest("hex").slice(0, 8), 16);
     const score = seed % 100;

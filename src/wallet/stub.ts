@@ -32,6 +32,9 @@ export class StubWalletProvider implements WalletProvider {
   #network: "base" | "base-sepolia";
   #permissions = new Map<string, SpendPermissionState>();
 
+  /** Test observability: method names, in call order. A spend must never land here after a refusal. */
+  readonly calls: string[] = [];
+
   constructor(network: "base" | "base-sepolia") {
     this.#network = network;
   }
@@ -78,6 +81,7 @@ export class StubWalletProvider implements WalletProvider {
   }
 
   async payX402(tgId: string, request: X402Request): Promise<X402Result> {
+    this.calls.push("payX402");
     return {
       data: { simulated: true, endpoint: request.url, note: "stub provider — no real payment" },
       txHash: fakeHash(`x402-${tgId}-${request.url}-${Date.now()}`),
@@ -86,6 +90,7 @@ export class StubWalletProvider implements WalletProvider {
   }
 
   async swap(tgId: string, request: SwapRequest): Promise<SwapResult> {
+    this.calls.push("swap");
     const price = APPROX_USD_PER_TOKEN[request.buySymbol.toUpperCase()] ?? 1;
     const received = request.amountUsd / price;
     return {

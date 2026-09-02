@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { backend } from "./backend.ts";
 import {
   acpJobInputSchema,
@@ -312,4 +314,38 @@ export async function writeWallet(
     );
     return validated;
   });
+}
+
+// --- conversation summary (Sibyl Memory HOT state) ---
+
+const conversationSchema = z.object({
+  summary: z.string(),
+  turn_count: z.number().int().nonnegative(),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+export type ConversationMemory = z.infer<typeof conversationSchema>;
+
+function conversationKey(tgId: number | string): string {
+  return `ward.conversation.${normalizeTgId(tgId)}`;
+}
+
+/** The rolling episodic summary — accumulates turn over turn, survives `/newsession`. */
+export async function readConversation(tgId: number | string): Promise<ConversationMemory | null> {
+  const raw = await backend().getState(conversationKey(tgId));
+  if (raw === null || raw === undefined) return null;
+  return conversationSchema.parse(raw);
+}
+
+export async function writeConversation(
+  tgId: number | string,
+  summary: string,
+  turnCount: number,
+): Promise<ConversationMemory> {
+  const value = conversationSchema.parse({
+    summary,
+    turn_count: turnCount,
+    updated_at: nowIso(),
+  });
+  await backend().setState(conversationKey(tgId), value);
+  return value;
 }

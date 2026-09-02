@@ -1,8 +1,10 @@
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import { Command } from "@langchain/langgraph";
 import { Context, Telegraf } from "telegraf";
 
 import type { WardGraph } from "../agent/graph.ts";
+import { maybeSummarize } from "../agent/summary.ts";
 import { BRAND } from "../config.ts";
 
 /**
@@ -87,6 +89,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       }
       s.awaiting = undefined;
       await runGraph(ctx, chatId, graph, config, new Command({ resume: { approved } }), s, thread);
+      await refreshSummary(graph, config, String(ctx.from.id));
       return;
     }
 
@@ -99,9 +102,25 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       s,
       thread,
     );
+    await refreshSummary(graph, config, String(ctx.from.id));
   });
 
   return bot;
+}
+
+/** Fire-and-forget episodic-memory refresh after a turn (Sibyl Memory HOT state). */
+async function refreshSummary(
+  graph: WardGraph,
+  config: { configurable: { thread_id: string } },
+  tgId: string,
+): Promise<void> {
+  try {
+    const snapshot = await graph.getState(config);
+    const messages = (snapshot.values as { messages?: BaseMessage[] }).messages ?? [];
+    await maybeSummarize(tgId, messages);
+  } catch (error) {
+    console.error("summary refresh failed:", error);
+  }
 }
 
 async function runGraph(
