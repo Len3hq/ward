@@ -44,7 +44,7 @@ Len3 and Ward share a shape (personal crypto agent, chat surface, pays for premi
 | `backend/src/services/x402_client.py` + `catalog_provider.py` | **ADAPT** | The orchestration: request → `402` → parse `PaymentRequirements` → pay → retry with proof header → extract receipt → update trust signals; the env-driven catalog concept | Replace the Solana/Privy transfer with the **official Base x402 client** (`x402-fetch` / `x402-axios`, EIP-3009 `transferWithAuthorization`, Coinbase facilitator settling on Base), funded from the agent's CDP Server Wallet. Replace pgvector catalog search with a static `x402-catalog.json` + substring match. Keep the trust-score update (§7). |
 | x402 trust scoring (`x402_service` trust_tier / trust_score: tier base + success ratio × 30 + bonuses) | **ADAPT** | The formula | Reuse for both x402 endpoints and ACP counterparties; store the counters in memory, derive `trust_score` on read. |
 | `backend/src/services/privy/*` (server-wallet create, sign, transfer) | **ADAPT → Coinbase CDP** | The *pattern* only — a provider-managed MPC wallet the agent controls, plus a facilitator/relayed-payment flow | Same shape, different provider: **Coinbase CDP Server Wallet** for the agent spender; the user side is a **CDP Embedded Wallet**. See §4. |
-| `agent/src/config.ts` | **VENDOR** | Env-config loader + `MODELS` map + brand constants pattern | Trim to the models we use. |
+| `agent/src/config.ts` | **VENDOR** | Env-config loader + `MODELS` map + brand constants pattern | Trim to the models we use — **agent + guard both `gpt-4o-mini`** (OpenAI). Also carries `CDP_PROXY_URL` (§4 geoblock note). |
 | `agent/src/prompts/` | **ADAPT** | System-prompt structure (persona + profile + context + intent hint), onboarding question pattern | Rewrite content for Ward. Onboarding asks `risk_label` + `per_action_limit_usd` + `daily_limit_usd` once. |
 | `agent/src/memory/session_summary.ts` | **VENDOR (optional — Phase 7)** | Per-user buffer → idle-triggered LLM summary → append to durable memory | Write the summary to Sibyl Memory's **HOT state** tier (`memory_set_state`, key `ward.conversation.<id>`) instead of a vector doc. Strengthens the "memory accumulates" story for the 40-pt line. |
 | `agent/src/evals/` | **ADAPT** | The behavioural eval-harness pattern | Becomes the judge-facing deletion-gate test harness (§8). |
@@ -155,7 +155,7 @@ Dependency-ordered. Phases 1 and the ACP spike (Phase 6) should start together �
 ### Phase 0 — Repo & skeleton
 
 - New public GitHub repo, `LICENSE` (MIT), `README.md` stub, `ATTRIBUTION.md` stub.
-- Bun + TypeScript. Deps: `@langchain/langgraph`, `@langchain/core`, `@langchain/anthropic`, `telegraf`, `zod`, `viem`, `@coinbase/cdp-sdk`, `x402-fetch` (+ `x402` core), `@modelcontextprotocol/sdk` (Sibyl Memory MCP client), `dotenv`.
+- Bun + TypeScript. Deps: `@langchain/langgraph`, `@langchain/core`, `@langchain/openai` (agent LLM = **`gpt-4o-mini`**), `telegraf`, `zod`, `viem`, `@coinbase/cdp-sdk`, `x402-fetch` (+ `x402` core), `@modelcontextprotocol/sdk` (Sibyl Memory MCP client), `dotenv`.
 - **Sibyl Memory account:** `pip install 'sibyl-memory-cli[mcp]'` (Python 3.10+), `sibyl init` (browser activation), `sibyl status` (confirm Pro tier + DB path). Documented in `SIBYL-MEMORY.md`.
 - `.env.example` (no secrets); `.gitignore` covers `.env`, the `fs` backend's local data (`memory/users/`, `memory/state/`, `memory/journal.ndjson`), any key material.
 - **First real commit = the memory module (Phase 1)**, so the history shows memory came first.
@@ -224,6 +224,8 @@ The LangGraph scaffold running on Sibyl Memory (via `memory/store.ts`).
 
 **Exit:** in a fresh Telegram chat the agent onboards a user, writes the `ward.authorization` entity to Sibyl Memory, and after `/newsession` still recalls the caps from it.
 
+**Status: done.** `src/agent/` — `state.ts`, `graph.ts` (`guard → router → (onboarding | agent | refuse)`, `agent ⇄ tools`, `agent → approval → tools`; `MemorySaver`), `prompts.ts` (persona + onboarding Qs + answer parsing + the authorization context block), `guardrails.ts` (explicit-injection hard block only — rest is Phase 3), `tools.ts` (one read-only `read_authorization` tool, `tgId` bound per-call not model-visible), nodes for guard / router / onboarding / agent / refuse / approval. `src/telegram/gateway.ts` — minimal message→graph→reply bridge with `/newsession` (Phase 3 vendors the full gateway on top). Agent LLM = **`gpt-4o-mini`** (`@langchain/openai`); agent node falls back to deterministic memory recall without `OPENAI_API_KEY`. `src/net.ts` — `installCdpProxy()` routes only `*.coinbase.com` through `CDP_PROXY_URL` (geoblock workaround, no-op when unset). `test/agent.graph.test.ts` — onboarding, fresh-session recall, deletion gate → refuse, injection block. 35 pass / 4 skip. Live LLM path not yet exercised (no key on the dev box).
+
 ---
 
 ### Phase 3 — Telegram gateway, intent parsing, guardrails
@@ -246,6 +248,8 @@ The trigger surface and the input-validation boundary.
 ### Phase 4 — Wallet & authorization layer (Coinbase CDP + Spend Permissions)
 
 **Len3 inputs (ADAPT → Coinbase):** `services/privy/*` (the managed-MPC-wallet + relayed-payment *pattern*).
+
+**Geoblock note:** Coinbase's API (`api.cdp.coinbase.com`, the x402 facilitator) geoblocks some regions. `src/net.ts::installCdpProxy()` (already wired into the entrypoint) patches `globalThis.fetch` so only `*.coinbase.com` requests route through `CDP_PROXY_URL` — set it for local dev in a blocked region, leave it unset on Railway. The `@coinbase/cdp-sdk` `CdpClient` has no `fetch` option, so the global patch is the injection point; it must run before the first CDP call (it does — at boot).
 
 **Build (`wallet/`):**
 - `user-wallet.ts` — CDP Embedded Wallet: generate the sign-in link, resolve the callback, create/fetch the user's smart account, persist the address via `writeWallet` (the `ward.wallet` entity).
@@ -415,6 +419,7 @@ README points at these by path so the eligibility gate is checkable from the rep
 |---|---|---|
 | ACP integration difficulty (two-sided, third-party) | Phase 6 spike | Hard go/no-go up front; cut cleanly, never fake |
 | Wallet-connect / Spend Permission not solid | Phase 4 | Keep the single agent-owned CDP Server Wallet path working as a fallback; don't ship it as the story |
+| Coinbase / CDP geoblock in the dev region | Phase 4 | `src/net.ts::installCdpProxy()` — `*.coinbase.com` via `CDP_PROXY_URL` for local dev; unset on Railway (non-blocked region). Extend the host matcher if the x402 facilitator is off `*.coinbase.com`. |
 | Untrusted external input → executor | Phase 3 | `validateExternalData()` boundary; stated aloud in the pitch as the real security line |
 | Testnet DEX liquidity for the swap | Phase 5 | Decide fallback (WETH wrap / self-deployed pool) early; x402 is the safer primary Base action |
 | Static memory that passes the gate but scores poorly | Phase 1 + Phase 7 optional | Accumulating ledgers + optional conversation-memory accumulation |

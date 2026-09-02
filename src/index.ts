@@ -1,26 +1,24 @@
-import { Telegraf } from "telegraf";
+import { buildGraph } from "./agent/graph.ts";
 import { loadConfig } from "./config.ts";
+import { installCdpProxy } from "./net.ts";
+import { createGateway } from "./telegram/gateway.ts";
 
 /**
- * Ward — dev entrypoint (Phase 0).
- *
- * Connects to Telegram over long-polling and echoes any text message back. The
- * graph, memory layer, and execution engine are wired in over Phases 1–6; this
- * file only proves the process starts and the chat surface is live.
+ * Ward entrypoint. Builds the graph and starts the Telegram bridge.
  */
-
 async function main(): Promise<void> {
   const config = loadConfig();
-  const bot = new Telegraf(config.telegramBotToken);
-
-  bot.on("text", async (ctx) => {
-    await ctx.reply(`Ward (Phase 0) is alive. You said: ${ctx.message.text}`);
-  });
+  installCdpProxy();
+  const graph = buildGraph();
+  const bot = createGateway(config.telegramBotToken, graph);
 
   const me = await bot.telegram.getMe();
-  console.log(`Ward connected to Telegram as @${me.username} (${config.nodeEnv}, long-polling).`);
+  console.log(
+    `Ward connected to Telegram as @${me.username} ` +
+      `(${config.nodeEnv}, model ${config.models.agent}` +
+      `${config.openaiApiKey ? "" : " — NO KEY, deterministic recall only"}).`,
+  );
 
-  // bot.launch() resolves only once the bot stops; run it in the background.
   void bot.launch();
 
   const stop = (signal: string) => {
