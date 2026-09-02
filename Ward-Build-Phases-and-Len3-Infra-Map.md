@@ -378,6 +378,14 @@ Rehearse the judges' own eligibility test on the real demo surface, and make it 
 - Final secret sweep: no keys anywhere in history.
 - PMF section — honest evidence or absent.
 
+**Status: repo artifacts done; video + live-verification + build-in-public are operator tasks.**
+- `README.md` rewritten as a submission README: the **"How memory is load-bearing"** table (field → where read → what it changes → deleted →) is the grep-findable section; partner-stack status table; honest "everything runs on stubs without keys" line; PMF section (honest, no numbers).
+- `ATTRIBUTION.md` filled — the adapted Len3 components by Ward file + Len3 component + what carried over; libraries/services listed; Len3hq sign-off noted.
+- `DEMO.md` — the 7-beat 2-5 min video script with exact Telegram transcripts + the `scripts/forget-auth.ts` / `seed-acp.ts` commands + the "cut the ACP beat / don't run the stub on camera" instruction.
+- `SUBMISSION.md` — the checklist (repo artifacts checked, video/live-verify/posts unchecked), the two organizer questions, the submission-form answers (persisted / recalled / how-it-changes-a-decision / partner stacks), two build-in-public post drafts (Base + Virtuals), the honest PMF paragraph.
+- **Secret sweep: clean.** Working tree + all 7 commits scanned — no keys, no private key material, no local memory data tracked. `.env` git-ignored; only `.env.example`. (One benign hit: `WALLET.md` has `CDP_API_KEY_SECRET=...` as a literal placeholder.)
+- **Remaining (operator):** record the video; `WARD_CDP_TEST=1` + one real x402 + one real swap on Base Sepolia; the ACP go/no-go spike; post the two build-in-public posts; email the two organizer questions.
+
 ---
 
 ## 6. Phase → rubric mapping
@@ -473,9 +481,10 @@ README points at these by path so the eligibility gate is checkable from the rep
 | Coinbase / CDP geoblock in the dev region | Phase 4 | `src/net.ts::installCdpProxy()` — `*.coinbase.com` via `CDP_PROXY_URL` for local dev; unset on Railway (non-blocked region). Extend the host matcher if the x402 facilitator is off `*.coinbase.com`. |
 | Untrusted external input → executor | Phase 3 | `validateExternalData()` boundary; stated aloud in the pitch as the real security line |
 | Testnet DEX liquidity for the swap | Phase 5 | Decide fallback (WETH wrap / self-deployed pool) early; x402 is the safer primary Base action |
-| Static memory that passes the gate but scores poorly | Phase 1 + Phase 7 optional | Accumulating ledgers + optional conversation-memory accumulation |
-| Same-team ACP counterparty reading as self-dealing | Phase 6 | Prefer an existing external agent; disclose the fallback plainly |
-| Len3 IP / attribution | Phase 0 + Phase 8 | Len3hq sign-off; `ATTRIBUTION.md` listing every vendored file |
+| Static memory that passes the gate but scores poorly | Phase 1 + 7 | Four accumulating ledgers (`spent_ledger`, `revocation_log`, `acp_job_history`, `x402_ledger`) + the `ward.conversation` HOT-state episodic summary — done, not optional |
+| Same-team ACP counterparty reading as self-dealing | Phase 6 | Prefer an existing external agent; stub is `[SIMULATED]`-labelled and never shown as real; fallback disclosed in `ACP.md` + README |
+| Len3 IP / attribution | Phase 0 + 8 | `ATTRIBUTION.md` written — components by Ward file, no verbatim copies; Len3hq sign-off still to be recorded |
+| CDP / x402 / ACP paths not live-verified (no keys during the build) | Phase 4–6 + 8 | Every SDK surface isolated in one file per integration (`wallet/cdp.ts`, `acp/virtuals.ts`); opt-in live tests (`WARD_CDP_TEST`, `WARD_CDP_TEST`+facilitator, `ACP_MODE=virtuals`); deterministic stubs are the demo-day hedge, disclosed honestly |
 | Sibyl Memory MCP wire contract / plugin upgrade breaking calls | Phase 1 | Contract **verified against live `sibyl-memory-mcp` 0.2.0**; `sibyl-mcp.ts` isolates all tool names / arg keys in one map; `SIBYL_MEMORY_MCP_TEST=1 bun test` re-checks after any upgrade; `fs` backend is the demo-day hedge |
 | Overclaiming custody | Phase 4 + Phase 8 | State plainly: managed-MPC wallets (Coinbase CDP) + an on-chain Spend Permission — non-custodial and revocable, not an audited production custody stack |
 
@@ -483,12 +492,17 @@ README points at these by path so the eligibility gate is checkable from the rep
 
 ## 10. Open items
 
-- [ ] Confirm with organizers: does a failed deletion gate zero the whole score or just the 40-pt line?
-- [x] LICENSE: MIT. Sibyl Memory: use the official `sibyl-memory-cli[mcp]` plugin as the persistence layer (resolved 2026-09-02).
-- [x] Verify the `memory_*` wire contract against a live server — done against `sibyl-memory-mcp` 0.2.0 (`SIBYL_MEMORY_MCP_TEST=1 bun test` passes). Remaining: `sibyl init` for Pro-tier activation before submission.
-- [ ] Len3hq IP sign-off on vendoring the named files.
+All code phases (0–8 repo artifacts) are done. What's left is operator/verification
+work — see `SUBMISSION.md` for the tracked checklist.
+
+- [ ] Email the organizers: does a failed deletion gate zero the whole score or just the 40-pt line? (LICENSE = MIT, already in place.)
+- [x] LICENSE: MIT. Sibyl Memory = the official `sibyl-memory-cli[mcp]` plugin (resolved 2026-09-02).
+- [x] `memory_*` wire contract verified against live `sibyl-memory-mcp` 0.2.0. Remaining: `sibyl init` for Pro-tier activation before submission.
+- [x] Len3 attribution written (`ATTRIBUTION.md` — components by file, no verbatim copies). Remaining: Len3hq sign-off on record.
+- [x] Secret sweep — clean (working tree + all commits).
 - [ ] Confirm hackathon rules on repo creation date / forks.
-- [ ] Verify each vendored file isn't coupled to Postgres/Redis (spot-checked in §2: `approval.ts`, `guardrails.ts`, `telegram.ts`, `intentTables.ts`, `config.ts` are clean; `graph/` needs the checkpointer swap; the x402 + Privy pieces are Python and get ported, not copied).
-- [ ] Coinbase CDP: API keys, Embedded Wallet + Server Wallet SDK access, Base network support, Spend Permission Manager contract address on the target network.
-- [ ] Base: RPC endpoint, USDC address, a working DEX router with liquidity, an x402 endpoint that accepts Base payments, Coinbase x402 facilitator availability.
-- [ ] Virtuals ACP: SDK access, network support, an existing counterparty agent to hire.
+- [ ] Record the 2–5 min demo video (`DEMO.md`).
+- [ ] Coinbase CDP: get API keys; `WARD_CDP_TEST=1 bun test test/wallet.cdp.test.ts` to confirm the SDK field names; note the Spend Permission Manager address on Base Sepolia.
+- [ ] Base: RPC endpoint; one real x402 payment + one real capped swap on Base Sepolia (`WARD_CDP_TEST`-style); an x402 endpoint that accepts Base payments (swap the placeholder URLs in `memory/catalog/x402-catalog.json`); decide the swap fallback (WETH wrap) if testnet DEX liquidity is thin.
+- [ ] Virtuals ACP: the go/no-go spike (`ACP.md`) — register at app.virtuals.io, implement `src/acp/cdp-adapter.ts`, one job end-to-end. If it doesn't settle → `ACP_MODE=stub`, cut the ACP demo beat.
+- [ ] Two build-in-public posts (drafts in `SUBMISSION.md`), tagging Base and Virtuals.

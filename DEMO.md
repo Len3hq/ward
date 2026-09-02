@@ -1,0 +1,145 @@
+# Demo — 2 to 5 minutes
+
+**One arc:** _recall → decide → pay/hire → execute — and none of it works without
+Sibyl Memory._
+
+Two terminals + Telegram open. Show a clock or timestamp overlay for the
+fresh-session moment.
+
+## Setup (off camera)
+
+```sh
+set -a; source .env; set +a        # TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, CDP_*, ACP_MODE
+sibyl status                        # confirm Pro tier + DB path (or SIBYL_MEMORY_MODE=fs)
+bun run scripts/seed-acp.ts <YOUR_TG_ID>   # one already-evaluated ACP job, so trust isn't 0.50 on camera
+bun run dev                         # terminal 1 — leave running
+```
+
+Confirm the boot line: `Ward connected to Telegram as @… (…, model gpt-4o-mini).`
+
+## Beat 1 — onboarding + fresh-session recall (≈45s)
+
+In Telegram:
+
+```
+you: hey
+ward: … how would you describe your risk tolerance …
+you: moderate
+you: 50
+you: 100
+ward: Locked in: moderate risk, $50 per action, $100 per day …
+```
+
+**Show the clock.** Then `/newsession` and:
+
+```
+you: what am I allowed to do?
+ward: Risk profile: moderate · Caps: $50 per action · $100 per day
+      Spent today: $0.00 of $100 … Known counterparties: agent://… trust 0.7X over 1 job
+```
+
+Say it out loud: _brand-new conversation, nothing in the chat history — every
+number came from Sibyl Memory, including the trust score from a job we ran days
+ago._
+
+## Beat 2 — the memory-gated refusal (≈40s) — THE eligibility moment
+
+Terminal 2:
+
+```sh
+bun run scripts/forget-auth.ts <YOUR_TG_ID>
+# prints the full record, then: ✓ Deleted. read(<id>) is now null.
+```
+
+Back in Telegram:
+
+```
+you: swap $20 usdc for eth
+ward: I have no authorization on file for you in Sibyl Memory, so I won't move any
+      funds — not even within what the chain would allow. Say "set me up" …
+```
+
+Say it: _the agent is still running. It just has no basis for authority. That's the
+gate._ Then re-onboard (say "set me up", `moderate` / `50` / `100`) to continue.
+
+## Beat 3 — connect + grant on-chain (≈30s)
+
+```
+you: connect my wallet
+ward: Wallet connected on base-sepolia. Your smart account: 0x… Agent spender: 0x…
+you: grant a $100 daily permission
+ward: Granted an on-chain spend permission: $100 USDC per 1 day … tx 0x…
+      I now act within min(your $100 memory cap, this $100 on-chain allowance).
+```
+
+Open the `tx` on sepolia.basescan.org.
+
+## Beat 4 — one x402 payment on Base (≈30s)
+
+```
+you: get me a risk score on PEPE
+ward: Buy "Token Risk Score" (~$0.05). $0.00 of your $100 daily cap used … Confirm?
+you: yes
+ward: Paid $0.05 for "Token Risk Score". https://sepolia.basescan.org/tx/0x…
+      { risk_score: …, flags: […] }
+```
+
+Open the tx. Say: _the spend just went on the same ledger as everything else._
+
+## Beat 5 — one capped swap on Base (≈30s)
+
+```
+you: swap $40 usdc for eth
+ward: Swap $40 USDC → ETH. $0.05 of your $100 daily cap used, $99.95 left;
+      on-chain allowance $99.95 remaining. Confirm?
+you: yes
+ward: Swapped $40 USDC → ETH (~0.011 ETH). https://sepolia.basescan.org/tx/0x…
+```
+
+Then hit a limit on camera:
+
+```
+you: swap $70 usdc for eth
+ward: That's $70, over your $50 per-action limit. Lower the amount, or raise the cap.
+```
+
+## Beat 6 — revoke the Spend Permission on-chain (≈30s)
+
+```
+you: revoke my permission, I'm done for the day
+ward: Revoked your spend permission and paused every spend action.
+      On-chain revocation tx 0x… I can't move funds until you grant a new permission.
+you: swap $10 usdc for eth
+ward: You've paused swap. I won't do that until you lift the pause.
+```
+
+Open the revoke tx. Say: _revoke on-chain, the agent can't spend — instantly,
+mid-session._
+
+## Beat 7 — ACP hire + trust write-back (≈40s, only if `ACP_MODE=virtuals` settled)
+
+```
+you: hire an agent to assess WOOF
+ward: Hire agent://0x… (trust 0.7X, 1 prior job) to assess WOOF for ~$0.5. … Confirm?
+you: yes
+ward: Hired agent://0x… to assess WOOF.
+      Result: risk elevated (…) …
+      Trust in this counterparty: 0.7X → 0.7Y.
+```
+
+Say: _it paid another agent, checked the result, and updated how much it trusts
+that agent — in memory, for next time._ **If the real ACP path didn't settle in the
+spike, cut this beat — do not run the stub on camera.**
+
+## Close (≈15s)
+
+_Recall, decide, pay, hire, execute. Delete `ward.authorization` from Sibyl Memory
+and the agent has no policy — it refuses, even though the chain would still allow
+the spend. The memory is the authorization._
+
+## Notes
+
+- If CDP/x402 aren't live-verified yet, run beats 3-6 on stubs (`SIBYL_MEMORY_MODE`
+  aside, no `CDP_*`) and say plainly that the on-chain settlement is simulated —
+  the memory loop is identical. Better an honest stub than a faked chain artifact.
+- `/newsession` between beats keeps the transcript clean and re-proves recall.
