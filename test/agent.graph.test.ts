@@ -1,4 +1,5 @@
 import { HumanMessage } from "@langchain/core/messages";
+import { Command } from "@langchain/langgraph";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -47,6 +48,40 @@ async function say(
   return lastText(result.messages);
 }
 
+/** Invoke and return the confirmation interrupt text (or throw if there wasn't one). */
+async function askAction(
+  graph: ReturnType<typeof buildGraph>,
+  threadId: string,
+  text: string,
+): Promise<string> {
+  const result = (await graph.invoke(
+    { messages: [new HumanMessage(text)], tgId: TG },
+    { configurable: { thread_id: threadId } },
+  )) as { __interrupt__?: Array<{ value: { text: string } }> };
+  const pending = result.__interrupt__?.[0]?.value.text;
+  if (!pending)
+    throw new Error(`expected a confirmation interrupt, got: ${JSON.stringify(result)}`);
+  return pending;
+}
+
+async function resume(
+  graph: ReturnType<typeof buildGraph>,
+  threadId: string,
+  approved: boolean,
+): Promise<string> {
+  const result = await graph.invoke(new Command({ resume: { approved } }), {
+    configurable: { thread_id: threadId },
+  });
+  return lastText(result.messages);
+}
+
+async function onboard(graph: ReturnType<typeof buildGraph>, threadId: string): Promise<void> {
+  await say(graph, threadId, "hi");
+  await say(graph, threadId, "moderate");
+  await say(graph, threadId, "50");
+  await say(graph, threadId, "100");
+}
+
 describe("onboarding", () => {
   test("collects the three answers one per turn, then writes Sibyl Memory once", async () => {
     const graph = buildGraph();
@@ -85,6 +120,42 @@ describe("fresh-session recall", () => {
     expect(recall).toContain("$25");
     expect(recall).toContain("$75");
     expect(recall).toMatch(/conservative/i);
+  });
+});
+
+describe("intent → confirmation", () => {
+  test("a swap produces a structured action and a confirmation citing the real limits", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "c1");
+
+    const prompt = await askAction(graph, "c1", "swap $30 usdc for eth");
+    expect(prompt).toContain("Swap $30 USDC");
+    expect(prompt).toContain("$100 daily cap");
+    expect(prompt).toMatch(/\$100\.00 left/);
+    expect(prompt).toMatch(/confirm\?/i);
+
+    expect(await resume(graph, "c1", true)).toMatch(/confirmed/i);
+  });
+
+  test("declining the confirmation moves nothing", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "c2");
+    await askAction(graph, "c2", "swap $20 usdc to eth");
+    expect(await resume(graph, "c2", false)).toMatch(/cancelled/i);
+  });
+
+  test("an amount over the per-action limit is blocked before confirmation", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "c3");
+    const reply = await say(graph, "c3", "swap $500 usdc for eth");
+    expect(reply).toMatch(/over your \$50 per-action limit/i);
+  });
+
+  test("a plain question is not treated as an action", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "c4");
+    const reply = await say(graph, "c4", "how much have I spent today?");
+    expect(reply).toContain("Spent today: $0.00");
   });
 });
 

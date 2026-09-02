@@ -243,6 +243,14 @@ The trigger surface and the input-validation boundary.
 
 **Exit:** "swap $50 usdc for eth" produces a structured action + a confirmation prompt citing the real limits; an injection string in a fake x402 response is stripped before the agent sees it.
 
+**Status: done.**
+- `src/agent/intent.ts` — deterministic `tableIntent` (Ward action set: connect_wallet / grant_permission / revoke / swap / x402_data_purchase / acp_job / read_only) + `parseIntent` (table → one `gpt-4o-mini` structured call → `read_only` fallback). `SPEND_ACTIONS` = {swap, x402_data_purchase, acp_job}.
+- `src/agent/guardrails.ts` — full: injection hard-block, `detectSuspicious` (flag), crypto fast-path, `sanitizeUrls` (trusted-host allowlist + per-call extras), `wrapUserInput` (`<user_input>`), `validateExternalData` (strip control chars, neutralise injection, cap length, wrap in `<untrusted_data>`).
+- Graph: `guard → intent → router → (onboarding | agent | refuse | confirm)`. `confirm` node cites the real memory limits, blocks over-cap / revoked before the interrupt, then `interrupt({ type: "confirm_action", … })`. `agent` node wraps human turns, injects an intent hint + suspicious flag, `sanitizeUrls` on output. (On-chain allowance line lands in Phase 4/5.)
+- `src/telegram/gateway.ts` — vendored gateway: `graph.stream(streamMode: ["messages","values"])` with throttled edits, `mdToHtml`, `splitMessage` (4096), interrupt detection → yes/no → `Command({ resume })`, `/newsession` + `/defaultsession`.
+- Tests: `agent.intent.test.ts`, `agent.guardrails.test.ts`, `telegram.gateway.test.ts`, + confirmation flow in `agent.graph.test.ts`. 62 pass / 4 skip.
+- **State channel gotcha:** a LangGraph channel can't share a name with a node — the intent channel is `parsedIntent`, the onboarding-draft channel is `onboardingDraft`.
+
 ---
 
 ### Phase 4 — Wallet & authorization layer (Coinbase CDP + Spend Permissions)

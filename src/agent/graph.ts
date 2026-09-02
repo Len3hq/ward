@@ -3,7 +3,9 @@ import { END, MemorySaver, START, StateGraph } from "@langchain/langgraph";
 
 import { agentNode } from "./nodes/agent.ts";
 import { approvalNode } from "./nodes/approval.ts";
+import { confirmNode } from "./nodes/confirm.ts";
 import { guardNode } from "./nodes/guard.ts";
+import { intentNode } from "./nodes/intent.ts";
 import { onboardingNode } from "./nodes/onboarding.ts";
 import { refuseNode } from "./nodes/refuse.ts";
 import { routerNode } from "./nodes/router.ts";
@@ -13,7 +15,8 @@ import { APPROVAL_REQUIRED, toolNodeFor } from "./tools.ts";
 /**
  * The Ward graph. Topology from Len3's `agent/src/graph/`:
  *
- *   guard → router → (onboarding | agent | refuse)
+ *   guard → intent → router → (onboarding | agent | refuse | confirm)
+ *   confirm → [interrupt: yes/no]
  *   agent ⇄ tools
  *   agent → approval → tools     (when an approval-required tool call is pending)
  *
@@ -25,11 +28,11 @@ async function toolsNode(state: WardStateType): Promise<Partial<WardStateType>> 
   return toolNodeFor(state.tgId).invoke(state) as Promise<Partial<WardStateType>>;
 }
 
-function afterGuard(state: WardStateType): "refuse" | "router" {
-  return state.route === "refuse" ? "refuse" : "router";
+function afterGuard(state: WardStateType): "refuse" | "intent" {
+  return state.route === "refuse" ? "refuse" : "intent";
 }
 
-function afterRouter(state: WardStateType): "onboarding" | "agent" | "refuse" {
+function afterRouter(state: WardStateType): "onboarding" | "agent" | "refuse" | "confirm" {
   return state.route ?? "agent";
 }
 
@@ -48,21 +51,26 @@ function afterApproval(state: WardStateType): "tools" | typeof END {
 export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
   return new StateGraph(WardState)
     .addNode("guard", guardNode)
+    .addNode("intent", intentNode)
     .addNode("router", routerNode)
     .addNode("onboarding", onboardingNode)
     .addNode("agent", agentNode)
     .addNode("refuse", refuseNode)
+    .addNode("confirm", confirmNode)
     .addNode("approval", approvalNode)
     .addNode("tools", toolsNode)
     .addEdge(START, "guard")
-    .addConditionalEdges("guard", afterGuard, { refuse: "refuse", router: "router" })
+    .addConditionalEdges("guard", afterGuard, { refuse: "refuse", intent: "intent" })
+    .addEdge("intent", "router")
     .addConditionalEdges("router", afterRouter, {
       onboarding: "onboarding",
       agent: "agent",
       refuse: "refuse",
+      confirm: "confirm",
     })
     .addEdge("onboarding", END)
     .addEdge("refuse", END)
+    .addEdge("confirm", END)
     .addConditionalEdges("agent", afterAgent, {
       approval: "approval",
       tools: "tools",

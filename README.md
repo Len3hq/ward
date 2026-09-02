@@ -10,21 +10,25 @@ chain would still permit a spend.
 
 ## Status
 
-**Phase 2 — agent core.** The LangGraph scaffold runs on Sibyl Memory: onboarding
-collects the three caps, the router refuses actions with no authorization record,
-and a fresh session recalls the caps from Sibyl Memory. The full, dependency-ordered
-build plan is in
-[Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
+**Phase 3 — gateway, intent parsing, guardrails.** Free text is parsed into a
+structured action (deterministic table + `gpt-4o-mini` fallback); a spend action
+hits a confirmation citing the real Sibyl Memory limits before anything proceeds;
+the guard hard-blocks injection, flags suspicious input, sanitises URLs, and
+`validateExternalData()` neutralises injection in any external payload. The
+Telegram gateway streams edits, renders HTML, splits at 4096 chars, and resumes
+confirmations via the graph interrupt. The full, dependency-ordered build plan is
+in [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
 ## Architecture
 
 One Bun + TypeScript process. No backend, no database of our own, no vector store.
 
-- **Agent** — LangGraph (`guard → router → (onboarding | agent | refuse)`,
-  `agent ⇄ tools`, `agent → approval → tools`), `MemorySaver` checkpointer for
-  per-thread turn state · [`src/agent/`](./src/agent/)
-- **Interface** — Telegram (Telegraf, long-polling); `/newsession` starts a fresh
-  thread while Sibyl Memory persists · [`src/telegram/`](./src/telegram/)
+- **Agent** — LangGraph with a `MemorySaver` checkpointer for per-thread turn
+  state · [`src/agent/`](./src/agent/). Nodes: guard, intent, router, onboarding,
+  agent, refuse, confirm, approval, tools.
+- **Interface** — Telegram (Telegraf, long-polling; streamed edits, HTML, 4096
+  split, confirmation resume); `/newsession` / `/defaultsession` ·
+  [`src/telegram/`](./src/telegram/)
 - **Memory** — [**Sibyl Memory**](./SIBYL-MEMORY.md) (the `sibyl-memory-cli[mcp]`
   plugin — local-first SQLite, no vector DB), reached over the `sibyl-memory-mcp`
   stdio server. One accumulating authorization entity per user (standing caps,

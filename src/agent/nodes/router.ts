@@ -1,30 +1,31 @@
-import { HumanMessage } from "@langchain/core/messages";
-
 import { read } from "../../../memory/index.ts";
-import { looksLikeActionRequest } from "../guardrails.ts";
+import { SPEND_ACTIONS } from "../intent.ts";
 import type { Route, WardStateType } from "../state.ts";
 
 /**
- * Decides the turn's path from Sibyl Memory + the message:
+ * Decides the turn's path from Sibyl Memory + the parsed intent:
  *
- *   record exists                        → agent
- *   no record, onboarding in progress    → onboarding
- *   no record, message is an action      → refuse (no authorization → no money moves)
- *   no record, anything else             → onboarding (start the questions)
+ *   record exists, intent is a spend action    → confirm
+ *   record exists, anything else               → agent
+ *   no record, onboarding in progress          → onboarding
+ *   no record, intent is any action            → refuse (no authorization → no money moves)
+ *   no record, anything else                   → onboarding
  *
- * Adapted from Len3's `graph/nodes/router.ts` (profile fetch → onboarding vs.
- * agent). The `no record + action → refuse` branch is what makes the deletion
- * gate structural: remove the Sibyl Memory entity and every action request lands
- * on `refuse`.
+ * Adapted from Len3's `graph/nodes/router.ts`. The `no record + action → refuse`
+ * branch is what makes the deletion gate structural.
  */
 export async function routerNode(state: WardStateType): Promise<Partial<WardStateType>> {
   const record = await read(state.tgId);
-  if (record !== null) return { route: "agent" satisfies Route };
+  const intent = state.parsedIntent;
 
-  const onboardingInProgress = Object.keys(state.onboardingDraft).length > 0;
-  if (onboardingInProgress) return { route: "onboarding" };
+  if (record !== null) {
+    if (intent && SPEND_ACTIONS.has(intent.action_type))
+      return { route: "confirm" satisfies Route };
+    return { route: "agent" };
+  }
 
-  const last = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
-  const text = typeof last?.content === "string" ? last.content : "";
-  return { route: looksLikeActionRequest(text) ? "refuse" : "onboarding" };
+  if (Object.keys(state.onboardingDraft).length > 0) return { route: "onboarding" };
+
+  const isAction = intent !== null && intent.action_type !== "read_only";
+  return { route: isAction ? "refuse" : "onboarding" };
 }
