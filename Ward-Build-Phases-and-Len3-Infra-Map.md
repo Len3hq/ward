@@ -267,6 +267,16 @@ The trigger surface and the input-validation boundary.
 
 **Exit:** a user connects a wallet, grants a $100/day USDC Spend Permission on Base, and the agent can read "allowance remaining" from chain; revoking on-chain makes the next spend attempt refuse.
 
+**Status: done** (against the stub provider; the real CDP path is code-complete, live-unverified).
+- `src/wallet/provider.ts` — `WalletProvider` interface + selector (`cdp` when all three `CDP_*` keys are set, else `stub`). Pure infra, never touches Sibyl Memory.
+- `src/wallet/cdp.ts` — `CdpWalletProvider`: named CDP accounts (`ward-agent-spender`, `ward-user-<tgId>` owned by `ward-owner-<tgId>` with `enableSpendPermissions`), `createSpendPermission` (token `usdc`, `periodInDays`), `listSpendPermissions` (status + allowance), `revokeSpendPermission`, `waitForUserOperation` to settle. CDP field names taken from SDK 1.55 types — **verify live** with `WARD_CDP_TEST=1 bun test test/wallet.cdp.test.ts`.
+- `src/wallet/stub.ts` — deterministic fake addresses + in-memory permission state; the tested path.
+- `src/agent/nodes/wallet.ts` — deterministic node (no LLM). `connect_wallet` writes `ward.wallet`; `grant_permission` grants (allowance = `amount_usd ?? daily_limit_usd`, 1-day period) + updates `ward.wallet`; `revoke` with scope "permission" → on-chain revoke + `appendRevocation` for every action type, scope = one action → memory-only `appendRevocation`. Router routes `{connect_wallet, grant_permission, revoke}` → `wallet`.
+- `src/agent/nodes/confirm.ts` — now reads `ward.wallet` + the live provider: refuses on a revoked permission, computes `executable = min(memory remaining, allowance − spentToday)`, and the confirmation cites "on-chain allowance $X remaining".
+- `src/net.ts` proxy already wired (Phase 2).
+- Custody framing: managed-MPC via CDP + revocable on-chain Spend Permission. The real Embedded-Wallet (user holds key shares) needs a browser sign-in page — out of scope for the bot; noted in `WALLET.md`.
+- Tests: `wallet.stub.test.ts`, `wallet.cdp.test.ts` (opt-in), + wallet/permission flow in `agent.graph.test.ts`. 71 pass / 7 skip.
+
 ---
 
 ### Phase 5 — Base execution engine (x402 + swap)

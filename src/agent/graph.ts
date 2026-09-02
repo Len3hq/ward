@@ -9,6 +9,7 @@ import { intentNode } from "./nodes/intent.ts";
 import { onboardingNode } from "./nodes/onboarding.ts";
 import { refuseNode } from "./nodes/refuse.ts";
 import { routerNode } from "./nodes/router.ts";
+import { walletNode } from "./nodes/wallet.ts";
 import { WardState, type WardStateType } from "./state.ts";
 import { APPROVAL_REQUIRED, toolNodeFor } from "./tools.ts";
 
@@ -32,7 +33,9 @@ function afterGuard(state: WardStateType): "refuse" | "intent" {
   return state.route === "refuse" ? "refuse" : "intent";
 }
 
-function afterRouter(state: WardStateType): "onboarding" | "agent" | "refuse" | "confirm" {
+function afterRouter(
+  state: WardStateType,
+): "onboarding" | "agent" | "refuse" | "confirm" | "wallet" {
   return state.route ?? "agent";
 }
 
@@ -57,6 +60,7 @@ export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
     .addNode("agent", agentNode)
     .addNode("refuse", refuseNode)
     .addNode("confirm", confirmNode)
+    .addNode("wallet", walletNode)
     .addNode("approval", approvalNode)
     .addNode("tools", toolsNode)
     .addEdge(START, "guard")
@@ -67,10 +71,12 @@ export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
       agent: "agent",
       refuse: "refuse",
       confirm: "confirm",
+      wallet: "wallet",
     })
     .addEdge("onboarding", END)
     .addEdge("refuse", END)
     .addEdge("confirm", END)
+    .addEdge("wallet", END)
     .addConditionalEdges("agent", afterAgent, {
       approval: "approval",
       tools: "tools",

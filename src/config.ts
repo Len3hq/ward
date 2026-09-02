@@ -19,6 +19,12 @@ export interface Models {
   guard: string;
 }
 
+export interface CdpConfig {
+  apiKeyId: string;
+  apiKeySecret: string;
+  walletSecret: string;
+}
+
 export interface Config {
   telegramBotToken: string;
   /** Optional: when absent, the agent node falls back to a deterministic memory recall. */
@@ -29,6 +35,10 @@ export interface Config {
    * regions. Unset in a non-blocked deploy (e.g. Railway). See `src/net.ts`.
    */
   cdpProxyUrl: string | undefined;
+  /** CDP credentials — present → the real wallet provider, absent → the stub. */
+  cdp: CdpConfig | undefined;
+  /** Spend-permission network: base-sepolia (default) or base. */
+  baseNetwork: "base" | "base-sepolia";
   nodeEnv: NodeEnv;
 }
 
@@ -50,6 +60,14 @@ function nodeEnv(): NodeEnv {
   return "development";
 }
 
+function cdpConfig(): CdpConfig | undefined {
+  const apiKeyId = optional("CDP_API_KEY_ID");
+  const apiKeySecret = optional("CDP_API_KEY_SECRET");
+  const walletSecret = optional("CDP_WALLET_SECRET");
+  if (apiKeyId && apiKeySecret && walletSecret) return { apiKeyId, apiKeySecret, walletSecret };
+  return undefined;
+}
+
 export function loadConfig(): Config {
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
@@ -59,6 +77,8 @@ export function loadConfig(): Config {
       guard: optional("WARD_GUARD_MODEL") ?? "gpt-4o-mini",
     },
     cdpProxyUrl: optional("CDP_PROXY_URL"),
+    cdp: cdpConfig(),
+    baseNetwork: optional("BASE_NETWORK") === "base" ? "base" : "base-sepolia",
     nodeEnv: nodeEnv(),
   };
 }

@@ -10,7 +10,7 @@ import type { ParsedIntent } from "./intent.ts";
  * `onboarding` reset while Sibyl Memory persists.
  */
 
-export type Route = "onboarding" | "agent" | "refuse" | "confirm";
+export type Route = "onboarding" | "agent" | "refuse" | "confirm" | "wallet";
 
 /** Answers collected turn-by-turn during onboarding, before `store.initialize`. */
 export interface OnboardingDraft {

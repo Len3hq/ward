@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildGraph } from "../src/agent/graph.ts";
+import { resetWalletProvider } from "../src/wallet/index.ts";
 import { backend, resetBackend } from "../memory/backend.ts";
-import { read } from "../memory/store.ts";
+import { read, readWallet, writeWallet } from "../memory/store.ts";
 
 // Hermetic: fs backend, no OPENAI_API_KEY → the agent node's deterministic
 // recall path. Exercises the graph topology + Sibyl Memory integration end to end.
@@ -21,11 +22,14 @@ beforeEach(async () => {
   process.env.SIBYL_MEMORY_MODE = "fs";
   process.env.TELEGRAM_BOT_TOKEN = "test-token";
   delete process.env.OPENAI_API_KEY;
+  delete process.env.CDP_API_KEY_ID;
   await resetBackend();
+  resetWalletProvider();
 });
 
 afterEach(async () => {
   await resetBackend();
+  resetWalletProvider();
   delete process.env.WARD_MEMORY_DIR;
   delete process.env.SIBYL_MEMORY_MODE;
   await rm(dir, { recursive: true, force: true });
@@ -156,6 +160,67 @@ describe("intent → confirmation", () => {
     await onboard(graph, "c4");
     const reply = await say(graph, "c4", "how much have I spent today?");
     expect(reply).toContain("Spent today: $0.00");
+  });
+});
+
+describe("wallet & spend permission", () => {
+  test("connect writes the wallet entity; grant writes an active permission", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "w1");
+
+    const connected = await say(graph, "w1", "connect my wallet");
+    expect(connected).toMatch(/wallet connected/i);
+    const wallet = await readWallet(TG);
+    expect(wallet?.smart_account).toMatch(/^0x[0-9a-f]{40}$/);
+    expect(wallet?.spend_permission).toBeNull();
+
+    const granted = await say(graph, "w1", "grant a $100 daily permission");
+    expect(granted).toMatch(/spend permission/i);
+    expect((await readWallet(TG))?.spend_permission).toMatchObject({
+      status: "active",
+      allowance_usd: 100,
+      token: "USDC",
+    });
+  });
+
+  test("the confirmation cites the on-chain allowance, and the tighter of the two limits binds", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "w2"); // per-action $50, daily $100
+    await say(graph, "w2", "connect my wallet");
+    await say(graph, "w2", "grant a $30 daily permission");
+
+    const prompt = await askAction(graph, "w2", "swap $20 usdc for eth");
+    expect(prompt).toMatch(/on-chain allowance \$30\.00 remaining/i);
+
+    // $40 is under the $50 per-action cap but over the $30 on-chain allowance
+    const blocked = await say(graph, "w2", "swap $40 usdc for eth");
+    expect(blocked).toMatch(/exceed your on-chain allowance/i);
+  });
+
+  test("a revoked on-chain permission makes the next spend refuse", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "w3");
+    await say(graph, "w3", "connect my wallet");
+    await say(graph, "w3", "grant a $100 daily permission");
+
+    // revoke only the on-chain permission record, leave the memory revocation_log clean
+    const wallet = await readWallet(TG);
+    await writeWallet(TG, {
+      ...wallet!,
+      spend_permission: { ...wallet!.spend_permission!, status: "revoked" },
+    });
+
+    const reply = await say(graph, "w3", "swap $10 usdc for eth");
+    expect(reply).toMatch(/revoked|grant a new one/i);
+  });
+
+  test("revoke pauses the action in memory even without a wallet", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "w4");
+    const reply = await say(graph, "w4", "pause swaps for now");
+    expect(reply).toMatch(/paused swap/i);
+    const blocked = await say(graph, "w4", "swap $10 usdc for eth");
+    expect(blocked).toMatch(/paused swap/i);
   });
 });
 

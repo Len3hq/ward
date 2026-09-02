@@ -53,6 +53,19 @@ const BASE_TOKENS = [
 ];
 const TOKEN_RE = new RegExp(`\\b(${BASE_TOKENS.join("|")})\\b`, "gi");
 
+/** What a "revoke" / "pause" targets: a spend category, or "permission" (the on-chain grant + everything). */
+export type RevokeScope = "swap" | "x402_data_purchase" | "acp_job" | "permission";
+
+function revokeScope(t: string): RevokeScope {
+  if (/\b(permission|allowance|grant|everything|all|wallet|trading altogether)\b/.test(t)) {
+    return "permission";
+  }
+  if (/\bswap|trad|exchang/.test(t)) return "swap";
+  if (/\bx402|data|premium|purchase\b/.test(t)) return "x402_data_purchase";
+  if (/\bacp|agent|hir/.test(t)) return "acp_job";
+  return "permission"; // bare "revoke" / "stop" → the safe, broad reading
+}
+
 function extractPair(text: string): string | undefined {
   const found = [...text.matchAll(TOKEN_RE)].map((m) => m[1]!.toUpperCase());
   if (found.length >= 2) return `${found[0]}/${found[1]}`;
@@ -71,7 +84,7 @@ export function tableIntent(text: string): ParsedIntent | null {
     return { action_type: "grant_permission", amount_usd: parseUsd(t), source: "table" };
   }
   if (/\b(revoke|pause|stop|disable|halt|freeze)\b/.test(t)) {
-    return { action_type: "revoke", source: "table" };
+    return { action_type: "revoke", token: revokeScope(t), source: "table" };
   }
   if (
     /\b(swap|trade|convert|exchange|rebalance)\b/.test(t) ||

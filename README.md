@@ -10,14 +10,13 @@ chain would still permit a spend.
 
 ## Status
 
-**Phase 3 — gateway, intent parsing, guardrails.** Free text is parsed into a
-structured action (deterministic table + `gpt-4o-mini` fallback); a spend action
-hits a confirmation citing the real Sibyl Memory limits before anything proceeds;
-the guard hard-blocks injection, flags suspicious input, sanitises URLs, and
-`validateExternalData()` neutralises injection in any external payload. The
-Telegram gateway streams edits, renders HTML, splits at 4096 chars, and resumes
-confirmations via the graph interrupt. The full, dependency-ordered build plan is
-in [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
+**Phase 4 — wallet & Spend Permissions.** `connect my wallet` creates a Coinbase
+CDP smart account + agent spender; `grant a $100 daily permission` puts a revocable
+USDC Spend Permission on Base; a swap confirmation now enforces `executable =
+min(memory cap remaining, on-chain allowance remaining)` and a revoked permission
+makes the next spend refuse. See [WALLET.md](./WALLET.md). The full,
+dependency-ordered build plan is in
+[Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
 ## Architecture
 
@@ -25,7 +24,11 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
 
 - **Agent** — LangGraph with a `MemorySaver` checkpointer for per-thread turn
   state · [`src/agent/`](./src/agent/). Nodes: guard, intent, router, onboarding,
-  agent, refuse, confirm, approval, tools.
+  agent, refuse, confirm, wallet, approval, tools.
+- **Wallet** — Coinbase CDP smart account (user) + CDP Server Account (agent
+  spender) + a revocable on-chain USDC Spend Permission ·
+  [`src/wallet/`](./src/wallet/), [WALLET.md](./WALLET.md). Falls back to a
+  deterministic stub with no CDP keys.
 - **Interface** — Telegram (Telegraf, long-polling; streamed edits, HTML, 4096
   split, confirmation resume); `/newsession` / `/defaultsession` ·
   [`src/telegram/`](./src/telegram/)
@@ -34,12 +37,10 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   stdio server. One accumulating authorization entity per user (standing caps,
   spent ledger, revocation log, counterparty trust) + an append-only journal.
   Adapter and domain API in [`memory/`](./memory/).
-- **Base execution** — x402 data payments, capped swaps, and on-chain Spend
-  Permission grant/revoke, all sharing one memory-enforced spending ledger
-- **Wallets** — Coinbase CDP Embedded Wallet (user) + CDP Server Wallet (agent
-  spender) + a revocable on-chain Spend Permission
-- **Counterparty market** — Virtuals ACP job with trust write-back (conditional on a
-  go/no-go spike)
+- **Base execution** — x402 data payments and capped swaps, sharing one
+  memory-enforced spending ledger _(Phase 5)_
+- **Counterparty market** — Virtuals ACP job with trust write-back _(Phase 6,
+  conditional on a go/no-go spike)_
 
 Every execution runs the same two-limit gate: `executable = min(memory cap
 remaining, on-chain allowance remaining)`.
