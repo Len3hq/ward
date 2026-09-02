@@ -1,6 +1,6 @@
 import { Annotation, MessagesAnnotation } from "@langchain/langgraph";
 
-import type { RiskLabel } from "../../memory/index.ts";
+import type { ActionType, RiskLabel } from "../../memory/index.ts";
 import type { ParsedIntent } from "./intent.ts";
 
 /**
@@ -17,6 +17,15 @@ export interface OnboardingDraft {
   risk_label?: RiskLabel;
   per_action_limit_usd?: number;
   daily_limit_usd?: number;
+}
+
+/** A spend action the user confirmed — the `execute` node runs the fresh gate then this. */
+export interface ConfirmedIntent {
+  id: string;
+  action_type: ActionType;
+  amount_usd: number;
+  pair?: string;
+  endpoint?: { name: string; url: string; method: string; cost_usd: number };
 }
 
 export const WardState = Annotation.Root({
@@ -46,6 +55,12 @@ export const WardState = Annotation.Root({
   onboardingAsked: Annotation<string[]>({
     reducer: (prev, next) => [...new Set([...prev, ...next])],
     default: () => [],
+  }),
+
+  /** Set by `confirm` on approval, consumed + cleared by `execute`. */
+  confirmedIntent: Annotation<ConfirmedIntent | null>({
+    reducer: (_, next) => next,
+    default: () => null,
   }),
 });
 

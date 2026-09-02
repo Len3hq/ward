@@ -1,6 +1,26 @@
 import { createHash } from "node:crypto";
 
-import type { Hex, SpendPermissionState, UserWallet, WalletProvider } from "./provider.ts";
+import type {
+  Hex,
+  SpendPermissionState,
+  SwapRequest,
+  SwapResult,
+  UserWallet,
+  WalletProvider,
+  X402Request,
+  X402Result,
+} from "./provider.ts";
+
+/** Rough USD → token display for the swap simulation. */
+const APPROX_USD_PER_TOKEN: Record<string, number> = {
+  ETH: 3400,
+  WETH: 3400,
+  CBETH: 3600,
+  WBTC: 96_000,
+  USDC: 1,
+  USDT: 1,
+  DAI: 1,
+};
 
 /**
  * Deterministic in-memory wallet provider for tests and no-key dev. Fake but
@@ -55,6 +75,24 @@ export class StubWalletProvider implements WalletProvider {
 
   async usdcBalanceUsd(): Promise<number> {
     return 1000; // plenty, for the demo
+  }
+
+  async payX402(tgId: string, request: X402Request): Promise<X402Result> {
+    return {
+      data: { simulated: true, endpoint: request.url, note: "stub provider — no real payment" },
+      txHash: fakeHash(`x402-${tgId}-${request.url}-${Date.now()}`),
+      amountUsd: request.expectedUsd,
+    };
+  }
+
+  async swap(tgId: string, request: SwapRequest): Promise<SwapResult> {
+    const price = APPROX_USD_PER_TOKEN[request.buySymbol.toUpperCase()] ?? 1;
+    const received = request.amountUsd / price;
+    return {
+      txHash: fakeHash(`swap-${tgId}-${Date.now()}`),
+      sellUsd: request.amountUsd,
+      buyDisplay: `~${received.toPrecision(3)} ${request.buySymbol.toUpperCase()}`,
+    };
   }
 }
 

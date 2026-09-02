@@ -26,10 +26,13 @@ describe("tableIntent", () => {
     expect(tableIntent("pause trading")?.action_type).toBe("revoke");
   });
 
-  test("recognises data purchase and agent-hire intents", () => {
-    expect(tableIntent("is PEPE a rug")?.action_type).toBe("acp_job");
-    expect(tableIntent("assess this token for risk")?.action_type).toBe("acp_job");
+  test("routes data questions to x402 and explicit hiring to acp_job", () => {
+    expect(tableIntent("is PEPE a rug")?.action_type).toBe("x402_data_purchase");
+    expect(tableIntent("get me a risk score on this token")?.action_type).toBe(
+      "x402_data_purchase",
+    );
     expect(tableIntent("show me whale activity on ETH")?.action_type).toBe("x402_data_purchase");
+    expect(tableIntent("hire an agent to assess PEPE")?.action_type).toBe("acp_job");
   });
 
   test("classifies questions as read_only", () => {

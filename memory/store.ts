@@ -7,6 +7,7 @@ import {
   spendInputSchema,
   userAuthorizationSchema,
   walletRecordSchema,
+  x402InputSchema,
   type AcpJobInput,
   type ActionType,
   type InitializeInput,
@@ -16,6 +17,7 @@ import {
   type SpendInput,
   type UserAuthorization,
   type WalletRecord,
+  type X402Input,
 } from "./schema.ts";
 import { computeTrustScore } from "./trust.ts";
 
@@ -210,6 +212,30 @@ export async function appendAcpJob(
   });
 }
 
+/** Append-only. Appended after every x402 purchase attempt (ok or failed). */
+export async function appendX402(
+  tgId: number | string,
+  entry: X402Input,
+): Promise<UserAuthorization> {
+  const id = normalizeTgId(tgId);
+  return withLock(id, async () => {
+    const record = await readOrThrow(id);
+    const row = x402InputSchema.parse({ ts: nowIso(), ...entry });
+    const next = userAuthorizationSchema.parse({
+      ...record,
+      x402_ledger: [...record.x402_ledger, row],
+    });
+    await backend().putEntity(AUTHORIZATION, id, next);
+    await journal(
+      id,
+      "x402_purchase",
+      `x402 ${row.ok ? "ok" : "failed"} ${row.url} ($${row.amount_usd})`,
+      row,
+    );
+    return next;
+  });
+}
+
 // --- authorization: derived reads ---
 
 /** Recency-weighted trust for one counterparty, derived from `acp_job_history`. */
@@ -217,6 +243,24 @@ export async function trustScore(tgId: number | string, counterpartyId: string):
   const record = await read(tgId);
   const jobs = (record?.acp_job_history ?? []).filter((j) => j.counterparty_id === counterpartyId);
   return computeTrustScore(jobs);
+}
+
+/**
+ * Recency-weighted trust for one x402 endpoint, derived from `x402_ledger`. `ok`
+ * maps to +1 / -1; unproven endpoints return the neutral prior.
+ */
+export async function endpointTrust(tgId: number | string, url: string): Promise<number> {
+  const record = await read(tgId);
+  const rows = (record?.x402_ledger ?? []).filter((e) => e.url === url);
+  return computeTrustScore(
+    rows.map((e) => ({
+      ts: e.ts,
+      counterparty_id: url,
+      job_type: "x402",
+      outcome_summary: e.ok ? "ok" : "failed",
+      trust_delta: e.ok ? 0.5 : -0.5,
+    })),
+  );
 }
 
 /**

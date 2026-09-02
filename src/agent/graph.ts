@@ -4,6 +4,7 @@ import { END, MemorySaver, START, StateGraph } from "@langchain/langgraph";
 import { agentNode } from "./nodes/agent.ts";
 import { approvalNode } from "./nodes/approval.ts";
 import { confirmNode } from "./nodes/confirm.ts";
+import { executeNode } from "./nodes/execute.ts";
 import { guardNode } from "./nodes/guard.ts";
 import { intentNode } from "./nodes/intent.ts";
 import { onboardingNode } from "./nodes/onboarding.ts";
@@ -51,6 +52,10 @@ function afterApproval(state: WardStateType): "tools" | typeof END {
   return state.route === "refuse" ? END : "tools";
 }
 
+function afterConfirm(state: WardStateType): "execute" | typeof END {
+  return state.confirmedIntent ? "execute" : END;
+}
+
 export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
   return new StateGraph(WardState)
     .addNode("guard", guardNode)
@@ -60,6 +65,7 @@ export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
     .addNode("agent", agentNode)
     .addNode("refuse", refuseNode)
     .addNode("confirm", confirmNode)
+    .addNode("execute", executeNode)
     .addNode("wallet", walletNode)
     .addNode("approval", approvalNode)
     .addNode("tools", toolsNode)
@@ -75,7 +81,8 @@ export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
     })
     .addEdge("onboarding", END)
     .addEdge("refuse", END)
-    .addEdge("confirm", END)
+    .addConditionalEdges("confirm", afterConfirm, { execute: "execute", [END]: END })
+    .addEdge("execute", END)
     .addEdge("wallet", END)
     .addConditionalEdges("agent", afterAgent, {
       approval: "approval",

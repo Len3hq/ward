@@ -86,6 +86,16 @@ async function onboard(graph: ReturnType<typeof buildGraph>, threadId: string): 
   await say(graph, threadId, "100");
 }
 
+/** Ask an action, then confirm it. Returns the execution reply. */
+async function confirmAction(
+  graph: ReturnType<typeof buildGraph>,
+  threadId: string,
+  text: string,
+): Promise<string> {
+  await askAction(graph, threadId, text);
+  return resume(graph, threadId, true);
+}
+
 describe("onboarding", () => {
   test("collects the three answers one per turn, then writes Sibyl Memory once", async () => {
     const graph = buildGraph();
@@ -127,8 +137,8 @@ describe("fresh-session recall", () => {
   });
 });
 
-describe("intent → confirmation", () => {
-  test("a swap produces a structured action and a confirmation citing the real limits", async () => {
+describe("intent → confirmation → execution", () => {
+  test("a swap produces a structured action, a confirmation, and on 'yes' executes on Base", async () => {
     const graph = buildGraph();
     await onboard(graph, "c1");
 
@@ -138,7 +148,13 @@ describe("intent → confirmation", () => {
     expect(prompt).toMatch(/\$100\.00 left/);
     expect(prompt).toMatch(/confirm\?/i);
 
-    expect(await resume(graph, "c1", true)).toMatch(/confirmed/i);
+    const done = await resume(graph, "c1", true);
+    expect(done).toMatch(/swapped \$30 usdc → eth/i);
+    expect(done).toMatch(/basescan\.org\/tx\/0x/);
+
+    const record = await read(TG);
+    expect(record?.spent_ledger).toHaveLength(1);
+    expect(record?.spent_ledger[0]).toMatchObject({ action_type: "swap", amount_usd: 30 });
   });
 
   test("declining the confirmation moves nothing", async () => {
@@ -146,13 +162,14 @@ describe("intent → confirmation", () => {
     await onboard(graph, "c2");
     await askAction(graph, "c2", "swap $20 usdc to eth");
     expect(await resume(graph, "c2", false)).toMatch(/cancelled/i);
+    expect((await read(TG))?.spent_ledger).toHaveLength(0);
   });
 
   test("an amount over the per-action limit is blocked before confirmation", async () => {
     const graph = buildGraph();
     await onboard(graph, "c3");
     const reply = await say(graph, "c3", "swap $500 usdc for eth");
-    expect(reply).toMatch(/over your \$50 per-action limit/i);
+    expect(reply).toMatch(/over the \$50 per-action limit/i);
   });
 
   test("a plain question is not treated as an action", async () => {
@@ -160,6 +177,44 @@ describe("intent → confirmation", () => {
     await onboard(graph, "c4");
     const reply = await say(graph, "c4", "how much have I spent today?");
     expect(reply).toContain("Spent today: $0.00");
+  });
+});
+
+describe("x402 + swap on one ledger", () => {
+  test("an x402 purchase resolves from the catalog, pays, and records to both ledgers", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "e1");
+
+    const prompt = await askAction(graph, "e1", "get me a risk score on token PEPE");
+    expect(prompt).toMatch(/buy "token risk score"/i);
+
+    const done = await resume(graph, "e1", true);
+    expect(done).toMatch(/paid \$0\.05 for "token risk score"/i);
+    expect(done).toMatch(/basescan\.org\/tx\/0x/);
+
+    const record = await read(TG);
+    expect(record?.spent_ledger).toHaveLength(1);
+    expect(record?.spent_ledger[0]?.action_type).toBe("x402_data_purchase");
+    expect(record?.x402_ledger).toHaveLength(1);
+    expect(record?.x402_ledger[0]).toMatchObject({ ok: true });
+  });
+
+  test("x402 and swap share the daily cap; hitting it blocks the next action of either type", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "e2"); // $50/action, $100/day
+
+    expect(await confirmAction(graph, "e2", "swap $50 usdc for eth")).toMatch(/swapped/i);
+    expect(await confirmAction(graph, "e2", "swap $45 usdc for eth")).toMatch(/swapped/i);
+
+    // $95 spent; a $10 swap would breach the $100 daily cap
+    const blocked = await say(graph, "e2", "swap $10 usdc for eth");
+    expect(blocked).toMatch(/daily cap|exceeds/i);
+
+    const record = await read(TG);
+    expect(record?.spent_ledger.reduce((s, r) => s + r.amount_usd, 0)).toBeCloseTo(95, 5);
+
+    // a cheap x402 purchase still fits under the ~$5 left
+    expect(await confirmAction(graph, "e2", "token price for ETH")).toMatch(/paid \$0\.01/i);
   });
 });
 
@@ -194,7 +249,7 @@ describe("wallet & spend permission", () => {
 
     // $40 is under the $50 per-action cap but over the $30 on-chain allowance
     const blocked = await say(graph, "w2", "swap $40 usdc for eth");
-    expect(blocked).toMatch(/exceed your on-chain allowance/i);
+    expect(blocked).toMatch(/exceeds the on-chain allowance/i);
   });
 
   test("a revoked on-chain permission makes the next spend refuse", async () => {
@@ -220,7 +275,7 @@ describe("wallet & spend permission", () => {
     const reply = await say(graph, "w4", "pause swaps for now");
     expect(reply).toMatch(/paused swap/i);
     const blocked = await say(graph, "w4", "swap $10 usdc for eth");
-    expect(blocked).toMatch(/paused swap/i);
+    expect(blocked).toMatch(/swap is paused/i);
   });
 });
 

@@ -1,7 +1,18 @@
 import { CdpClient, parseUnits } from "@coinbase/cdp-sdk";
+import { wrapFetchWithPayment } from "x402-fetch";
 
 import type { CdpConfig } from "../config.ts";
-import type { Hex, SpendPermissionState, UserWallet, WalletProvider } from "./provider.ts";
+import { installCdpProxy } from "../net.ts";
+import type {
+  Hex,
+  SpendPermissionState,
+  SwapRequest,
+  SwapResult,
+  UserWallet,
+  WalletProvider,
+  X402Request,
+  X402Result,
+} from "./provider.ts";
 
 /**
  * Coinbase CDP wallet provider — the judged path.
@@ -27,9 +38,18 @@ import type { Hex, SpendPermissionState, UserWallet, WalletProvider } from "./pr
 const USDC_DECIMALS = 6;
 const AGENT_SPENDER_NAME = "ward-agent-spender";
 
-const USDC_ADDRESS: Record<string, Hex> = {
-  base: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  "base-sepolia": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+const TOKENS: Record<"base" | "base-sepolia", Record<string, Hex>> = {
+  base: {
+    USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    WETH: "0x4200000000000000000000000000000000000006",
+    ETH: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+    CBETH: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+  },
+  "base-sepolia": {
+    USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    WETH: "0x4200000000000000000000000000000000000006",
+    ETH: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+  },
 };
 
 export class CdpWalletProvider implements WalletProvider {
@@ -38,12 +58,19 @@ export class CdpWalletProvider implements WalletProvider {
   #network: "base" | "base-sepolia";
 
   constructor(config: CdpConfig, network: "base" | "base-sepolia") {
+    installCdpProxy(); // route *.coinbase.com through CDP_PROXY_URL if set
     this.#cdp = new CdpClient({
       apiKeyId: config.apiKeyId,
       apiKeySecret: config.apiKeySecret,
       walletSecret: config.walletSecret,
     });
     this.#network = network;
+  }
+
+  #token(symbol: string): Hex {
+    const address = TOKENS[this.#network][symbol.toUpperCase()];
+    if (!address) throw new Error(`unknown token ${symbol} on ${this.#network}`);
+    return address;
   }
 
   network(): "base" | "base-sepolia" {
@@ -137,13 +164,105 @@ export class CdpWalletProvider implements WalletProvider {
   }
 
   async usdcBalanceUsd(address: Hex): Promise<number> {
-    const usdc = USDC_ADDRESS[this.#network]?.toLowerCase();
+    const usdc = this.#token("USDC").toLowerCase();
     const { balances } = await this.#cdp.evm.listTokenBalances({ address, network: this.#network });
     const match = balances.find(
       (b) =>
         b.token.contractAddress.toLowerCase() === usdc || b.token.symbol?.toUpperCase() === "USDC",
     );
     return match ? Number(match.amount.amount) / 10 ** Number(match.amount.decimals) : 0;
+  }
+
+  /**
+   * VERIFY LIVE. Pull `maxUsd` USDC from the user's smart account within the Spend
+   * Permission, then pay the endpoint via `x402-fetch` (EIP-3009). The CDP account
+   * is passed to `wrapFetchWithPayment` as the signer — confirm it satisfies the
+   * x402 `Signer` shape, or wrap it with viem's `toAccount`.
+   */
+  async payX402(tgId: string, request: X402Request): Promise<X402Result> {
+    const spender = await this.#agentSpender();
+    const permission = await this.#rawPermission(tgId);
+    if (permission) {
+      await spender.useSpendPermission({
+        spendPermission: permission,
+        value: parseUnits(String(request.maxUsd), USDC_DECIMALS),
+        network: this.#network,
+      });
+    }
+
+    const maxValue = parseUnits(String(request.maxUsd), USDC_DECIMALS);
+    const pay = wrapFetchWithPayment(
+      fetch,
+      spender as unknown as Parameters<typeof wrapFetchWithPayment>[1],
+      maxValue,
+    );
+    const response = await pay(request.url, { method: request.method });
+    if (!response.ok) throw new Error(`x402 endpoint returned ${response.status}`);
+
+    const data: unknown = await response.json().catch(() => ({}));
+    const paymentHeader = response.headers.get("x-payment-response") ?? "";
+    const decoded = decodePayment(paymentHeader);
+    return {
+      data,
+      txHash: decoded.txHash ?? "0x",
+      amountUsd: decoded.amountUsd ?? request.expectedUsd,
+    };
+  }
+
+  /**
+   * VERIFY LIVE. Pull `amountUsd` USDC within the Spend Permission, then swap it on
+   * Base via the CDP swap API. Testnet DEX liquidity is thin — the plan's fallback
+   * is a WETH wrap/unwrap presented honestly as the swap primitive.
+   */
+  async swap(tgId: string, request: SwapRequest): Promise<SwapResult> {
+    const spender = await this.#agentSpender();
+    const permission = await this.#rawPermission(tgId);
+    const fromAmount = parseUnits(String(request.amountUsd), USDC_DECIMALS);
+
+    if (permission) {
+      await spender.useSpendPermission({
+        spendPermission: permission,
+        value: fromAmount,
+        network: this.#network,
+      });
+    }
+
+    const result = await spender.swap({
+      network: this.#network,
+      fromToken: this.#token(request.sellSymbol),
+      toToken: this.#token(request.buySymbol),
+      fromAmount,
+      slippageBps: 150,
+    });
+
+    const txHash =
+      (result as { transactionHash?: string }).transactionHash ??
+      (result as { userOpHash?: string }).userOpHash ??
+      "0x";
+    return {
+      txHash,
+      sellUsd: request.amountUsd,
+      buyDisplay: `swapped into ${request.buySymbol.toUpperCase()}`,
+    };
+  }
+
+  /** The full on-chain SpendPermission struct, needed by `useSpendPermission`. */
+  async #rawPermission(tgId: string) {
+    const [smart, spender] = await Promise.all([
+      this.#userSmartAccount(tgId),
+      this.#agentSpender(),
+    ]);
+    const { spendPermissions } = await this.#cdp.evm.listSpendPermissions({
+      address: smart.address as Hex,
+    });
+    const match = spendPermissions
+      .filter(
+        (p) =>
+          !p.revoked &&
+          p.permission.spender.toLowerCase() === String(spender.address).toLowerCase(),
+      )
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+    return match?.permission ?? null;
   }
 
   async #settle(
@@ -160,5 +279,27 @@ export class CdpWalletProvider implements WalletProvider {
     } catch {
       return op.userOpHash;
     }
+  }
+}
+
+/** Settlement tx hash + settled amount from an x402 `X-Payment-Response` header (base64 JSON). */
+function decodePayment(header: string): { txHash?: string; amountUsd?: number } {
+  if (!header) return {};
+  try {
+    const d = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
+      transaction?: string;
+      txHash?: string;
+      amount?: string | number;
+      value?: string | number;
+    };
+    const txHash = typeof d.transaction === "string" ? d.transaction : d.txHash;
+    const raw = d.amount ?? d.value;
+    const amountUsd = raw !== undefined ? Number(raw) / 10 ** USDC_DECIMALS : undefined;
+    return {
+      txHash: typeof txHash === "string" ? txHash : undefined,
+      amountUsd: amountUsd !== undefined && Number.isFinite(amountUsd) ? amountUsd : undefined,
+    };
+  } catch {
+    return {};
   }
 }

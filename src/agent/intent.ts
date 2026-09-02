@@ -92,15 +92,11 @@ export function tableIntent(text: string): ParsedIntent | null {
   ) {
     return { action_type: "swap", amount_usd: parseUsd(t), pair: extractPair(t), source: "table" };
   }
-  if (
-    /\b(risk\s*(score|assessment|check)|is\s+\S+\s+(a\s+)?(rug|scam|safe)|assess\b.*\btoken|audit\b.*\btoken)\b/.test(
-      t,
-    )
-  ) {
+  if (/\bhire\b.*\b(agent|someone)\b|\bacp\b.*\bjob\b|\bpost\b.*\bacp\b/.test(t)) {
     return { action_type: "acp_job", token: extractPair(t), source: "table" };
   }
   if (
-    /\b(whale|smart\s*money|holder|inflow|outflow|token\s*(flow|analytics)|on-?chain\s*data)\b/.test(
+    /\b(risk\s*(score|assessment|check|rating)|is\s+\S+\s+(a\s+)?(rug|scam|safe|honeypot)|assess\b.*\btoken|audit\b.*\btoken|whale|smart\s*money|holder|inflow|outflow|token\s*(flow|analytics|price|risk)|on-?chain\s*data|premium\s*data|liquidity\s*depth)\b/.test(
       t,
     )
   ) {

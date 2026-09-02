@@ -71,6 +71,15 @@ export const acpJobEntrySchema = z.object({
 });
 export type AcpJobEntry = z.infer<typeof acpJobEntrySchema>;
 
+/** Appended after every x402 purchase. Per-endpoint success/failure feeds a derived trust score. */
+export const x402EntrySchema = z.object({
+  ts: isoDatetime,
+  url: nonEmpty,
+  ok: z.boolean(),
+  amount_usd: usdNonNegative,
+});
+export type X402Entry = z.infer<typeof x402EntrySchema>;
+
 // --- authorization record ---
 
 export const standingCapsSchema = z.object({
@@ -85,6 +94,7 @@ export const userAuthorizationSchema = z.object({
   spent_ledger: z.array(spendEntrySchema),
   revocation_log: z.array(revocationEntrySchema),
   acp_job_history: z.array(acpJobEntrySchema),
+  x402_ledger: z.array(x402EntrySchema).default([]),
 });
 export type UserAuthorization = z.infer<typeof userAuthorizationSchema>;
 
@@ -125,6 +135,9 @@ export type RevocationInput = z.input<typeof revocationInputSchema>;
 export const acpJobInputSchema = acpJobEntrySchema.partial({ ts: true });
 export type AcpJobInput = z.input<typeof acpJobInputSchema>;
 
+export const x402InputSchema = x402EntrySchema.partial({ ts: true });
+export type X402Input = z.input<typeof x402InputSchema>;
+
 // --- COLD journal event ---
 
 /**
@@ -138,6 +151,7 @@ export const JOURNAL_EVENT_KINDS = [
   "spend",
   "revocation",
   "acp_job",
+  "x402_purchase",
   "wallet_update",
 ] as const;
 export const journalEventKindSchema = z.enum(JOURNAL_EVENT_KINDS);

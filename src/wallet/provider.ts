@@ -50,6 +50,37 @@ export interface WalletProvider {
   revokeSpendPermission(tgId: string): Promise<{ txHash: string }>;
   /** USDC balance of an address, in whole USD. */
   usdcBalanceUsd(address: Hex): Promise<number>;
+
+  /** Pay an x402 endpoint from the agent spender (pulls within the Spend Permission). */
+  payX402(tgId: string, request: X402Request): Promise<X402Result>;
+  /** Capped swap on Base, funded from the agent spender. */
+  swap(tgId: string, request: SwapRequest): Promise<SwapResult>;
+}
+
+export interface X402Request {
+  url: string;
+  method: string;
+  /** Catalog price — what the stub charges; the real price comes from the 402 response. */
+  expectedUsd: number;
+  /** Hard cap on what the endpoint may charge, in USD. */
+  maxUsd: number;
+}
+export interface X402Result {
+  data: unknown;
+  txHash: string;
+  amountUsd: number;
+}
+
+export interface SwapRequest {
+  sellSymbol: string;
+  buySymbol: string;
+  amountUsd: number;
+}
+export interface SwapResult {
+  txHash: string;
+  sellUsd: number;
+  /** Human-readable received amount, e.g. "~0.0121 ETH". */
+  buyDisplay: string;
 }
 
 let cached: WalletProvider | null = null;

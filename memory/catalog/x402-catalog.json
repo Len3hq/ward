@@ -1,0 +1,41 @@
+{
+  "_note": "Static x402 endpoint catalog. Discovery is substring/keyword match over `name`, `description`, `tags`. Replaces Len3's pgvector hybrid search. Swap `url` for live endpoints before a demo; `cost_usd` is the expected price (the real price comes from the 402 response and is capped at `cost_usd * 1.5`).",
+  "endpoints": [
+    {
+      "id": "token-risk",
+      "name": "Token Risk Score",
+      "description": "Rug-pull and honeypot risk assessment for an ERC-20 on Base: mint authority, LP lock, holder concentration, transfer tax.",
+      "url": "https://x402.example/token-risk",
+      "method": "GET",
+      "cost_usd": 0.05,
+      "tags": ["risk", "rug", "scam", "safety", "honeypot", "token", "audit"]
+    },
+    {
+      "id": "whale-flows",
+      "name": "Whale Flows",
+      "description": "Recent large transfers and net accumulation/distribution for a token, by wallet cohort.",
+      "url": "https://x402.example/whale-flows",
+      "method": "GET",
+      "cost_usd": 0.1,
+      "tags": ["whale", "flows", "accumulation", "distribution", "large transfers"]
+    },
+    {
+      "id": "smart-money",
+      "name": "Smart Money Positioning",
+      "description": "What consistently-profitable wallets are buying and selling right now on Base.",
+      "url": "https://x402.example/smart-money",
+      "method": "GET",
+      "cost_usd": 0.15,
+      "tags": ["smart money", "profitable wallets", "positioning", "alpha"]
+    },
+    {
+      "id": "token-price",
+      "name": "Token Price & Liquidity",
+      "description": "Spot price, 24h volume, and pool liquidity depth for a Base token.",
+      "url": "https://x402.example/token-price",
+      "method": "GET",
+      "cost_usd": 0.01,
+      "tags": ["price", "liquidity", "volume", "quote"]
+    }
+  ]
+}

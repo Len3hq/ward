@@ -1,25 +1,26 @@
-import { AIMessage } from "@langchain/core/messages";
+import { createHash } from "node:crypto";
+
+import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { interrupt } from "@langchain/langgraph";
+import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 
 import { isRevoked, read, readWallet, spentToday, type ActionType } from "../../../memory/index.ts";
+import { evaluateGate } from "../../execution/gate.ts";
+import { searchCatalog, type X402Endpoint } from "../../execution/catalog.ts";
 import { walletProvider } from "../../wallet/index.ts";
 import { describeIntent } from "../intent.ts";
-import type { WardStateType } from "../state.ts";
+import type { ConfirmedIntent, WardStateType } from "../state.ts";
 
 /**
- * The confirm-before-execute step (plain yes/no). Cites the *real* limits and
- * enforces the two-limit design:
- *
- *   executable = min(memory cap remaining, on-chain allowance remaining)
- *
- * Blocks anything over a cap, on a revoked action type, or past a revoked /
- * exhausted on-chain Spend Permission; otherwise `interrupt()`s for confirmation.
- * The gateway shows the prompt and resumes with `Command({ resume: { approved } })`.
- *
- * Phase 4: reads the on-chain allowance. Phase 5 replaces the "confirmed"
- * acknowledgement with the Base execution path behind this same gate.
+ * Confirm-before-execute. Resolves the concrete action (an x402 endpoint from the
+ * catalog, a swap pair), runs the authorization gate for the confirmation copy,
+ * and `interrupt()`s for a plain yes/no. On "yes" it hands a `confirmedIntent` to
+ * the `execute` node, which re-runs the gate on fresh reads before spending.
  */
-export async function confirmNode(state: WardStateType): Promise<Partial<WardStateType>> {
+export async function confirmNode(
+  state: WardStateType,
+  config?: LangGraphRunnableConfig,
+): Promise<Partial<WardStateType>> {
   const intent = state.parsedIntent;
   const record = await read(state.tgId);
   if (!intent || record === null) {
@@ -27,91 +28,103 @@ export async function confirmNode(state: WardStateType): Promise<Partial<WardSta
   }
 
   const action = intent.action_type as ActionType;
-  const caps = record.standing_caps;
+  if (action === "acp_job") {
+    return {
+      messages: [new AIMessage("Hiring an agent to assess a token lands in the next build phase.")],
+    };
+  }
+
+  const lastHuman = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
+  const query = typeof lastHuman?.content === "string" ? lastHuman.content : "";
+
+  // --- resolve the concrete action + its cost ---
+  let endpoint: X402Endpoint | null = null;
+  let amountUsd: number;
+  if (action === "x402_data_purchase") {
+    endpoint = await searchCatalog(`${query} ${intent.token ?? ""}`);
+    if (!endpoint) {
+      return { messages: [new AIMessage(`I don't have an x402 endpoint for that.`)] };
+    }
+    amountUsd = endpoint.cost_usd;
+  } else {
+    amountUsd = intent.amount_usd ?? 0;
+    if (amountUsd <= 0) {
+      return { messages: [new AIMessage("How much? Give me a USD amount.")] };
+    }
+  }
+
+  const summary =
+    action === "x402_data_purchase" && endpoint
+      ? `Buy "${endpoint.name}" (~$${endpoint.cost_usd})`
+      : describeIntent(intent);
+
+  // --- gate (for the confirmation copy; execute re-checks on fresh reads) ---
   const spent = await spentToday(state.tgId);
-  const memoryRemaining = Math.max(0, caps.daily_limit_usd - spent);
-  const amount = intent.amount_usd;
-  const summary = describeIntent(intent);
-
-  if (await isRevoked(state.tgId, action)) {
-    return {
-      messages: [
-        new AIMessage(
-          `You've paused ${action.replace(/_/g, " ")}. I won't do that until you lift the pause.`,
-        ),
-      ],
-    };
-  }
-
-  if (amount !== undefined && amount > caps.per_action_limit_usd) {
-    return {
-      messages: [
-        new AIMessage(
-          `That's $${amount}, over your $${caps.per_action_limit_usd} per-action limit. ` +
-            "Lower the amount, or raise the cap first.",
-        ),
-      ],
-    };
-  }
-
-  // --- on-chain Spend Permission ---
   const wallet = await readWallet(state.tgId);
   const permission = wallet?.spend_permission ?? null;
-  let onchainRemaining: number | null = null;
-  let onchainLine = "no on-chain permission — memory caps only";
 
+  if (permission && permission.status !== "active") {
+    return {
+      messages: [
+        new AIMessage(
+          "Your on-chain spend permission is revoked — grant a new one before I can move funds.",
+        ),
+      ],
+    };
+  }
+
+  let onchainAllowanceUsd: number | null = null;
   if (permission) {
-    if (permission.status !== "active") {
-      return {
-        messages: [
-          new AIMessage(
-            "Your on-chain spend permission is revoked, so I can't move funds — grant a new one first.",
-          ),
-        ],
-      };
-    }
     const live = await walletProvider()
       .readSpendPermission(state.tgId)
       .catch(() => null);
     if (live?.status === "revoked") {
       return {
         messages: [
-          new AIMessage(
-            "Your spend permission was revoked on-chain. I can't move funds until you grant a new one.",
-          ),
+          new AIMessage("Your spend permission was revoked on-chain — grant a new one first."),
         ],
       };
     }
-    const allowance = live?.allowanceUsd ?? permission.allowance_usd;
-    onchainRemaining = Math.max(0, allowance - spent);
-    onchainLine = `on-chain allowance $${onchainRemaining.toFixed(2)} remaining`;
+    onchainAllowanceUsd = live?.allowanceUsd ?? permission.allowance_usd;
   }
 
-  const executable =
-    onchainRemaining === null ? memoryRemaining : Math.min(memoryRemaining, onchainRemaining);
+  const endpointSeen = endpoint
+    ? record.x402_ledger.some((e) => e.url === endpoint!.url)
+    : undefined;
 
-  if (amount !== undefined && amount > executable) {
-    const binding =
-      onchainRemaining !== null && onchainRemaining < memoryRemaining
-        ? `your on-chain allowance ($${onchainRemaining.toFixed(2)} left this period)`
-        : `your $${caps.daily_limit_usd} daily cap ($${memoryRemaining.toFixed(2)} left)`;
+  const gate = evaluateGate({
+    record,
+    actionType: action,
+    amountUsd,
+    spentTodayUsd: spent,
+    revoked: await isRevoked(state.tgId, action),
+    onchainAllowanceUsd,
+    endpointSeen,
+  });
+
+  if (!gate.allow) {
+    return { messages: [new AIMessage(`Can't do that — ${gate.reason}`)] };
+  }
+
+  const memRemaining = Math.max(0, record.standing_caps.daily_limit_usd - spent);
+  const onchainLine =
+    onchainAllowanceUsd === null
+      ? "no on-chain permission — memory caps only"
+      : `on-chain allowance $${Math.max(0, onchainAllowanceUsd - spent).toFixed(2)} remaining`;
+  const prompt = `${summary}. $${spent.toFixed(2)} of your $${record.standing_caps.daily_limit_usd} daily cap used, $${memRemaining.toFixed(2)} left; ${onchainLine}. Confirm? (yes / no)`;
+
+  if (!gate.needsApproval) {
     return {
-      messages: [new AIMessage(`$${amount} would exceed ${binding}. Lower the amount.`)],
+      confirmedIntent: buildConfirmed(state, config, action, amountUsd, intent.pair, endpoint),
     };
   }
-
-  const capLine =
-    amount !== undefined
-      ? `$${spent.toFixed(2)} of your $${caps.daily_limit_usd} daily cap used, $${memoryRemaining.toFixed(2)} left; ${onchainLine}.`
-      : `Daily cap $${caps.daily_limit_usd}, $${memoryRemaining.toFixed(2)} left today; ${onchainLine}.`;
-  const prompt = `${summary}. ${capLine} Confirm? (yes / no)`;
 
   const decision = interrupt({
     type: "confirm_action",
     action,
     summary,
-    amount_usd: amount,
-    executable_usd: amount === undefined ? executable : Math.min(amount, executable),
+    amount_usd: amountUsd,
+    executable_usd: gate.executableUsd,
     text: prompt,
   }) as { approved: boolean };
 
@@ -119,10 +132,38 @@ export async function confirmNode(state: WardStateType): Promise<Partial<WardSta
     return { messages: [new AIMessage("Cancelled — nothing moved.")] };
   }
   return {
-    messages: [
-      new AIMessage(
-        `Confirmed: ${summary}. Execution on Base lands in a later build phase — nothing has moved yet.`,
-      ),
-    ],
+    confirmedIntent: buildConfirmed(state, config, action, amountUsd, intent.pair, endpoint),
+  };
+}
+
+function buildConfirmed(
+  state: WardStateType,
+  config: LangGraphRunnableConfig | undefined,
+  action: ActionType,
+  amountUsd: number,
+  pair: string | undefined,
+  endpoint: X402Endpoint | null,
+): ConfirmedIntent {
+  const thread = String(config?.configurable?.thread_id ?? "t");
+  const lastHuman = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
+  const query = typeof lastHuman?.content === "string" ? lastHuman.content : "";
+  const id = createHash("sha256")
+    .update(`${thread}:${state.messages.length}:${query}`)
+    .digest("hex")
+    .slice(0, 32);
+
+  return {
+    id,
+    action_type: action,
+    amount_usd: amountUsd,
+    pair,
+    endpoint: endpoint
+      ? {
+          name: endpoint.name,
+          url: endpoint.url,
+          method: endpoint.method,
+          cost_usd: endpoint.cost_usd,
+        }
+      : undefined,
   };
 }

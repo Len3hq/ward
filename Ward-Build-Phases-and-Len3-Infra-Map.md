@@ -298,6 +298,16 @@ Two independent, judge-recognised Base actions sharing one memory-enforced ledge
 
 **Exit:** both actions run end-to-end on Base; both write to the same `spent_ledger`; "how much has the agent spent today" is one number across both; hitting either the memory daily cap or the on-chain allowance blocks the next action of either type.
 
+**Status: done** (against the stub provider; the real CDP/x402 path is code-complete, live-unverified).
+- `src/execution/gate.ts` — `evaluateGate({ record, actionType, amountUsd, spentTodayUsd, revoked, onchainAllowanceUsd, endpointSeen? })` → `{ allow, needsApproval, executableUsd, reason }`. `needsApproval` = amount > `WARD_AUTO_APPROVE_USD` (default 0) OR first-time endpoint OR conservative risk label. Pure; re-run on fresh reads by the `execute` node.
+- `src/execution/catalog.ts` — loads `memory/catalog/x402-catalog.json`, keyword/tag `searchCatalog`. `src/execution/explorer.ts` — basescan tx links.
+- Schema: `x402_ledger: [{ ts, url, ok, amount_usd }]` on the authorization entity; `store.appendX402` + `store.endpointTrust(url)` (reuses the EMA). Journal kind `x402_purchase`.
+- `WalletProvider.payX402` / `.swap` — stub simulates (clean amounts, fake tx); CDP does `useSpendPermission` (pull within the Spend Permission) → `wrapFetchWithPayment` (x402-fetch, EIP-3009) / `spender.swap(...)`. **Verify live** — x402-fetch↔CDP-account signer shape and the pull/swap ordering are from types, not a live run.
+- Graph: `confirm` node resolves the x402 endpoint from the catalog, runs `evaluateGate` for the copy, and on "yes" sets `confirmedIntent`; new `execute` node (`confirm → execute` conditional) re-runs the gate on FRESH reads, calls the provider, `appendSpend` (idempotent on `confirmedIntent.id`) + `appendX402`, replies with the basescan link. ACP intents show a "next phase" message.
+- Intent table split: "risk score" / "is X a rug" / "whale flows" → `x402_data_purchase`; only explicit "hire an agent" → `acp_job`.
+- Tests: `execution.gate.test.ts`, `execution.catalog.test.ts`, + x402/swap/shared-cap flow in `agent.graph.test.ts`. 83 pass / 7 skip.
+- **Swap DEX-liquidity risk** (plan): CDP swap API used; on thin testnet liquidity, fall back to a WETH wrap presented honestly. Not decided/exercised — no live run.
+
 ---
 
 ### Phase 6 — Virtuals ACP + trust write-back
@@ -388,8 +398,11 @@ event** (`memory_record_event`, category `ward.<kind>`). Schema + API: `memory/`
   "acp_job_history": [                          // appended after every ACP job resolves
     { "ts": "2026-09-04T…", "counterparty_id": "agent://…", "job_type": "token_risk",
       "outcome_summary": "flagged rug indicators, correct", "trust_delta": 0.2 }
+  ],
+  "x402_ledger": [                              // appended after every x402 purchase attempt
+    { "ts": "2026-09-05T15:20:44.000Z", "url": "https://…/token-risk", "ok": true, "amount_usd": 0.05 }
   ]
-  // NO trust_score field — DERIVED from acp_job_history on every read (trust.ts)
+  // NO trust_score field — DERIVED from acp_job_history / x402_ledger on every read (trust.ts)
 }
 ```
 
