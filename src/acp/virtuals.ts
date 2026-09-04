@@ -1,4 +1,5 @@
 import { loadConfig } from "../config.ts";
+import { walletProvider } from "../wallet/index.ts";
 import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
 
 /**
@@ -40,8 +41,11 @@ export class VirtualsAcpProvider implements AcpProvider {
     }
   }
 
-  async hire(_tgId: string, job: AcpJobRequest): Promise<AcpJobResult> {
+  async hire(tgId: string, job: AcpJobRequest): Promise<AcpJobResult> {
+    const wallet = walletProvider();
     const { agent, stop } = await this.#agent();
+    /** What we pulled from *this user's* smart account to fund escrow. */
+    let pulledUsd = 0;
     try {
       const buyerAddress: string = await agent.getAddress();
       const found: Array<{ walletAddress: string; offerings: Array<{ name: string }> }> =
@@ -64,8 +68,13 @@ export class VirtualsAcpProvider implements AcpProvider {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         agent.on("entry", async (session: any, entry: any) => {
-          if (entry.kind === "system") {
+          if (entry.kind !== "system") return;
+          try {
             if (entry.event.type === "budget.set") {
+              // The user's money, not Ward's float: pull the budget through *this
+              // user's* Spend Permission before escrow draws on the spender. Throws
+              // if they have no active permission — the job then never funds.
+              ({ pulledUsd } = await wallet.fundAgentFromUser(tgId, budget));
               await session.fund(); // AssetToken.usdc(budget, chainId) — cap enforced by our gate
             } else if (entry.event.type === "job.submitted") {
               await session.complete("delivered");
@@ -87,6 +96,11 @@ export class VirtualsAcpProvider implements AcpProvider {
               finish(notSettled(job, `job ${entry.event.type}`));
               await agent.stop();
             }
+          } catch (err) {
+            // A throw in here (no Spend Permission, a failed fund) would otherwise
+            // hang the job until the timeout with the user's money already pulled.
+            finish(notSettled(job, err instanceof Error ? err.message : "job handler failed"));
+            await agent.stop().catch(() => undefined);
           }
         });
 
@@ -102,6 +116,21 @@ export class VirtualsAcpProvider implements AcpProvider {
 
         setTimeout(() => finish(notSettled(job, "timed out")), 180_000);
       });
+
+      // Escrow releases to the buyer — the agent spender — so whatever the job
+      // didn't consume is still the user's money sitting in Ward's wallet.
+      const unspent = round6(pulledUsd - (settled.settled ? settled.amountUsd : 0));
+      if (unspent > 0) {
+        try {
+          await wallet.refundUser(tgId, unspent);
+        } catch (err) {
+          // The user is owed money — say so loudly and persist it in the job history
+          // rather than let a silent catch bury it.
+          const why = err instanceof Error ? err.message : String(err);
+          console.error(`ACP refund of $${unspent} to ${tgId} FAILED: ${why}`);
+          settled.outcomeSummary += ` [refund of $${unspent.toFixed(2)} failed — owed to user]`;
+        }
+      }
 
       return settled;
     } finally {
@@ -136,6 +165,11 @@ export class VirtualsAcpProvider implements AcpProvider {
     });
     return { agent, stop: () => agent.stop() };
   }
+}
+
+/** USDC has 6 decimals — keep float subtraction from inventing a dust refund. */
+function round6(usd: number): number {
+  return Math.round(usd * 1e6) / 1e6;
 }
 
 function notSettled(job: AcpJobRequest, why: string): AcpJobResult {

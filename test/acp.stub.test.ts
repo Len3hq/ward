@@ -8,6 +8,8 @@ import { appendAcpJob, initialize, read, trustScore } from "../memory/store.ts";
 import { jobTrustDelta } from "../src/acp/index.ts";
 import { StubAcpProvider } from "../src/acp/stub.ts";
 import { runAcpJob } from "../src/execution/acp.ts";
+import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
+import type { StubWalletProvider } from "../src/wallet/stub.ts";
 
 const TG = "424242";
 let dir: string;
@@ -18,7 +20,9 @@ beforeEach(async () => {
   process.env.SIBYL_MEMORY_MODE = "fs";
   process.env.TELEGRAM_BOT_TOKEN = "test-token";
   delete process.env.ACP_MODE;
+  delete process.env.CDP_API_KEY_ID;
   await resetBackend();
+  resetWalletProvider();
   await initialize(TG, { risk_label: "moderate", per_action_limit_usd: 50, daily_limit_usd: 100 });
 });
 
@@ -76,6 +80,14 @@ describe("runAcpJob write-back", () => {
     });
     expect(second.trustBefore).toBe(first.trustAfter);
     expect(await trustScore(TG, first.counterpartyId)).toBe(second.trustAfter);
+  });
+
+  test("a stub-mode hire moves no money — the simulated counterparty is never charged for", async () => {
+    const wallet = walletProvider() as StubWalletProvider;
+    await runAcpJob({ tgId: TG, subject: "PEPE", budgetUsd: 0.5, idempotencyKey: "j4" });
+    // The per-user pull lives in the *virtuals* provider, not runAcpJob — moving it
+    // up here would charge real USDC for `agent://ward-analyst.stub`.
+    expect(wallet.calls).toEqual([]);
   });
 
   test("a pre-seeded evaluated job shows up as an existing trust score", async () => {

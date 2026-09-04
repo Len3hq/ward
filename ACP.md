@@ -28,6 +28,36 @@ demo:
 bun run scripts/seed-acp.ts <telegram_id>
 ```
 
+## Who pays
+
+An ACP job is **the user's spend, from the user's wallet** — the same money path
+as a swap or an x402 purchase, not a Ward-funded perk:
+
+```
+evaluateGate(acp_job, budget)              memory cap ∧ on-chain allowance
+  → fundAgentFromUser(tgId, budget)        pull the budget from ward-user-<tgId>
+                                           through THEIR Spend Permission
+  → session.fund()                         escrow draws on the agent spender
+  → refundUser(tgId, budget − settled)     escrow releases to the buyer (the
+                                           spender); the remainder is the user's
+```
+
+The pull is what makes `appendSpend({ action_type: "acp_job" })` true — without it
+the ledger would record a user spend while Ward's float actually paid. No active
+Spend Permission is a **hard error**, never a silent fallback to Ward's balance
+(`src/wallet/cdp.ts::fundAgentFromUser`).
+
+Two things stay Ward-side, by design:
+
+- **Gas.** The agent spender submits every transaction, so ETH on Base is an
+  operator cost that scales with usage — users never touch it.
+- **Nothing else.** The spender is a conduit, not a float; it should hold no
+  meaningful USDC of its own.
+
+The pull lives in `acp/virtuals.ts`, **not** in `execution/acp.ts` — the stub
+counterparty is simulated, so a stub-mode hire must move no money at all. There is
+a test pinning that (`test/acp.stub.test.ts`).
+
 ## GO / NO-GO for the real path
 
 `ACP_MODE` is `stub` by default. The real path (`ACP_MODE=virtuals`,

@@ -95,6 +95,16 @@ export class StubWalletProvider implements WalletProvider {
     };
   }
 
+  async fundAgentFromUser(_tgId: string, amountUsd: number): Promise<{ pulledUsd: number }> {
+    this.calls.push("fundAgentFromUser");
+    return { pulledUsd: amountUsd };
+  }
+
+  async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
+    this.calls.push("refundUser");
+    return { txHash: fakeHash(`refund-${tgId}-${amountUsd}-${Date.now()}`) };
+  }
+
   async swap(tgId: string, request: SwapRequest): Promise<SwapResult> {
     this.calls.push("swap");
     const price = APPROX_USD_PER_TOKEN[request.buySymbol.toUpperCase()] ?? 1;

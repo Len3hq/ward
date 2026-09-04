@@ -257,6 +257,47 @@ export class CdpWalletProvider implements WalletProvider {
     };
   }
 
+  /**
+   * VERIFY LIVE. Pull `amountUsd` USDC from the user's smart account into the agent
+   * spender, within the Spend Permission — the same `useSpendPermission` primitive
+   * `swap` and `payX402` use.
+   *
+   * ACP escrow is funded from the spender's own balance (the buyer address the CDP
+   * adapter exposes), so without this pull an ACP job would spend Ward's float
+   * while the ledger recorded it as the user's spend. A missing permission is a
+   * hard error here, not the soft skip the near-atomic swap/x402 paths take.
+   */
+  async fundAgentFromUser(tgId: string, amountUsd: number): Promise<{ pulledUsd: number }> {
+    const spender = await this.#agentSpender();
+    const permission = await this.#rawPermission(tgId);
+    if (!permission) {
+      throw new Error(
+        "no active Spend Permission — grant one before Ward can spend your USDC on an ACP job",
+      );
+    }
+    await spender.useSpendPermission({
+      spendPermission: permission,
+      value: parseUnits(String(amountUsd), USDC_DECIMALS),
+      network: this.#network,
+    });
+    return { pulledUsd: amountUsd };
+  }
+
+  /** VERIFY LIVE. Send unspent USDC back from the agent spender to the user's smart account. */
+  async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
+    const [smart, spender] = await Promise.all([
+      this.#userSmartAccount(tgId),
+      this.#agentSpender(),
+    ]);
+    const result = await spender.transfer({
+      to: smart.address as Hex,
+      amount: parseUnits(String(amountUsd), USDC_DECIMALS),
+      token: "usdc",
+      network: this.#network,
+    });
+    return { txHash: (result as { transactionHash?: string }).transactionHash ?? "0x" };
+  }
+
   /** The full on-chain SpendPermission struct, needed by `useSpendPermission`. */
   async #rawPermission(tgId: string) {
     const [smart, spender] = await Promise.all([

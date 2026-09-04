@@ -55,6 +55,20 @@ export interface WalletProvider {
   payX402(tgId: string, request: X402Request): Promise<X402Result>;
   /** Capped swap on Base, funded from the agent spender. */
   swap(tgId: string, request: SwapRequest): Promise<SwapResult>;
+
+  /**
+   * Pull `amountUsd` USDC from the user's smart account into the agent spender,
+   * within their Spend Permission. ACP escrow is funded from the spender's own
+   * balance, so this pull is what makes a job **the user's** spend rather than
+   * Ward's float. No active permission → throw; never silently fall back.
+   */
+  fundAgentFromUser(tgId: string, amountUsd: number): Promise<{ pulledUsd: number }>;
+  /**
+   * Return unspent USDC from the agent spender to the user's smart account —
+   * escrow releases to the buyer (the spender), so a job that doesn't settle, or
+   * settles under budget, must not leave the user's money in Ward's wallet.
+   */
+  refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }>;
 }
 
 export interface X402Request {
