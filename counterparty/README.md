@@ -52,12 +52,32 @@ Its credentials are **its own**, from a second registration at
 
 The wallet needs a little ETH on Base for gas. It needs no USDC — it receives.
 
-## Before you trust the event names
+## What the installed SDK actually does
 
-The seller-side ACP event names in `index.ts` are **not confirmed against a live
-run** — only the buyer-side flow in `src/acp/virtuals.ts` came from the v2 README.
-`index.ts` therefore logs every system event it receives. Run it, read the log,
-narrow `ACCEPT_EVENTS` / `WORK_EVENTS` to what actually arrives, and only then
-call the spike done. A job that hasn't gone created → escrowed → fulfilled → paid
+Written against `@virtuals-protocol/acp-node-v2` **0.1.12**, read from `dist/`.
+Two places its README is wrong, both of which cost a debugging cycle:
+
+- **`AcpAgent.create({ evmProvider })`**, not `provider`. `clientFactory.js`
+  destructures `{ evmProvider, solanaProvider }` and throws "At least one
+  provider… must be provided" otherwise.
+- **`ViemProviderAdapter` is an abstract scaffold** — every method throws
+  "Override in subclass". `PrivyAlchemyEvmProviderAdapter` is the only usable
+  built-in EVM adapter, and it wants `walletAddress` + `walletId` +
+  `signerPrivateKey` + `chains: [base]`.
+
+The seller lifecycle, from `events/types.d.ts` and `jobSession.d.ts`:
+
+```
+job.created → budget.set → job.funded → (seller) session.submit(deliverable)
+  → job.submitted → (evaluator) session.complete() → job.completed
+```
+
+There is **no accept step** — the seller's only moves are `submit(string)` and
+`reject(reason)`. The buyer's requirement arrives as a `message` entry with
+`contentType: "requirement"`, not on an event. The deliverable comes back on
+`JobSubmittedEvent.deliverable`, also not as a message.
+
+The event names are now confirmed; what is **not** yet confirmed is a real
+settlement. A job that hasn't gone created → funded → submitted → completed
 end-to-end has not settled, and per ACP.md the honest move is to fall back to
 `ACP_MODE=stub` rather than dress up a partial run.

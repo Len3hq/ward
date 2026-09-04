@@ -1,3 +1,7 @@
+import { base } from "@account-kit/infra";
+import { AcpAgent, PrivyAlchemyEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
+import type { JobRoomEntry, JobSession } from "@virtuals-protocol/acp-node-v2";
+
 import { assess } from "./score.ts";
 
 /**
@@ -9,84 +13,92 @@ import { assess } from "./score.ts";
  * disclosed plainly rather than presented as an independent third party. See
  * `counterparty/README.md`.
  *
- * ── UNVERIFIED: the seller event names ────────────────────────────────────────
- * The buyer-side flow in `src/acp/virtuals.ts` is taken from the v2 README; the
- * seller-side event names are NOT confirmed against a live run. Rather than guess
- * silently, this logs every system event it sees and handles the ones we believe
- * exist. Run it, read the log, then narrow `WORK_EVENTS` / `ACCEPT_EVENTS` to
- * whatever actually arrives. Do not report the spike as working until a real job
- * goes created → escrowed → fulfilled → paid.
+ * Written against the installed SDK (`@virtuals-protocol/acp-node-v2` 0.1.12),
+ * not guessed. Two things its README gets wrong, both confirmed against
+ * `dist/`:
+ *
+ * - `AcpAgent.create` takes **`evmProvider`**, not `provider` — `clientFactory.js`
+ *   destructures `{ evmProvider, solanaProvider }` and throws otherwise.
+ * - `ViemProviderAdapter` is an abstract scaffold whose every method throws
+ *   "Override in subclass". `PrivyAlchemyEvmProviderAdapter` is the only usable
+ *   built-in EVM adapter.
+ *
+ * The seller's only move is `submit(deliverable)` on `job.funded` — there is no
+ * accept step, and the deliverable is a **string**.
  */
 
-/** Events that mean "the buyer wants the work done now". */
-const WORK_EVENTS = ["job.submitted", "job.escrowed", "job.funded", "job.started"];
-/** Events that mean "a buyer is offering you a job" — accept if the price is sane. */
-const ACCEPT_EVENTS = ["job.requested", "job.created", "job.offered"];
+const CHAIN_ID = 8453; // Base
 
-const MIN_PRICE_USD = Number(process.env.COUNTERPARTY_MIN_USD ?? "0.01");
+function required(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`set ${name} in counterparty/.env — see README.md`);
+  return value;
+}
+
+/**
+ * The buyer's requirement arrives as a `requirement` message, not on the event —
+ * Ward sends `{ ticker }` via `createJobByOfferingName`. Read it off the session's
+ * entries so a job hydrated on restart works the same as a live one.
+ */
+function subjectOf(session: JobSession): string {
+  for (const entry of session.entries) {
+    if (entry.kind !== "message" || entry.contentType !== "requirement") continue;
+    try {
+      const parsed: unknown = JSON.parse(entry.content);
+      if (parsed && typeof parsed === "object") {
+        const { ticker, subject, token } = parsed as Record<string, unknown>;
+        const found = ticker ?? subject ?? token;
+        if (typeof found === "string" && found.trim()) return found.trim();
+      }
+    } catch {
+      if (entry.content.trim()) return entry.content.trim();
+    }
+  }
+  throw new Error("no requirement message carrying a ticker or address");
+}
 
 async function main(): Promise<void> {
-  const walletId = process.env.ACP_WALLET_ID?.trim();
-  const signerKey = process.env.ACP_SIGNER_KEY?.trim();
-  if (!walletId || !signerKey) {
-    throw new Error("set ACP_WALLET_ID and ACP_SIGNER_KEY in counterparty/.env — see README.md");
-  }
+  const agent = await AcpAgent.create({
+    evmProvider: await PrivyAlchemyEvmProviderAdapter.create({
+      walletAddress: required("ACP_WALLET_ADDRESS") as `0x${string}`,
+      walletId: required("ACP_WALLET_ID"),
+      signerPrivateKey: required("ACP_SIGNER_KEY"),
+      chains: [base],
+      ...(process.env.ACP_BUILDER_CODE?.trim()
+        ? { builderCode: process.env.ACP_BUILDER_CODE.trim() }
+        : {}),
+    }),
+  });
 
-  // Dynamic so this file typechecks in Ward's root project without the beta SDK
-  // installed (the same escape hatch `src/acp/virtuals.ts` uses).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mod: any;
-  try {
-    mod = await import("@virtuals-protocol/acp-node-v2" as string);
-  } catch {
-    throw new Error("run `npm i` inside counterparty/ first — @virtuals-protocol/acp-node-v2");
-  }
-
-  const { AcpAgent } = mod;
-  const agent = await AcpAgent.create({ walletId, signerKey });
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agent.on("entry", async (session: any, entry: any) => {
+  agent.on("entry", async (session: JobSession, entry: JobRoomEntry) => {
     if (entry.kind !== "system") return;
-    const type: string = entry.event?.type ?? "unknown";
-    console.log(`[event] ${type}`);
+    const type = entry.event.type;
+    console.log(`[${session.jobId}] ${type}`);
+
+    // Escrow is funded — do the work and submit. This is the seller's only move.
+    if (type !== "job.funded") return;
 
     try {
-      if (ACCEPT_EVENTS.includes(type)) {
-        const priceUsd = Number(entry.event?.priceUsd ?? entry.event?.budgetUsd ?? 0);
-        if (priceUsd && priceUsd < MIN_PRICE_USD) {
-          console.log(`  rejecting: $${priceUsd} is under the $${MIN_PRICE_USD} minimum`);
-          await session.reject?.("below minimum price");
-          return;
-        }
-        console.log("  accepting");
-        await session.accept?.();
-        return;
-      }
-
-      if (WORK_EVENTS.includes(type)) {
-        const subject = String(
-          entry.event?.params?.ticker ?? entry.event?.job?.params?.ticker ?? "",
-        );
-        console.log(`  assessing ${subject}`);
-        const report = await assess(subject);
-        console.log(
-          `  → ${report.band} (${report.risk_score}/100), ${report.flags.length} flag(s)`,
-        );
-        await session.deliver({ contentType: "deliverable", content: report });
-        console.log("  delivered");
-      }
+      const subject = subjectOf(session);
+      console.log(`  assessing ${subject}`);
+      const report = await assess(subject);
+      console.log(`  → ${report.band} (${report.risk_score}/100), ${report.flags.length} flag(s)`);
+      await session.submit(JSON.stringify(report));
+      console.log("  submitted");
     } catch (err) {
-      // Never deliver a fabricated or degraded report to look successful — reject
+      // Never submit a fabricated or degraded report to look successful — reject
       // the job and take the trust hit honestly.
       const why = err instanceof Error ? err.message : String(err);
       console.error(`  failed: ${why}`);
-      await session.reject?.(why).catch(() => undefined);
+      await session
+        .reject(why)
+        .catch((e: unknown) => console.error(`  reject failed: ${String(e)}`));
     }
   });
 
   await agent.start();
-  console.log(`counterparty listening — wallet ${walletId}, min $${MIN_PRICE_USD}/job`);
+  const address = await agent.getAddress();
+  console.log(`counterparty listening as ${address} on chain ${CHAIN_ID}`);
 }
 
 main().catch((err: unknown) => {
