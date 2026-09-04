@@ -117,6 +117,18 @@ hire reads the re-derived trust score. **The trust loop works today against a
 go/no-go spike — [ACP.md](./ACP.md). If it doesn't settle end-to-end, it's cut
 cleanly, never faked.
 
+An ACP job is charged to **the user's** wallet, pulled through their Spend
+Permission like any other spend — not absorbed by a Ward-side float. Gas stays an
+operator cost.
+
+**Counterparty disclosure.** The seller agent Ward hires on the real path
+([`counterparty/`](./counterparty/)) has its own ACP registration, wallet and key,
+and settles real escrow — but it is **run by the same team as Ward**, not an
+independent third party. It sells a reproducible token-risk report (every report
+cites its sources and the sha256 of the response it was derived from, so the work
+can be re-run rather than trusted). Prefer an independently-registered agent if one
+offers the service.
+
 Without keys, everything runs on deterministic stubs (`SIBYL_MEMORY_MODE=fs`, no
 `CDP_*`, `ACP_MODE=stub`, no `OPENAI_API_KEY`) — enough to demo the whole memory
 loop.

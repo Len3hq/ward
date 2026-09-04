@@ -1,0 +1,14 @@
+{
+  "name": "ward-counterparty",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Seller-side ACP agent: sells a reproducible Base token-risk report. Run by the Ward team — see README.md.",
+  "license": "MIT",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@virtuals-protocol/acp-node-v2": "*"
+  }
+}

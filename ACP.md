@@ -86,6 +86,15 @@ market). If none offers token-risk assessment, the fallback — a second minimal
 agent with its own identity + wallet — **must be disclosed plainly in the README**;
 a same-team counterparty presented as external reads as self-dealing.
 
+That fallback is built: [`counterparty/`](./counterparty/) — its own registration,
+wallet and key, selling one reproducible token-risk report (`counterparty/score.ts`,
+a deterministic rule set over GoPlus, with Dexscreener resolving a ticker to a Base
+address). Every report states the address it scored, how it got there, and the
+sha256 of each source response, so a judge can re-run it instead of trusting it.
+The disclosure lives in both [`counterparty/README.md`](./counterparty/README.md)
+and the root README. Its seller-side ACP event names are **unverified** — it logs
+every event it receives so a live run can narrow them.
+
 The stub counterparty is `agent://ward-analyst.stub` and is labelled `[SIMULATED]`
 in every result — never shown as a real third party.
 
