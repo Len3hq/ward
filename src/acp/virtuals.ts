@@ -1,4 +1,7 @@
+import { encodeFunctionData, erc20Abi, parseUnits } from "viem";
+
 import { loadConfig } from "../config.ts";
+import type { Hex } from "../wallet/index.ts";
 import { walletProvider } from "../wallet/index.ts";
 import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
 
@@ -17,11 +20,29 @@ import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
  * fake a settlement.**
  *
  * The SDK is loaded dynamically so the (heavy, beta) dependency is only needed
- * when actually running the spike. The event flow below is from the v2 README;
- * confirm every call against a live run.
+ * when actually running the spike.
+ *
+ * ── Who pays ──────────────────────────────────────────────────────────────────
+ * Escrow draws on the **registered ACP agent wallet**, not on Ward's CDP agent
+ * spender — the Virtuals console issues that wallet and the signer key authorizes
+ * signing for it. That wallet must therefore never be a Ward-funded float, or
+ * every ACP job would be Ward paying while the ledger recorded a user spend. So
+ * each job moves the user's own money through it and leaves it flat:
+ *
+ *   pull budget from ward-user-<tgId>   (their Spend Permission) → CDP spender
+ *   forward CDP spender → buyerAddress  (skipped if they're the same address)
+ *   session.fund()                      escrow draws on buyerAddress
+ *   refund buyerAddress → user          whatever the job didn't consume
+ *
+ * `buyerAddress` is whatever `agent.getAddress()` reports, so this is correct
+ * regardless of which wallet backs the adapter.
  */
 
 const OFFERING_KEYWORD = "token risk";
+/** USDC on Base — the escrow asset. */
+const USDC_BASE: Hex = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const USDC_DECIMALS = 6;
+const CHAIN_ID = 8453; // Base
 
 export class VirtualsAcpProvider implements AcpProvider {
   readonly kind = "virtuals" as const;
@@ -43,11 +64,11 @@ export class VirtualsAcpProvider implements AcpProvider {
 
   async hire(tgId: string, job: AcpJobRequest): Promise<AcpJobResult> {
     const wallet = walletProvider();
-    const { agent, stop } = await this.#agent();
+    const { agent, adapter, stop } = await this.#agent();
     /** What we pulled from *this user's* smart account to fund escrow. */
     let pulledUsd = 0;
     try {
-      const buyerAddress: string = await agent.getAddress();
+      const buyerAddress = (await agent.getAddress()) as Hex;
       const found: Array<{ walletAddress: string; offerings: Array<{ name: string }> }> =
         await agent.browseAgents(OFFERING_KEYWORD, { topK: 1 });
       const provider = found[0];
@@ -55,8 +76,11 @@ export class VirtualsAcpProvider implements AcpProvider {
         return notSettled(job, "no counterparty offering token-risk assessment");
       }
 
-      const chainId = 8453; // Base
+      const chainId = CHAIN_ID;
       const budget = job.maxUsd;
+
+      /** The counterparty's raw output, captured off `job.submitted`. */
+      let deliverable: string | null = null;
 
       const settled = await new Promise<AcpJobResult>((resolve) => {
         let done = false;
@@ -71,23 +95,30 @@ export class VirtualsAcpProvider implements AcpProvider {
           if (entry.kind !== "system") return;
           try {
             if (entry.event.type === "budget.set") {
-              // The user's money, not Ward's float: pull the budget through *this
-              // user's* Spend Permission before escrow draws on the spender. Throws
-              // if they have no active permission — the job then never funds.
+              // The user's money, not Ward's: pull the budget through *this user's*
+              // Spend Permission, then forward it to the address escrow will draw
+              // on. Throws if they have no active permission — the job never funds.
               ({ pulledUsd } = await wallet.fundAgentFromUser(tgId, budget));
+              const spender = (await wallet.connect(tgId)).agentSpender;
+              if (spender.toLowerCase() !== buyerAddress.toLowerCase()) {
+                await wallet.transferUsdcFromSpender(buyerAddress, pulledUsd);
+              }
               await session.fund(); // AssetToken.usdc(budget, chainId) — cap enforced by our gate
             } else if (entry.event.type === "job.submitted") {
+              // `JobSubmittedEvent.deliverable` is the counterparty's output, carried
+              // on the event itself — NOT a `contentType: "deliverable"` message. An
+              // entry scan finds nothing here, and a null result scores as a thin
+              // deliverable (-0.1 trust) on a job that actually succeeded.
+              deliverable = entry.event.deliverable ?? null;
+              // Ward is its own evaluator (`evaluatorAddress: buyerAddress`), so the
+              // funds stay escrowed until we call this.
               await session.complete("delivered");
             } else if (entry.event.type === "job.completed") {
-              const deliverable = session.entries.findLast?.(
-                (e: { kind: string; contentType?: string; content?: unknown }) =>
-                  e.kind === "message" && e.contentType === "deliverable",
-              );
               finish({
                 counterpartyId: `agent://${provider.walletAddress}`,
                 jobType: job.jobType,
                 outcomeSummary: "job completed",
-                rawResult: deliverable?.content ?? null,
+                rawResult: parseDeliverable(deliverable),
                 settled: true,
                 amountUsd: budget,
               });
@@ -117,12 +148,14 @@ export class VirtualsAcpProvider implements AcpProvider {
         setTimeout(() => finish(notSettled(job, "timed out")), 180_000);
       });
 
-      // Escrow releases to the buyer — the agent spender — so whatever the job
-      // didn't consume is still the user's money sitting in Ward's wallet.
+      // Escrow releases to the buyer, so whatever the job didn't consume is the
+      // user's money sitting in Ward's ACP wallet. Send it back from there — the
+      // CDP provider can't sign for that wallet, only the ACP adapter can.
       const unspent = round6(pulledUsd - (settled.settled ? settled.amountUsd : 0));
       if (unspent > 0) {
         try {
-          await wallet.refundUser(tgId, unspent);
+          const { smartAccount } = await wallet.connect(tgId);
+          await refundFromBuyer(adapter, chainId, smartAccount, unspent);
         } catch (err) {
           // The user is owed money — say so loudly and persist it in the job history
           // rather than let a silent catch bury it.
@@ -138,12 +171,18 @@ export class VirtualsAcpProvider implements AcpProvider {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async #agent(): Promise<{ agent: any; stop: () => Promise<void> }> {
+  async #agent(): Promise<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    agent: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    adapter: any;
+    stop: () => Promise<void>;
+  }> {
     const config = loadConfig();
     if (!config.acp) {
       throw new Error(
-        "ACP_MODE=virtuals but ACP credentials are missing. See ACP.md — run the spike or set ACP_MODE=stub.",
+        "ACP_MODE=virtuals but ACP credentials are missing (need ACP_WALLET_ADDRESS, " +
+          "ACP_WALLET_ID, ACP_SIGNER_KEY). See ACP.md — run the spike or set ACP_MODE=stub.",
       );
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -155,15 +194,67 @@ export class VirtualsAcpProvider implements AcpProvider {
         "ACP_MODE=virtuals but `@virtuals-protocol/acp-node-v2` is not installed. See ACP.md.",
       );
     }
-    const { AcpAgent } = mod;
-    // The v2 SDK ships a Privy+Alchemy adapter; a CDP-backed IEvmProviderAdapter
-    // (reusing the agent spender) is the intended integration — see acp/cdp-adapter.ts.
-    const { CdpEvmProviderAdapter } =
-      (await import("./cdp-adapter.ts")) as typeof import("./cdp-adapter.ts");
-    const agent = await AcpAgent.create({
-      provider: await CdpEvmProviderAdapter.create(config.acp),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let chains: any;
+    try {
+      chains = await import("@account-kit/infra" as string);
+    } catch {
+      throw new Error("ACP_MODE=virtuals needs `@account-kit/infra` (an SDK dep). See ACP.md.");
+    }
+
+    const { AcpAgent, PrivyAlchemyEvmProviderAdapter } = mod;
+    // `PrivyAlchemyEvmProviderAdapter` is the only working built-in EVM adapter —
+    // `ViemProviderAdapter` is an abstract scaffold whose every method throws.
+    const adapter = await PrivyAlchemyEvmProviderAdapter.create({
+      walletAddress: config.acp.walletAddress,
+      walletId: config.acp.walletId,
+      signerPrivateKey: config.acp.signerKey,
+      chains: [chains.base],
+      ...(config.acp.builderCode ? { builderCode: config.acp.builderCode } : {}),
     });
-    return { agent, stop: () => agent.stop() };
+    // `evmProvider`, NOT `provider` — the SDK README says `provider`, but
+    // `clientFactory.js` destructures `{ evmProvider, solanaProvider }` and throws
+    // "At least one provider must be provided" otherwise. Confirmed against 0.1.12.
+    const agent = await AcpAgent.create({ evmProvider: adapter });
+    return { agent, adapter, stop: () => agent.stop() };
+  }
+}
+
+/**
+ * Send USDC out of the ACP agent wallet, via the adapter that holds its signer.
+ * `IEvmProviderAdapter.sendTransaction` takes a viem `Call`, so this is a plain
+ * ERC-20 transfer — there is no wallet-provider path to this address.
+ */
+async function refundFromBuyer(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adapter: any,
+  chainId: number,
+  to: Hex,
+  amountUsd: number,
+): Promise<void> {
+  await adapter.sendTransaction(chainId, {
+    to: USDC_BASE,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [to, parseUnits(String(amountUsd), USDC_DECIMALS)],
+    }),
+  });
+}
+
+/**
+ * The deliverable is a string on the wire. Prefer the parsed object (the report
+ * `counterparty/score.ts` produces), but keep the raw string rather than dropping
+ * a non-JSON deliverable — it still goes through `validateExternalData`, and a
+ * dropped result would misread as a counterparty that delivered nothing.
+ */
+function parseDeliverable(raw: string | null): unknown {
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
   }
 }
 

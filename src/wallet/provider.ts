@@ -64,9 +64,14 @@ export interface WalletProvider {
    */
   fundAgentFromUser(tgId: string, amountUsd: number): Promise<{ pulledUsd: number }>;
   /**
-   * Return unspent USDC from the agent spender to the user's smart account —
-   * escrow releases to the buyer (the spender), so a job that doesn't settle, or
-   * settles under budget, must not leave the user's money in Ward's wallet.
+   * Send USDC from the agent spender to any address. Used to forward a user's
+   * pulled budget on to whatever address the ACP escrow actually draws on, which
+   * is the registered agent wallet rather than the spender.
+   */
+  transferUsdcFromSpender(to: Hex, amountUsd: number): Promise<{ txHash: string }>;
+  /**
+   * Return unspent USDC to the user's smart account — a job that doesn't settle,
+   * or settles under budget, must not leave the user's money in a Ward wallet.
    */
   refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }>;
 }

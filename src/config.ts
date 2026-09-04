@@ -26,6 +26,8 @@ export interface CdpConfig {
 }
 
 export interface AcpConfig {
+  /** The registered agent wallet's EVM address — escrow draws on THIS address. */
+  walletAddress: string;
   walletId: string;
   signerKey: string;
   builderCode: string | undefined;
@@ -80,10 +82,11 @@ function cdpConfig(): CdpConfig | undefined {
 }
 
 function acpConfig(): AcpConfig | undefined {
+  const walletAddress = optional("ACP_WALLET_ADDRESS");
   const walletId = optional("ACP_WALLET_ID");
   const signerKey = optional("ACP_SIGNER_KEY");
-  if (walletId && signerKey) {
-    return { walletId, signerKey, builderCode: optional("ACP_BUILDER_CODE") };
+  if (walletAddress && walletId && signerKey) {
+    return { walletAddress, walletId, signerKey, builderCode: optional("ACP_BUILDER_CODE") };
   }
   return undefined;
 }

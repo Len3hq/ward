@@ -100,6 +100,11 @@ export class StubWalletProvider implements WalletProvider {
     return { pulledUsd: amountUsd };
   }
 
+  async transferUsdcFromSpender(to: Hex, amountUsd: number): Promise<{ txHash: string }> {
+    this.calls.push("transferUsdcFromSpender");
+    return { txHash: fakeHash(`transfer-${to}-${amountUsd}-${Date.now()}`) };
+  }
+
   async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
     this.calls.push("refundUser");
     return { txHash: fakeHash(`refund-${tgId}-${amountUsd}-${Date.now()}`) };

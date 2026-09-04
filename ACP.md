@@ -35,12 +35,21 @@ as a swap or an x402 purchase, not a Ward-funded perk:
 
 ```
 evaluateGate(acp_job, budget)              memory cap ∧ on-chain allowance
-  → fundAgentFromUser(tgId, budget)        pull the budget from ward-user-<tgId>
-                                           through THEIR Spend Permission
-  → session.fund()                         escrow draws on the agent spender
-  → refundUser(tgId, budget − settled)     escrow releases to the buyer (the
-                                           spender); the remainder is the user's
+  → fundAgentFromUser(tgId, budget)        pull from ward-user-<tgId> through
+                                           THEIR Spend Permission → CDP spender
+  → transferUsdcFromSpender(buyer, …)      forward to the address escrow draws
+                                           on (skipped if it IS the spender)
+  → session.fund()                         escrow draws on the ACP agent wallet
+  → refund buyer → ward-user-<tgId>        escrow releases to the buyer; the
+                                           remainder is the user's
 ```
+
+The middle hop exists because escrow draws on the **registered ACP agent wallet**,
+not on Ward's CDP spender — the Virtuals console issues that wallet and the signer
+key authorizes signing for it. Without the hop, every job would spend whatever
+Ward had parked there. The target is always `agent.getAddress()`, so this stays
+correct whichever wallet backs the adapter. The refund leaves from that wallet via
+the ACP adapter's `sendTransaction`, since the CDP provider cannot sign for it.
 
 The pull is what makes `appendSpend({ action_type: "acp_job" })` true — without it
 the ledger would record a user spend while Ward's float actually paid. No active
@@ -49,10 +58,12 @@ Spend Permission is a **hard error**, never a silent fallback to Ward's balance
 
 Two things stay Ward-side, by design:
 
-- **Gas.** The agent spender submits every transaction, so ETH on Base is an
-  operator cost that scales with usage — users never touch it.
-- **Nothing else.** The spender is a conduit, not a float; it should hold no
-  meaningful USDC of its own.
+- **Gas.** Ward submits every transaction, so ETH on Base is an operator cost that
+  scales with usage — users never touch it.
+- **Nothing else.** Both the CDP spender and the ACP agent wallet are conduits,
+  not floats; each should sit near zero USDC between jobs. A balance accumulating
+  in either means a refund failed — check `acp_job_history` for the
+  "owed to user" marker.
 
 The pull lives in `acp/virtuals.ts`, **not** in `execution/acp.ts` — the stub
 counterparty is simulated, so a stub-mode hire must move no money at all. There is
@@ -65,14 +76,20 @@ a test pinning that (`test/acp.stub.test.ts`).
 spike with a hard go/no-go:
 
 1. `npm i @virtuals-protocol/acp-node-v2`
-2. Register the agent at <https://app.virtuals.io/acp/new>; add a signer (Signers
-   tab); copy `walletId`, the signer private key, and the `bc-…` builder code.
-3. Implement `src/acp/cdp-adapter.ts` — an `IEvmProviderAdapter` over the CDP agent
-   spender (`sendCalls` / `signMessage` / `signTypedData` / `getTransactionReceipt`
-   / `readContract` / `getLogs`), so escrow reuses the agent spender instead of a
-   Privy + Alchemy wallet.
-4. Set `ACP_MODE=virtuals` + `ACP_WALLET_ID` / `ACP_SIGNER_KEY` / `ACP_BUILDER_CODE`.
-5. Run one job end-to-end: **created → escrowed → fulfilled → paid.**
+2. Register the agent at <https://app.virtuals.io/acp/new>; on its Wallet tab copy
+   the EVM address and the EVM wallet id, then Signers → "+ Add Key" for the signer
+   private key. The `bc-…` builder code is optional.
+3. Same again for the counterparty ([`counterparty/`](./counterparty/)), with its
+   own credentials in `counterparty/.env`.
+4. Set `ACP_MODE=virtuals` + `ACP_WALLET_ADDRESS` / `ACP_WALLET_ID` /
+   `ACP_SIGNER_KEY`. Fund the ACP agent wallet with a little ETH for gas — but not
+   USDC; per-job USDC arrives from the user (see **Who pays**).
+5. Run one job end-to-end: **created → funded → submitted → completed.**
+
+`src/acp/cdp-adapter.ts` is **superseded and unused** — a CDP-backed adapter can't
+substitute a different address for the registered agent wallet. `virtuals.ts` uses
+the SDK's `PrivyAlchemyEvmProviderAdapter`, the only working built-in
+(`ViemProviderAdapter` is an abstract scaffold whose every method throws).
 
 **If it does not settle:** set `ACP_MODE=stub`, drop the `acp_job` intent from the
 demo script, keep the pre-seeded trust history for the memory story. Never fake a
@@ -92,8 +109,8 @@ a deterministic rule set over GoPlus, with Dexscreener resolving a ticker to a B
 address). Every report states the address it scored, how it got there, and the
 sha256 of each source response, so a judge can re-run it instead of trusting it.
 The disclosure lives in both [`counterparty/README.md`](./counterparty/README.md)
-and the root README. Its seller-side ACP event names are **unverified** — it logs
-every event it receives so a live run can narrow them.
+and the root README. It is written against the installed SDK's `dist/` rather than
+its README, which is wrong in two places — see `counterparty/README.md`.
 
 The stub counterparty is `agent://ward-analyst.stub` and is labelled `[SIMULATED]`
 in every result — never shown as a real third party.

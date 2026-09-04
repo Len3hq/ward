@@ -283,19 +283,22 @@ export class CdpWalletProvider implements WalletProvider {
     return { pulledUsd: amountUsd };
   }
 
-  /** VERIFY LIVE. Send unspent USDC back from the agent spender to the user's smart account. */
-  async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
-    const [smart, spender] = await Promise.all([
-      this.#userSmartAccount(tgId),
-      this.#agentSpender(),
-    ]);
+  /** VERIFY LIVE. Send USDC from the agent spender to any address. */
+  async transferUsdcFromSpender(to: Hex, amountUsd: number): Promise<{ txHash: string }> {
+    const spender = await this.#agentSpender();
     const result = await spender.transfer({
-      to: smart.address as Hex,
+      to,
       amount: parseUnits(String(amountUsd), USDC_DECIMALS),
       token: "usdc",
       network: this.#network,
     });
     return { txHash: (result as { transactionHash?: string }).transactionHash ?? "0x" };
+  }
+
+  /** VERIFY LIVE. Send unspent USDC back from the agent spender to the user's smart account. */
+  async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
+    const smart = await this.#userSmartAccount(tgId);
+    return this.transferUsdcFromSpender(smart.address as Hex, amountUsd);
   }
 
   /** The full on-chain SpendPermission struct, needed by `useSpendPermission`. */

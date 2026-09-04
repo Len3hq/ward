@@ -1,15 +1,21 @@
 import type { AcpConfig } from "../config.ts";
 
 /**
- * A CDP-backed `IEvmProviderAdapter` for `@virtuals-protocol/acp-node-v2`, so ACP
- * escrow reuses the agent spender instead of standing up a Privy + Alchemy wallet.
+ * ── SUPERSEDED — nothing imports this. Safe to delete. ────────────────────────
  *
- * ── SPIKE SKELETON ────────────────────────────────────────────────────────────
- * The v2 SDK's `IEvmProviderAdapter` needs: `sendCalls(chainId, calls)`,
- * `signMessage`, `signTypedData`, `getTransactionReceipt`, `readContract`,
- * `getLogs`. Back each with the CDP agent spender (`cdp.evm` + a viem public
- * client on `BASE_RPC_URL`). Fill this in during the go/no-go spike (`ACP.md`);
- * until then `ACP_MODE=virtuals` throws a clear error via `create()`.
+ * The plan was a CDP-backed `IEvmProviderAdapter` so ACP escrow would reuse the
+ * agent spender instead of a Privy + Alchemy wallet. Registering the agent showed
+ * why that doesn't work: the Virtuals console issues the agent its own wallet, and
+ * the Signers panel authorizes keys *for that wallet* — the registered agent
+ * wallet is the buyer, and an adapter can't substitute a different address for it.
+ *
+ * `acp/virtuals.ts` now uses the SDK's `PrivyAlchemyEvmProviderAdapter` (the only
+ * working built-in — `ViemProviderAdapter` is an abstract scaffold whose every
+ * method throws), and keeps ACP jobs on the user's money by moving the pulled
+ * budget through that wallet: user → CDP spender → agent wallet → escrow, with the
+ * remainder refunded back to the user.
+ *
+ * Kept only so the reasoning is on record; delete it whenever.
  */
 export class CdpEvmProviderAdapter {
   private constructor() {
