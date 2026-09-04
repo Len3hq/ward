@@ -1,9 +1,21 @@
 # Virtuals ACP — counterparty market
 
-Ward hires another agent to do work a data endpoint can't — "assess this token's
-risk" — pays via escrow that settles on Base, and **remembers whether the
-counterparty was worth trusting**. The trust write-back (`src/execution/acp.ts`)
-is the load-bearing part; the protocol integration is a spike.
+Ward hires another agent to assess a token's risk, pays via escrow that settles on
+Base, and **remembers whether the counterparty was worth trusting**. The trust
+write-back (`src/execution/acp.ts`) is the load-bearing part; the protocol
+integration is a spike.
+
+**What the counterparty actually sells** (don't overclaim it): a normalization and
+scoring layer over public token-security data — not an independent audit, and not
+analysis a data endpoint couldn't do. It reads GoPlus, applies a deterministic rule
+set, and returns a score, a band and the flags that drove them, citing every source
+and the sha256 of each response so the result is reproducible rather than trusted.
+The judgment is which of ~39 opaque fields matter and how much; the underlying
+detection is GoPlus's. See [`counterparty/`](./counterparty/).
+
+That is thin on purpose. What is being demonstrated here is the **trust loop** —
+read trust before hiring, validate the output as untrusted, write the outcome back,
+let the next hire read it — not the sophistication of the analysis.
 
 ## The trust loop (works today, against the stub)
 
@@ -56,14 +68,26 @@ the ledger would record a user spend while Ward's float actually paid. No active
 Spend Permission is a **hard error**, never a silent fallback to Ward's balance
 (`src/wallet/cdp.ts::fundAgentFromUser`).
 
-Two things stay Ward-side, by design:
+Gas splits by wallet, and only one of them wants ETH:
 
-- **Gas.** Ward submits every transaction, so ETH on Base is an operator cost that
-  scales with usage — users never touch it.
-- **Nothing else.** Both the CDP spender and the ACP agent wallet are conduits,
-  not floats; each should sit near zero USDC between jobs. A balance accumulating
-  in either means a refund failed — check `acp_job_history` for the
-  "owed to user" marker.
+| Wallet                                  | Funded with          | By whom  |
+| --------------------------------------- | -------------------- | -------- |
+| `ward-user-<tgId>` smart account        | **USDC** — job money | the user |
+| `ward-agent-spender` (CDP)              | **ETH** for gas      | operator |
+| ACP agent wallet (`ACP_WALLET_ADDRESS`) | nothing              | —        |
+| counterparty's ACP wallet               | nothing              | —        |
+
+The two ACP wallets are ERC-4337 smart wallets: Base is in the SDK's
+`ERC20_SPONSORED_CHAINS` and the adapter routes through an `alchemy-rpc-erc20`
+endpoint, so **their gas is paid in USDC by a paymaster**, not from an ETH balance.
+Only the CDP spender submits its own transactions and needs ETH.
+
+Neither ACP wallet is a float; each should sit near zero USDC between jobs. A
+balance accumulating in either means a refund failed — check `acp_job_history` for
+the "owed to user" marker. Because the paymaster takes its USDC from the ACP
+wallet, the refund is capped at that wallet's real balance rather than the
+arithmetic remainder (`refundFromBuyer`); a shortfall above a cent is reported, a
+sub-cent gas difference is not.
 
 The pull lives in `acp/virtuals.ts`, **not** in `execution/acp.ts` — the stub
 counterparty is simulated, so a stub-mode hire must move no money at all. There is
@@ -82,8 +106,8 @@ spike with a hard go/no-go:
 3. Same again for the counterparty ([`counterparty/`](./counterparty/)), with its
    own credentials in `counterparty/.env`.
 4. Set `ACP_MODE=virtuals` + `ACP_WALLET_ADDRESS` / `ACP_WALLET_ID` /
-   `ACP_SIGNER_KEY`. Fund the ACP agent wallet with a little ETH for gas — but not
-   USDC; per-job USDC arrives from the user (see **Who pays**).
+   `ACP_SIGNER_KEY`. Fund nothing here — see the table under **Who pays**; the ACP
+   wallets are paymaster-sponsored and per-job USDC arrives from the user.
 5. Run one job end-to-end: **created → funded → submitted → completed.**
 
 `src/acp/cdp-adapter.ts` is **superseded and unused** — a CDP-backed adapter can't

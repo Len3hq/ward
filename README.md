@@ -118,8 +118,8 @@ go/no-go spike — [ACP.md](./ACP.md). If it doesn't settle end-to-end, it's cut
 cleanly, never faked.
 
 An ACP job is charged to **the user's** wallet, pulled through their Spend
-Permission like any other spend — not absorbed by a Ward-side float. Gas stays an
-operator cost.
+Permission like any other spend — not absorbed by a Ward-side float. The wallets
+Ward runs are conduits, not floats; see the funding table in [ACP.md](./ACP.md).
 
 **Counterparty disclosure.** The seller agent Ward hires on the real path
 ([`counterparty/`](./counterparty/)) has its own ACP registration, wallet and key,

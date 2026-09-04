@@ -3,10 +3,15 @@ import { StubAcpProvider } from "./stub.ts";
 import { VirtualsAcpProvider } from "./virtuals.ts";
 
 /**
- * Virtuals ACP counterparty market. Ward hires another agent to do work a data
- * endpoint can't — "assess this token's risk" — pays via escrow that settles on
- * Base, and **remembers whether the counterparty was worth trusting** (the
- * write-back in `execution/acp.ts` is the load-bearing part, not this).
+ * Virtuals ACP counterparty market. Ward hires another agent to assess a token's
+ * risk, pays via escrow that settles on Base, and **remembers whether the
+ * counterparty was worth trusting** (the write-back in `execution/acp.ts` is the
+ * load-bearing part, not this).
+ *
+ * What the counterparty sells is a normalization + scoring layer over public
+ * token-security data, with cited sources and a reproducible score — not an
+ * independent audit, and not work a data endpoint couldn't do. The trust loop is
+ * the point, not the depth of the analysis. See ACP.md.
  *
  * Two implementations:
  * - `virtuals` (`acp/virtuals.ts`) — the real path, `@virtuals-protocol/acp-node-v2`.

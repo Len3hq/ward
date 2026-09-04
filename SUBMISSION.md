@@ -70,7 +70,11 @@ chain would still permit the spend.
   four qualifying actions, all on one memory-enforced ledger.
 - **Virtuals ×1.25** — an ACP job to assess a token's risk; escrow settles on Base;
   the outcome and a trust delta are written back to `acp_job_history` and read
-  before the next hire.
+  before the next hire. Stated plainly: the counterparty is a second agent **we
+  run** (own registration, wallet and key — not an independent third party), and
+  what it sells is a normalization + scoring layer over public token-security data
+  with cited sources and a reproducible score, not an independent audit. The trust
+  write-back is the contribution; the analysis is deliberately thin.
 
 ## Build-in-public post drafts
 

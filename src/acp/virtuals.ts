@@ -43,6 +43,8 @@ const OFFERING_KEYWORD = "token risk";
 const USDC_BASE: Hex = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const USDC_DECIMALS = 6;
 const CHAIN_ID = 8453; // Base
+/** Base gas is sub-cent; a refund shortfall above this is worth reporting. */
+const DUST_USD = 0.01;
 
 export class VirtualsAcpProvider implements AcpProvider {
   readonly kind = "virtuals" as const;
@@ -155,7 +157,14 @@ export class VirtualsAcpProvider implements AcpProvider {
       if (unspent > 0) {
         try {
           const { smartAccount } = await wallet.connect(tgId);
-          await refundFromBuyer(adapter, chainId, smartAccount, unspent);
+          const sent = await refundFromBuyer(adapter, chainId, buyerAddress, smartAccount, unspent);
+          const short = round6(unspent - sent);
+          if (short > DUST_USD) {
+            // Base gas is sub-cent, so a gap this size is a real discrepancy, not
+            // the paymaster — surface it instead of quietly keeping the money.
+            console.error(`ACP refund to ${tgId} short by $${short}`);
+            settled.outcomeSummary += ` [refunded $${sent.toFixed(2)} of $${unspent.toFixed(2)} — $${short.toFixed(2)} owed to user]`;
+          }
         } catch (err) {
           // The user is owed money — say so loudly and persist it in the job history
           // rather than let a silent catch bury it.
@@ -224,23 +233,44 @@ export class VirtualsAcpProvider implements AcpProvider {
  * Send USDC out of the ACP agent wallet, via the adapter that holds its signer.
  * `IEvmProviderAdapter.sendTransaction` takes a viem `Call`, so this is a plain
  * ERC-20 transfer — there is no wallet-provider path to this address.
+ *
+ * Capped at the wallet's real balance. Base is in the SDK's
+ * `ERC20_SPONSORED_CHAINS` and the adapter routes through an `alchemy-rpc-erc20`
+ * endpoint, so gas is paid in USDC out of this wallet — leaving it holding
+ * slightly less than `pulled − settled`. Refunding the arithmetic remainder would
+ * revert and report a false "owed to user".
+ *
+ * Returns what was actually sent, in USD.
  */
 async function refundFromBuyer(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adapter: any,
   chainId: number,
+  from: Hex,
   to: Hex,
   amountUsd: number,
-): Promise<void> {
+): Promise<number> {
+  const wanted = parseUnits(String(amountUsd), USDC_DECIMALS);
+  const balance = (await adapter.readContract(chainId, {
+    address: USDC_BASE,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [from],
+  })) as bigint;
+
+  const value = wanted < balance ? wanted : balance;
+  if (value <= 0n) return 0;
+
   await adapter.sendTransaction(chainId, {
     to: USDC_BASE,
     value: 0n,
     data: encodeFunctionData({
       abi: erc20Abi,
       functionName: "transfer",
-      args: [to, parseUnits(String(amountUsd), USDC_DECIMALS)],
+      args: [to, value],
     }),
   });
+  return Number(value) / 10 ** USDC_DECIMALS;
 }
 
 /**

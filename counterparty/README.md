@@ -29,11 +29,22 @@ One thing: a **reproducible** Base token-risk report.
 }
 ```
 
-The value is the **scoring layer**, not the data — `score.ts` is a deterministic,
-legible rule set over GoPlus's token-security fields. It is not an audit, and the
-report never claims to be one. Every report carries its source URL and the sha256
-of the exact response it was derived from, so the work is checkable: re-fetch,
-re-run `scoreToken`, get the same number.
+Be exact about the division of labour, because it is easy to overclaim:
+
+- **GoPlus does the detection.** Honeypot simulation, buy/sell tax, mintability,
+  ownership — that analysis is theirs, from a free public API. This agent does not
+  read the chain itself, decompile bytecode, or run a model.
+- **This agent does the judgment.** GoPlus returns ~39 opaque string fields, nearly
+  all irrelevant to any given token. `score.ts` is a deterministic, legible rule set
+  deciding which ones matter, how much each weighs, and what to call the result.
+  That is a normalization + scoring layer, **not an audit**, and the report never
+  claims to be one.
+- Dexscreener resolves a ticker to a Base address, which is a heuristic — the
+  report says which address it landed on and why.
+
+Every report carries each source URL and the sha256 of the exact response it was
+derived from, so the work is checkable: re-fetch, re-run `scoreToken`, get the same
+number. That reproducibility is what this sells — not depth.
 
 `bun test test/counterparty.score.test.ts` (from the repo root) pins the scoring.
 
@@ -50,7 +61,10 @@ Its credentials are **its own**, from a second registration at
 <https://app.virtuals.io/acp/new> — never Ward's. Ward's live in the repo-root
 `.env`; these live here and stay here.
 
-The wallet needs a little ETH on Base for gas. It needs no USDC — it receives.
+**The wallet needs no funding.** Base is in the SDK's `ERC20_SPONSORED_CHAINS` and
+the adapter routes through an `alchemy-rpc-erc20` endpoint, so these are ERC-4337
+smart wallets whose gas is paid via a USDC paymaster — not from an ETH balance. It
+receives USDC for the work it does; it never needs to hold any up front.
 
 ## What the installed SDK actually does
 
