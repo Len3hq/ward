@@ -14,11 +14,62 @@ const endpointSchema = z.object({
   name: z.string(),
   description: z.string(),
   url: z.string(),
-  method: z.string().default("GET"),
+  method: z
+    .string()
+    .default("GET")
+    .transform((m) => m.toUpperCase()),
+  /**
+   * JSON body for POST/PUT/PATCH endpoints. String leaves containing `{subject}`
+   * or `{token}` are filled with the token the user asked about (see
+   * `resolveX402Call`). Ignored for GET/HEAD.
+   */
+  body_template: z.record(z.string(), z.unknown()).optional(),
   cost_usd: z.number().nonnegative(),
   tags: z.array(z.string()).default([]),
 });
 export type X402Endpoint = z.infer<typeof endpointSchema>;
+
+/** A concrete HTTP call, ready for the wallet provider. */
+export interface ResolvedX402Call {
+  url: string;
+  method: string;
+  /** Present only for POST/PUT/PATCH endpoints with a `body_template`. */
+  body?: Record<string, unknown>;
+}
+
+const PLACEHOLDER = /\{(?:subject|token)\}/;
+
+/** True if the endpoint's url or body_template needs a token/subject to be usable. */
+export function endpointNeedsSubject(endpoint: X402Endpoint): boolean {
+  if (PLACEHOLDER.test(endpoint.url)) return true;
+  return (
+    !!endpoint.body_template &&
+    Object.values(endpoint.body_template).some((v) => typeof v === "string" && PLACEHOLDER.test(v))
+  );
+}
+
+/**
+ * Turn a catalog entry + the token the user asked about into a concrete call.
+ * `{subject}` / `{token}` placeholders in the url (any method) and in every
+ * string leaf of `body_template` (POST/PUT/PATCH) are replaced with `subject`.
+ */
+export function resolveX402Call(endpoint: X402Endpoint, subject?: string): ResolvedX402Call {
+  const sub = (subject ?? "").trim();
+  const fill = (s: string): string => s.replace(/\{(?:subject|token)\}/g, sub);
+
+  const method = endpoint.method.toUpperCase();
+  const url = fill(endpoint.url);
+
+  if (method === "GET" || method === "HEAD" || !endpoint.body_template) {
+    return { url, method };
+  }
+
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(endpoint.body_template)) {
+    body[key] = typeof value === "string" ? fill(value) : value;
+  }
+  return { url, method, body };
+}
 
 const catalogFileSchema = z.object({ endpoints: z.array(endpointSchema) });
 

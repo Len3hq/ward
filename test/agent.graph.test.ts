@@ -195,12 +195,23 @@ describe("x402 + swap on one ledger", () => {
     const done = await resume(graph, "e1", true);
     expect(done).toMatch(/paid \$0\.05 for "token risk score"/i);
     expect(done).toMatch(/basescan\.org\/tx\/0x/);
+    // the POST endpoint was called with a JSON body, {subject} filled from the ask
+    expect(done).toContain('"method": "POST"');
+    expect(done).toContain('"token_address": "PEPE"');
 
     const record = await read(TG);
     expect(record?.spent_ledger).toHaveLength(1);
     expect(record?.spent_ledger[0]?.action_type).toBe("x402_data_purchase");
     expect(record?.x402_ledger).toHaveLength(1);
     expect(record?.x402_ledger[0]).toMatchObject({ ok: true });
+  });
+
+  test("a token-scoped endpoint asks which token when the ask names none", async () => {
+    const graph = buildGraph();
+    await onboard(graph, "e3");
+    const reply = await say(graph, "e3", "show me whale flows");
+    expect(reply).toMatch(/which token/i);
+    expect((await read(TG))?.x402_ledger ?? []).toHaveLength(0);
   });
 
   test("x402 and swap share the daily cap; hitting it blocks the next action of either type", async () => {

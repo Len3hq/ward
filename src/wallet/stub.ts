@@ -83,7 +83,13 @@ export class StubWalletProvider implements WalletProvider {
   async payX402(tgId: string, request: X402Request): Promise<X402Result> {
     this.calls.push("payX402");
     return {
-      data: { simulated: true, endpoint: request.url, note: "stub provider — no real payment" },
+      data: {
+        simulated: true,
+        endpoint: request.url,
+        method: request.method,
+        body: request.body ?? null,
+        note: "stub provider — no real payment",
+      },
       txHash: fakeHash(`x402-${tgId}-${request.url}-${Date.now()}`),
       amountUsd: request.expectedUsd,
     };

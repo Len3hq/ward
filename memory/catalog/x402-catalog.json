@@ -1,39 +1,43 @@
 {
-  "_note": "Static x402 endpoint catalog. Discovery is substring/keyword match over `name`, `description`, `tags`. Replaces Len3's pgvector hybrid search. Swap `url` for live endpoints before a demo; `cost_usd` is the expected price (the real price comes from the 402 response and is capped at `cost_usd * 1.5`).",
+  "_note": "x402 endpoint catalog. Discovery is substring/keyword match over `name`, `description`, `tags`. `method` is GET or POST (case-insensitive). For POST/PUT/PATCH, `body_template` is sent as an application/json body. `{subject}` / `{token}` in `url` or in any string value of `body_template` is replaced with the token the user asked about. `cost_usd` is the expected price shown at confirmation; the real price comes from the 402 response and is capped at `cost_usd * 1.5`. VERIFY each endpoint's method + body shape against its live 402 challenge before a real-money demo — these were sourced from the CDP x402 Bazaar (via x402scan) and their contracts can change.",
   "endpoints": [
     {
       "id": "token-risk",
       "name": "Token Risk Score",
-      "description": "Rug-pull and honeypot risk assessment for an ERC-20 on Base: mint authority, LP lock, holder concentration, transfer tax.",
-      "url": "https://x402.example/token-risk",
-      "method": "GET",
+      "description": "Rug-pull and honeypot risk assessment for an ERC-20 on Base: mint authority, LP lock, holder concentration, transfer tax, sniper wallets.",
+      "url": "https://x402.elizaos.ai/api/analytics/analyze_token",
+      "method": "POST",
+      "body_template": { "token_address": "{subject}", "depth": "full" },
       "cost_usd": 0.05,
-      "tags": ["risk", "rug", "scam", "safety", "honeypot", "token", "audit"]
+      "tags": ["risk", "rug", "scam", "safety", "honeypot", "token", "audit", "sniper"]
     },
     {
       "id": "whale-flows",
       "name": "Whale Flows",
-      "description": "Recent large transfers and net accumulation/distribution for a token, by wallet cohort.",
-      "url": "https://x402.example/whale-flows",
-      "method": "GET",
-      "cost_usd": 0.1,
-      "tags": ["whale", "flows", "accumulation", "distribution", "large transfers"]
+      "description": "Recent large transfers and net accumulation/distribution for a token, by wallet cohort, plus holder and market context.",
+      "url": "https://mesh.heurist.xyz/x402/agents/AIXBTProjectInfoAgent/search_projects",
+      "method": "POST",
+      "body_template": { "ticker": "{subject}", "chain": "base", "limit": 5 },
+      "cost_usd": 0.05,
+      "tags": ["whale", "flows", "accumulation", "distribution", "large transfers", "holder"]
     },
     {
       "id": "smart-money",
       "name": "Smart Money Positioning",
-      "description": "What consistently-profitable wallets are buying and selling right now on Base.",
-      "url": "https://x402.example/smart-money",
-      "method": "GET",
-      "cost_usd": 0.15,
-      "tags": ["smart money", "profitable wallets", "positioning", "alpha"]
+      "description": "What consistently-profitable wallets are buying and selling right now on Base, plus market-wide news and macro context.",
+      "url": "https://mesh.heurist.xyz/x402/agents/AIXBTProjectInfoAgent/get_market_summary",
+      "method": "POST",
+      "body_template": { "lookback_days": 7 },
+      "cost_usd": 0.05,
+      "tags": ["smart money", "profitable wallets", "positioning", "alpha", "market"]
     },
     {
       "id": "token-price",
       "name": "Token Price & Liquidity",
       "description": "Spot price, 24h volume, and pool liquidity depth for a Base token.",
-      "url": "https://x402.example/token-price",
-      "method": "GET",
+      "url": "https://x402.lucyos.ai/x402/tools/analyze_token",
+      "method": "POST",
+      "body_template": { "chain": "base", "token": "{subject}", "language": "en" },
       "cost_usd": 0.01,
       "tags": ["price", "liquidity", "volume", "quote"]
     }

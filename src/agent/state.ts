@@ -25,7 +25,7 @@ export interface ConfirmedIntent {
   action_type: ActionType;
   amount_usd: number;
   pair?: string;
-  endpoint?: { name: string; url: string; method: string; cost_usd: number };
+  endpoint?: { name: string; url: string; method: string; body?: unknown; cost_usd: number };
   acp?: { subject: string };
 }
 

@@ -35,7 +35,7 @@ describe("daily cap enforcement", () => {
     expect(await say(graph, "cap", "swap $10 usdc for eth")).toMatch(/daily cap|exceed/i);
     expect(walletCalls().length).toBe(callsBefore);
 
-    // a $0.15 x402 purchase still fits under the ~$5 of headroom
+    // a $0.05 x402 purchase still fits under the ~$5 of headroom
     expect(await askAction(graph, "cap", "smart money positioning on ETH")).toMatch(/confirm/i);
 
     const record = await read(TG);

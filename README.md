@@ -69,8 +69,9 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   `sibyl-memory-mcp` stdio server · [`memory/`](./memory/).
 - **Wallet** — CDP smart account + CDP Server Account spender + on-chain Spend
   Permission · [`src/wallet/`](./src/wallet/), [WALLET.md](./WALLET.md).
-- **Base execution** — the shared gate + a static x402 catalog + the x402 / swap /
-  ACP paths · [`src/execution/`](./src/execution/).
+- **Base execution** — the shared gate + a keyword-matched x402 catalog (GET or
+  POST-with-body, `{subject}`-templated) + the x402 / swap / ACP paths ·
+  [`src/execution/`](./src/execution/), [X402.md](./X402.md).
 - **Counterparty market** — Virtuals ACP hire with trust write-back ·
   [`src/acp/`](./src/acp/), [ACP.md](./ACP.md).
 - **Interface** — Telegram (Telegraf; streamed edits, HTML, 4096-split, confirm

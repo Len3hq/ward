@@ -60,6 +60,8 @@ export interface WalletProvider {
 export interface X402Request {
   url: string;
   method: string;
+  /** JSON body for POST/PUT/PATCH endpoints; `undefined` for GET. */
+  body?: unknown;
   /** Catalog price — what the stub charges; the real price comes from the 402 response. */
   expectedUsd: number;
   /** Hard cap on what the endpoint may charge, in USD. */

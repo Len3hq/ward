@@ -83,6 +83,7 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
       const result = await provider.payX402(state.tgId, {
         url: endpoint.url,
         method: endpoint.method,
+        body: endpoint.body,
         expectedUsd: endpoint.cost_usd,
         maxUsd: round2(endpoint.cost_usd * 1.5),
       });

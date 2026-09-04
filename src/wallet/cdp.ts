@@ -178,6 +178,9 @@ export class CdpWalletProvider implements WalletProvider {
    * Permission, then pay the endpoint via `x402-fetch` (EIP-3009). The CDP account
    * is passed to `wrapFetchWithPayment` as the signer — confirm it satisfies the
    * x402 `Signer` shape, or wrap it with viem's `toAccount`.
+   *
+   * GET endpoints send no body; POST/PUT/PATCH endpoints send `request.body` as
+   * `application/json` (the catalog's `body_template`, with `{subject}` filled).
    */
   async payX402(tgId: string, request: X402Request): Promise<X402Result> {
     const spender = await this.#agentSpender();
@@ -196,7 +199,15 @@ export class CdpWalletProvider implements WalletProvider {
       spender as unknown as Parameters<typeof wrapFetchWithPayment>[1],
       maxValue,
     );
-    const response = await pay(request.url, { method: request.method });
+
+    const method = request.method.toUpperCase();
+    const init: RequestInit = { method };
+    if (request.body !== undefined && method !== "GET" && method !== "HEAD") {
+      init.headers = { "content-type": "application/json" };
+      init.body = JSON.stringify(request.body);
+    }
+
+    const response = await pay(request.url, init);
     if (!response.ok) throw new Error(`x402 endpoint returned ${response.status}`);
 
     const data: unknown = await response.json().catch(() => ({}));

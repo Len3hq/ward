@@ -15,7 +15,13 @@ import {
 import { acpProvider } from "../../acp/index.ts";
 import { loadConfig } from "../../config.ts";
 import { evaluateGate } from "../../execution/gate.ts";
-import { searchCatalog, type X402Endpoint } from "../../execution/catalog.ts";
+import {
+  endpointNeedsSubject,
+  resolveX402Call,
+  searchCatalog,
+  type ResolvedX402Call,
+  type X402Endpoint,
+} from "../../execution/catalog.ts";
 import { walletProvider } from "../../wallet/index.ts";
 import { describeIntent } from "../intent.ts";
 import type { ConfirmedIntent, WardStateType } from "../state.ts";
@@ -42,6 +48,7 @@ export async function confirmNode(
 
   // --- resolve the concrete action + its cost ---
   let endpoint: X402Endpoint | null = null;
+  let resolvedCall: ResolvedX402Call | null = null;
   let acpSubject: string | undefined;
   let acpCounterparty: string | undefined;
   let amountUsd: number;
@@ -51,6 +58,12 @@ export async function confirmNode(
     if (!endpoint) {
       return { messages: [new AIMessage(`I don't have an x402 endpoint for that.`)] };
     }
+    if (endpointNeedsSubject(endpoint) && !intent.token) {
+      return {
+        messages: [new AIMessage("Which token? Give me a ticker or a 0x address.")],
+      };
+    }
+    resolvedCall = resolveX402Call(endpoint, intent.token);
     amountUsd = endpoint.cost_usd;
   } else if (action === "acp_job") {
     acpSubject = intent.token ?? intent.pair ?? "the token";
@@ -106,8 +119,8 @@ export async function confirmNode(
     onchainAllowanceUsd = live?.allowanceUsd ?? permission.allowance_usd;
   }
 
-  const endpointSeen = endpoint
-    ? record.x402_ledger.some((e) => e.url === endpoint!.url)
+  const endpointSeen = resolvedCall
+    ? record.x402_ledger.some((e) => e.url === resolvedCall!.url)
     : undefined;
 
   const gate = evaluateGate({
@@ -136,14 +149,16 @@ export async function confirmNode(
     action_type: action,
     amount_usd: amountUsd,
     pair: intent.pair,
-    endpoint: endpoint
-      ? {
-          name: endpoint.name,
-          url: endpoint.url,
-          method: endpoint.method,
-          cost_usd: endpoint.cost_usd,
-        }
-      : undefined,
+    endpoint:
+      endpoint && resolvedCall
+        ? {
+            name: endpoint.name,
+            url: resolvedCall.url,
+            method: resolvedCall.method,
+            body: resolvedCall.body,
+            cost_usd: endpoint.cost_usd,
+          }
+        : undefined,
     acp: acpSubject ? { subject: acpSubject } : undefined,
   });
 
