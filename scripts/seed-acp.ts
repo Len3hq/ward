@@ -6,11 +6,15 @@
  *   bun run scripts/seed-acp.ts <ward_user_id | telegram:700100200> [counterparty_id]
  *
  * Takes the principal or a `<channel>:<account_id>` reference, like
- * `forget-auth.ts`. Uses whatever memory backend the env selects
- * (SIBYL_MEMORY_MODE).
+ * `forget-auth.ts` — but unlike that one it will *create* the account on first use,
+ * because the demo seeds before the user has ever messaged the bot. Given a channel
+ * reference it does exactly what a first message would: mint a principal and link
+ * the account to it.
+ *
+ * Uses whatever memory backend the env selects (SIBYL_MEMORY_MODE).
  */
 import { appendAcpJob, initialize, read } from "../memory/index.ts";
-import { resolveRef } from "../src/identity/index.ts";
+import { isWardUserId, parseAccountRef, resolveUser } from "../src/identity/index.ts";
 
 const [, , ref, counterparty = "agent://ward-analyst.stub"] = process.argv;
 
@@ -21,9 +25,25 @@ if (!ref) {
   process.exit(1);
 }
 
-const userId = await resolveRef(ref);
-if (userId === null) {
-  console.error(`Could not resolve ${JSON.stringify(ref)} to a Ward user.`);
+async function resolveOrCreate(reference: string): Promise<string> {
+  if (isWardUserId(reference)) return reference;
+  const account = parseAccountRef(reference);
+  if (!account) {
+    throw new Error(
+      `Could not read ${JSON.stringify(reference)}. Pass a ward_<ulid> id, or an ` +
+        `account like "telegram:700100200".`,
+    );
+  }
+  const { userId: resolved, created } = await resolveUser(account.channel, account.accountId);
+  if (created) console.log(`created ${reference} → ${resolved}`);
+  return resolved;
+}
+
+let userId: string;
+try {
+  userId = await resolveOrCreate(ref);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
 

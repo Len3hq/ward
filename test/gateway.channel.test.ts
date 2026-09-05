@@ -2,11 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { backend } from "../memory/backend.ts";
 import { appendSpend, initialize, read, type Channel } from "../memory/index.ts";
-import type { ChannelAdapter, SendMode } from "../src/gateway/adapter.ts";
-import { runTurn, splitMessage } from "../src/gateway/core.ts";
+import { splitMessage } from "../src/gateway/core.ts";
 import { resolveUser } from "../src/identity/index.ts";
 import { mintLinkCode, redeemLinkCode } from "../src/identity/linking.ts";
-import { hermeticSetup, hermeticTeardown, newGraph, walletCalls, type Graph } from "./support.ts";
+import {
+  FakeAdapter,
+  hermeticSetup,
+  hermeticTeardown,
+  newGraph,
+  turnOn,
+  walletCalls,
+  type Graph,
+} from "./support.ts";
 
 /**
  * Phase 11 — the channel abstraction.
@@ -19,51 +26,6 @@ import { hermeticSetup, hermeticTeardown, newGraph, walletCalls, type Graph } fr
 
 const TG_ACCOUNT = "700100200";
 const DISCORD_ACCOUNT = "551234567890123456";
-
-interface Outbound {
-  text: string;
-  mode: SendMode;
-}
-
-/**
- * A channel that records instead of sending. `answers` is the queue of confirmation
- * decisions; `null` stands for "never answered".
- */
-class FakeAdapter implements ChannelAdapter {
-  readonly sent: Outbound[] = [];
-  readonly confirmsAsked: string[] = [];
-  typingCalls = 0;
-
-  constructor(
-    readonly channel: Channel,
-    readonly limit = 2000,
-    readonly editThrottleMs = 0,
-    private answers: Array<boolean | null> = [],
-  ) {}
-
-  async typing(): Promise<void> {
-    this.typingCalls++;
-  }
-
-  async send(text: string, mode: SendMode): Promise<string> {
-    this.sent.push({ text, mode });
-    return String(this.sent.length - 1);
-  }
-
-  async edit(handle: string, text: string, mode: SendMode): Promise<void> {
-    this.sent[Number(handle)] = { text, mode };
-  }
-
-  async askConfirm(text: string): Promise<boolean | null> {
-    this.confirmsAsked.push(text);
-    return this.answers.shift() ?? null;
-  }
-
-  /** Everything said this turn, joined — what the user would have read. */
-  transcript(): string {
-    return this.sent.map((m) => m.text).join("\n");
-  }
-}
 
 let graph: Graph;
 
@@ -80,9 +42,7 @@ async function say(
   accountId: string,
   text: string,
 ): Promise<string> {
-  adapter.sent.length = 0;
-  await runTurn({ graph, adapter, threadId: thread, userId, accountId, text });
-  return adapter.transcript();
+  return turnOn(graph, adapter, { thread, userId, accountId, text });
 }
 
 describe("runTurn on an arbitrary channel", () => {
@@ -158,8 +118,8 @@ describe("confirmations, however the channel asks", () => {
       "swap $20 usdc for eth",
     );
 
-    expect(adapter.confirmsAsked).toHaveLength(1);
-    expect(adapter.confirmsAsked[0]).toMatch(/confirm/i);
+    expect(adapter.confirms).toHaveLength(1);
+    expect(adapter.confirms[0]).toMatch(/confirm/i);
     expect(reply).toMatch(/swapped/i);
     expect((await read(userId))?.spent_ledger).toHaveLength(1);
   });

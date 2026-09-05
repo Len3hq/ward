@@ -48,7 +48,10 @@ Design references that informed new code with nothing carried over:
 - **Virtuals ACP** — `@virtuals-protocol/acp-node-v2` (loaded only for the real
   counterparty spike). See [ACP.md](./ACP.md).
 - **LangGraph** — `@langchain/langgraph`, `@langchain/core`, `@langchain/openai`.
-- **Telegraf**, **viem**, **zod**, **@modelcontextprotocol/sdk**.
+- **Telegraf** (Telegram), **discord.js** (Discord, DM-only).
+- **@modelcontextprotocol/sdk** — used in both directions: as a _client_ to Sibyl
+  Memory, and as a _server_ so Ward itself is an MCP surface. See [MCP.md](./MCP.md).
+- **viem**, **zod**.
 
 ## License
 

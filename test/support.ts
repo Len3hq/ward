@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildGraph } from "../src/agent/graph.ts";
+import type { ChannelAdapter, SendMode } from "../src/gateway/adapter.ts";
+import { runTurn } from "../src/gateway/core.ts";
+import type { Channel } from "../memory/index.ts";
 import { resetAcpProvider } from "../src/acp/index.ts";
 import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
 import type { StubWalletProvider } from "../src/wallet/stub.ts";
@@ -109,4 +112,78 @@ export async function onboard(
 /** The stub wallet provider's call log — a spend must never appear here after a refusal. */
 export function walletCalls(): string[] {
   return (walletProvider() as StubWalletProvider).calls;
+}
+
+// --- channel surfaces (Phase 11+) ---
+
+/**
+ * A channel that records instead of sending, for driving `runTurn` without a real
+ * gateway. `answers` is the queue of confirmation decisions; running out of them
+ * stands for "never answered", which the core treats as a refusal.
+ */
+export class FakeAdapter implements ChannelAdapter {
+  /** Every outbound message, with the mode the core asked for. */
+  readonly sent: Array<{ text: string; mode: SendMode }> = [];
+  readonly confirms: string[] = [];
+  typingCalls = 0;
+
+  constructor(
+    readonly channel: Channel = "telegram",
+    readonly limit = 4096,
+    readonly editThrottleMs = 0,
+    private answers: Array<boolean | null> = [],
+  ) {}
+
+  async typing(): Promise<void> {
+    this.typingCalls++;
+  }
+
+  async send(text: string, mode: SendMode): Promise<string> {
+    this.sent.push({ text, mode });
+    return String(this.sent.length - 1);
+  }
+
+  async edit(handle: string, text: string, mode: SendMode): Promise<void> {
+    this.sent[Number(handle)] = { text, mode };
+  }
+
+  async askConfirm(text: string): Promise<boolean | null> {
+    this.confirms.push(text);
+    return this.answers.shift() ?? null;
+  }
+
+  /** Queue how the next confirmations will be answered. */
+  willAnswer(...answers: Array<boolean | null>): this {
+    this.answers.push(...answers);
+    return this;
+  }
+
+  /** Everything said since the last `clear()` — what the user would have read. */
+  transcript(): string {
+    return this.sent.map((m) => m.text).join("\n");
+  }
+
+  clear(): this {
+    this.sent.length = 0;
+    this.confirms.length = 0;
+    return this;
+  }
+}
+
+/** Drive one turn through an adapter and return what the user would have read. */
+export async function turnOn(
+  graph: Graph,
+  adapter: FakeAdapter,
+  input: { thread: string; userId: string; accountId: string; text: string },
+): Promise<string> {
+  adapter.clear();
+  await runTurn({
+    graph,
+    adapter,
+    threadId: input.thread,
+    userId: input.userId,
+    accountId: input.accountId,
+    text: input.text,
+  });
+  return adapter.transcript();
 }

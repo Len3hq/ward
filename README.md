@@ -33,6 +33,12 @@ On Telegram, in one loop:
 Every field except `risk_label` grows only through use. Each is read on the
 critical path; delete the record and each read fails closed.
 
+The record is keyed by a **Ward user**, not by a chat account. Telegram, Discord and
+an MCP client all resolve to one principal (`ward_<ulid>`), so every row below is one
+object seen from three places: one daily cap, one spend ledger, one revocation log.
+A second app is not a second allowance — that is asserted in
+[`test/identity.cross-channel.test.ts`](./test/identity.cross-channel.test.ts).
+
 | Sibyl Memory field                                                                     | Where it's read                                                                                           | What it changes                                                                      | Deleted →                                                         |
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
 | `ward.authorization/<id>` (the record)                                                 | [`memory/store.ts` `read()`](./memory/store.ts) — `src/agent/nodes/router.ts`, `execute.ts`, `confirm.ts` | exists? → proceed · missing? → **refuse, explain why**                               | every action request is refused; no scope, no budget, no trust    |
@@ -47,6 +53,19 @@ critical path; delete the record and each read fails closed.
 
 The tier map, the exact JSON shape, and which function touches which field are in
 [`memory/README.md`](./memory/README.md).
+
+### The same record, from every surface
+
+| Property                                                                                                                                                                | Proof                                 |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **One daily cap, shared.** Spend $8 of $10 on Telegram, and Discord is refused the next $9 — with nothing broadcast.                                                    | `test/identity.cross-channel.test.ts` |
+| **Revocation is instant everywhere.** `isRevoked()` re-reads before every action, so pausing swaps on Discord refuses the next Telegram swap mid-session.               | same                                  |
+| **The deletion gate crosses channels.** Delete `ward.authorization/<id>` and Telegram, Discord and MCP all refuse — and MCP cannot queue a proposal to route around it. | same                                  |
+| **Identity survives deletion.** Only authority was deleted: the user is still known on every channel, and still refused on every channel.                               | same                                  |
+
+The gate gets _stronger_ with more surfaces, not weaker, because there is only ever
+one record behind them. Channels differ in how they render a message and how they ask
+for a confirmation — never in what the user is allowed to do.
 
 ## The demo
 

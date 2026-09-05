@@ -11,7 +11,14 @@ import { linkCommand, unlinkCommand } from "../src/identity/commands.ts";
 import { accountsFor, resolveExisting, resolveUser } from "../src/identity/index.ts";
 import { createMcpServer } from "../src/mcp/server.ts";
 import { issueToken, resolveToken, tokenAccountId } from "../src/mcp/token.ts";
-import { hermeticSetup, hermeticTeardown, newGraph, walletCalls, type Graph } from "./support.ts";
+import {
+  FakeAdapter,
+  hermeticSetup,
+  hermeticTeardown,
+  newGraph,
+  walletCalls,
+  type Graph,
+} from "./support.ts";
 
 /**
  * Phase 12 — Ward as an MCP server.
@@ -244,29 +251,6 @@ describe("proposing", () => {
 });
 
 describe("delivery to a human channel", () => {
-  /** Records what the user is shown, and answers the confirmation on cue. */
-  class FakeAdapter implements ChannelAdapter {
-    readonly sent: string[] = [];
-    readonly confirms: string[] = [];
-    readonly channel = "telegram" as const;
-    readonly limit = 4096;
-    readonly editThrottleMs = 0;
-
-    constructor(private answers: Array<boolean | null> = []) {}
-    async typing(): Promise<void> {}
-    async send(text: string): Promise<string> {
-      this.sent.push(text);
-      return String(this.sent.length - 1);
-    }
-    async edit(handle: string, text: string): Promise<void> {
-      this.sent[Number(handle)] = text;
-    }
-    async askConfirm(text: string): Promise<boolean | null> {
-      this.confirms.push(text);
-      return this.answers.shift() ?? null;
-    }
-  }
-
   function useAdapter(adapter: ChannelAdapter): void {
     registerChannel("telegram", {
       async notify() {},
@@ -277,7 +261,7 @@ describe("delivery to a human channel", () => {
   }
 
   test("a proposal surfaces as a confirmation on the user's own channel", async () => {
-    const adapter = new FakeAdapter([true]);
+    const adapter = new FakeAdapter("telegram", 4096, 0, [true]);
     useAdapter(adapter);
 
     const client = await connect();
@@ -289,7 +273,7 @@ describe("delivery to a human channel", () => {
     watcher.stop();
 
     // The user is told where it came from before being asked anything.
-    expect(adapter.sent[0]).toMatch(/MCP client asked me/i);
+    expect(adapter.sent[0]?.text).toMatch(/MCP client asked me/i);
     expect(adapter.confirms).toHaveLength(1);
     expect(adapter.confirms[0]).toMatch(/confirm/i);
 
@@ -299,7 +283,7 @@ describe("delivery to a human channel", () => {
   });
 
   test("declining on the human channel moves nothing", async () => {
-    useAdapter(new FakeAdapter([false]));
+    useAdapter(new FakeAdapter("telegram", 4096, 0, [false]));
 
     const client = await connect();
     await call(client, "ward_propose_action", { request: "swap $20 usdc for eth" });
@@ -313,7 +297,7 @@ describe("delivery to a human channel", () => {
   });
 
   test("an ignored proposal moves nothing — silence is never approval", async () => {
-    const adapter = new FakeAdapter([]); // never answered
+    const adapter = new FakeAdapter("telegram", 4096, 0, []); // never answered
     useAdapter(adapter);
 
     const client = await connect();
@@ -337,7 +321,7 @@ describe("delivery to a human channel", () => {
       idempotency_key: "k1",
     });
 
-    const adapter = new FakeAdapter([true]);
+    const adapter = new FakeAdapter("telegram", 4096, 0, [true]);
     useAdapter(adapter);
 
     const client = await connect();
@@ -351,11 +335,11 @@ describe("delivery to a human channel", () => {
     // $5 of headroom left, so $20 is refused — the MCP route bought attention,
     // not authority.
     expect((await read(userId))?.spent_ledger).toHaveLength(1);
-    expect(adapter.sent.join("\n").toLowerCase()).toMatch(/can't|cap|daily|limit/);
+    expect(adapter.transcript().toLowerCase()).toMatch(/can't|cap|daily|limit/);
   });
 
   test("a proposal is dropped if the authorization is deleted before delivery", async () => {
-    const adapter = new FakeAdapter([true]);
+    const adapter = new FakeAdapter("telegram", 4096, 0, [true]);
     useAdapter(adapter);
 
     const client = await connect();

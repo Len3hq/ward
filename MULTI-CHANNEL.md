@@ -427,7 +427,7 @@ the tool list contains nothing matching `execute|swap|pay|send|transfer|approve`
 one that an ignored proposal moves nothing — silence is never approval. Operator setup
 is in `MCP.md`.
 
-### Phase 13 — Cross-channel proofs + docs
+### Phase 13 — Cross-channel proofs + docs — **DONE**
 
 - `test/identity.cross-channel.test.ts` — the three properties from §4: shared daily cap,
   cross-channel revocation, cross-channel deletion gate (all three surfaces).
@@ -441,6 +441,41 @@ is in `MCP.md`.
 - `ATTRIBUTION.md` — note this re-adapts Len3's `PlatformLink` / `resolve-user` concept,
   which the original build plan deliberately stripped (§ line 40, 66). Same idea, no
   JWTs, keyed into Sibyl Memory instead of Postgres.
+
+#### What actually shipped
+
+All of it, plus a documentation bug that would have broken the demo on camera.
+
+`test/identity.cross-channel.test.ts` drives the **real** surfaces — `runTurn` through
+a channel adapter for Telegram and Discord, and a live MCP client over an in-memory
+transport — rather than asserting against the store directly. Nine tests across the
+three properties, each also a demo beat. A fourth fell out while writing them and was
+worth keeping: **identity survives deletion.** Delete the authorization and the user
+is still known on every channel and refused on every channel, because identity and
+authority are separate entities and only one of them was deleted.
+
+**`bun run scripts/seed-acp.ts telegram:<id>` was documented but did not work.** The
+demo seeds _before_ the user has ever messaged the bot, so there is no identity to
+resolve yet and `resolveRef` returned null. Fixed in the script rather than the docs,
+since seeding first is the right order: given a channel reference it now does exactly
+what a first message would — mint a principal and link the account — and says so.
+`forget-auth.ts` deliberately still refuses to create, because you cannot delete what
+was never there.
+
+A third copy of the same fake channel adapter was about to appear, so it moved to
+`test/support.ts` as `FakeAdapter` + `turnOn`, and the two existing suites were
+refitted onto it.
+
+Docs: the README's load-bearing table now says the record is keyed by a Ward _user_
+and carries a four-row cross-channel proof table; `DEMO.md` gains **Beat 5b**, which
+links Discord live on camera and is refused on the cap Telegram already spent;
+`ATTRIBUTION.md` credits the re-adapted `PlatformLink` concept and the one-turn-loop
+gateway shape, and lists `discord.js` and the MCP SDK's second role as a _server_.
+
+Secret sweep re-run after adding the bearer-token system: clean.
+
+**Result:** 202 pass / 8 skip / 0 fail on `fs`, 206 / 4 / 0 against live
+`sibyl-memory-mcp`.
 
 ### Phase 14 — Deferred: wallet-signature linking
 

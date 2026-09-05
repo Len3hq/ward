@@ -9,13 +9,16 @@ fresh-session moment.
 ## Setup (off camera)
 
 ```sh
-set -a; source .env; set +a        # TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, CDP_*, ACP_MODE
+set -a; source .env; set +a        # TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, OPENAI_API_KEY, CDP_*, ACP_MODE
 sibyl status                        # confirm Pro tier + DB path (or SIBYL_MEMORY_MODE=fs)
-bun run scripts/seed-acp.ts <YOUR_TG_ID>   # one already-evaluated ACP job, so trust isn't 0.50 on camera
+bun run scripts/seed-acp.ts telegram:<YOUR_TG_ID>   # one already-evaluated ACP job, so trust isn't 0.50 on camera
 bun run dev                         # terminal 1 — leave running
 ```
 
 Confirm the boot line: `Ward connected to Telegram as @… (…, model gpt-4o-mini).`
+For Beat 5b, also `Ward connected to Discord as … (DM-only).` — and have the Discord
+DM open in a second window, ready to cut to. Ward is DM-only; a guild channel will
+just tell you to DM it.
 
 ## Beat 1 — onboarding + fresh-session recall (≈45s)
 
@@ -103,6 +106,46 @@ you: swap $70 usdc for eth
 ward: That's $70, over your $50 per-action limit. Lower the amount, or raise the cap.
 ```
 
+## Beat 5b — the same cap, from a different app (≈35s) — THE multi-channel moment
+
+Only if Discord is configured. This is the strongest single demonstration that
+**memory, not the chat surface, is the authorization substrate.**
+
+On Telegram, mint a link code:
+
+```
+you:  /link
+ward: Your link code is WARD-4K7M-2XQP
+
+      Send "/link WARD-4K7M-2XQP" from the other app within 5 minutes and it will
+      reach this same Ward — same limits, same spend history, same wallet.
+```
+
+Switch to Discord — a _different app, different account, no shared login_ — and redeem:
+
+```
+you:  /link WARD-4K7M-2XQP
+ward: Linked. This discord account now reaches the Ward you set up on telegram.
+      I've told your other linked accounts, so you'd know if this wasn't you.
+```
+
+Cut back to Telegram for one second: the announcement is already there. Say
+_it tells the original account, so a stolen code can't be used quietly._
+
+Now, still on Discord, ask for more than what Beat 5 left:
+
+```
+you:  swap $70 usdc for eth
+ward: Can't do that — that would take you past your $100 daily cap ($40.05 used,
+      $59.95 left).
+```
+
+Say: _I never told Discord my limits. It read the same record. A second app is not a
+second allowance._
+
+Optionally revoke here and switch back to Telegram to show it refuse — the same point
+as Beat 6, made across two apps.
+
 ## Beat 6 — revoke the Spend Permission on-chain (≈30s)
 
 ```
@@ -143,3 +186,11 @@ the spend. The memory is the authorization._
   aside, no `CDP_*`) and say plainly that the on-chain settlement is simulated —
   the memory loop is identical. Better an honest stub than a faked chain artifact.
 - `/newsession` between beats keeps the transcript clean and re-proves recall.
+- Beat 5b needs both gateways in **one** process (`bun run dev` starts whichever have
+  tokens). Two processes would each hold their own conversation threads; the Sibyl
+  Memory record would still be shared, but the link announcement would not arrive.
+- Don't show `/link mcp` on camera unless you intend to explain it — a bearer token
+  on screen invites the wrong question. The MCP surface is a README/`MCP.md` story:
+  it can read and propose, and deliberately cannot approve.
+- `scripts/forget-auth.ts` and `scripts/seed-acp.ts` both take either
+  `telegram:<id>` or a `ward_<ulid>`, so you never need to look the principal up.
