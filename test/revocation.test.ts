@@ -8,7 +8,7 @@ import {
   newGraph,
   onboard,
   say,
-  TG,
+  USER,
   walletCalls,
 } from "./support.ts";
 
@@ -30,7 +30,7 @@ describe("mid-session revocation", () => {
 
     const paused = await say(graph, "rev", "pause swaps");
     expect(paused).toMatch(/paused swap/i);
-    expect(await isRevoked(TG, "swap")).toBe(true);
+    expect(await isRevoked(USER, "swap")).toBe(true);
 
     const blocked = await say(graph, "rev", "swap $10 usdc for eth");
     expect(blocked).toMatch(/paused|won'?t/i);
@@ -42,8 +42,8 @@ describe("mid-session revocation", () => {
     await onboard(graph, "rev2");
 
     await say(graph, "rev2", "pause swaps");
-    expect(await isRevoked(TG, "swap")).toBe(true);
-    expect(await isRevoked(TG, "x402_data_purchase")).toBe(false);
+    expect(await isRevoked(USER, "swap")).toBe(true);
+    expect(await isRevoked(USER, "x402_data_purchase")).toBe(false);
 
     // an x402 purchase still goes through
     expect(await confirmAction(graph, "rev2", "risk score on PEPE")).toMatch(/paid \$/i);
@@ -57,7 +57,7 @@ describe("mid-session revocation", () => {
     expect(reply).toMatch(/paused every spend/i);
 
     for (const action of ["swap", "x402_data_purchase", "acp_job"] as const) {
-      expect(await isRevoked(TG, action)).toBe(true);
+      expect(await isRevoked(USER, action)).toBe(true);
     }
     expect(await say(graph, "rev3", "swap $5 usdc for eth")).toMatch(/paused|won'?t/i);
   });

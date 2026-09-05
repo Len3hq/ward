@@ -10,7 +10,10 @@ import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
 import type { StubWalletProvider } from "../src/wallet/stub.ts";
 import { resetBackend } from "../memory/backend.ts";
 
-export const TG = "700100200";
+/** The principal every hermetic test acts as. */
+export const USER = "ward_01J9XQ4M7BZK3TVWXY0123456A";
+/** The Telegram account that resolves to it — used by the identity tests. */
+export const TG_ACCOUNT = "700100200";
 
 let tmpDir = "";
 
@@ -50,9 +53,14 @@ function lastText(messages: unknown[]): string {
 }
 
 /** Send a message; returns the final reply text (or "" if the turn interrupted). */
-export async function say(graph: Graph, thread: string, text: string, tgId = TG): Promise<string> {
+export async function say(
+  graph: Graph,
+  thread: string,
+  text: string,
+  userId = USER,
+): Promise<string> {
   const result = await graph.invoke(
-    { messages: [new HumanMessage(text)], tgId },
+    { messages: [new HumanMessage(text)], userId, channel: "telegram", channelAccountId: "" },
     { configurable: { thread_id: thread } },
   );
   return lastText(result.messages);
@@ -63,10 +71,10 @@ export async function askAction(
   graph: Graph,
   thread: string,
   text: string,
-  tgId = TG,
+  userId = USER,
 ): Promise<string> {
   const result = (await graph.invoke(
-    { messages: [new HumanMessage(text)], tgId },
+    { messages: [new HumanMessage(text)], userId, channel: "telegram", channelAccountId: "" },
     { configurable: { thread_id: thread } },
   )) as { __interrupt__?: Array<{ value: { text: string } }> };
   const prompt = result.__interrupt__?.[0]?.value.text;

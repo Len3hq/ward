@@ -17,10 +17,17 @@ import type { WardStateType } from "../state.ts";
  * `grant_permission`, `revoke`. Calls the wallet provider (CDP or stub), then
  * persists to the `ward.wallet` entity / `revocation_log` so memory and chain
  * agree. No LLM — the router sends these three intents straight here.
+ *
+ * Note what is handed to the provider: `wallet.account_key`, never `state.userId`.
+ * The provider derives its CDP account names from that string, so the user's
+ * smart-account address is a function of it. It is minted once here, at connect,
+ * and read back from the record forever after — a principal that later changes
+ * (or a record migrated from the Telegram-only build) must still resolve to the
+ * same on-chain address, or the funds and the spend permission are stranded.
  */
 export async function walletNode(state: WardStateType): Promise<Partial<WardStateType>> {
   const intent = state.parsedIntent;
-  const record = await read(state.tgId);
+  const record = await read(state.userId);
   if (!intent || record === null) {
     return { messages: [new AIMessage("Let's finish onboarding first.")] };
   }
@@ -28,9 +35,12 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
   const provider = walletProvider();
 
   if (intent.action_type === "connect_wallet") {
-    const wallet = await provider.connect(state.tgId);
-    const existing = await readWallet(state.tgId);
-    await writeWallet(state.tgId, {
+    const existing = await readWallet(state.userId);
+    // Reconnecting must land on the same address, so an existing key always wins.
+    const accountKey = existing?.account_key ?? state.userId;
+    const wallet = await provider.connect(accountKey);
+    await writeWallet(state.userId, {
+      account_key: accountKey,
       smart_account: wallet.smartAccount,
       agent_spender: wallet.agentSpender,
       spend_permission: existing?.spend_permission ?? null,
@@ -50,13 +60,13 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
   }
 
   if (intent.action_type === "grant_permission") {
-    const wallet = await readWallet(state.tgId);
+    const wallet = await readWallet(state.userId);
     if (!wallet) {
       return { messages: [new AIMessage('Connect a wallet first — say "connect my wallet".')] };
     }
     const allowance = intent.amount_usd ?? record.standing_caps.daily_limit_usd;
-    const permission = await provider.grantSpendPermission(state.tgId, allowance, 1);
-    await writeWallet(state.tgId, {
+    const permission = await provider.grantSpendPermission(wallet.account_key, allowance, 1);
+    await writeWallet(state.userId, {
       ...wallet,
       spend_permission: {
         token: "USDC",
@@ -86,18 +96,18 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
   const reason = revokeReason(state);
 
   if (scope === "permission") {
-    const wallet = await readWallet(state.tgId);
+    const wallet = await readWallet(state.userId);
     let txLine = "";
     if (wallet?.spend_permission && wallet.spend_permission.status === "active") {
-      const { txHash } = await provider.revokeSpendPermission(state.tgId);
-      await writeWallet(state.tgId, {
+      const { txHash } = await provider.revokeSpendPermission(wallet.account_key);
+      await writeWallet(state.userId, {
         ...wallet,
         spend_permission: { ...wallet.spend_permission, status: "revoked" },
       });
       txLine = `\nOn-chain revocation tx ${txHash}.`;
     }
     for (const action of ACTION_TYPES) {
-      await appendRevocation(state.tgId, { action_type: action, reason });
+      await appendRevocation(state.userId, { action_type: action, reason });
     }
     return {
       messages: [
@@ -108,7 +118,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
     };
   }
 
-  await appendRevocation(state.tgId, { action_type: scope as ActionType, reason });
+  await appendRevocation(state.userId, { action_type: scope as ActionType, reason });
   return {
     messages: [
       new AIMessage(

@@ -7,7 +7,7 @@ import { loadConfig } from "../config.ts";
 /**
  * Episodic conversation memory. Adapted from Len3's `memory/session_summary.ts`:
  * a per-user rolling summary, refreshed every few turns, written to Sibyl Memory's
- * HOT state tier (`ward.conversation.<tgId>`). It survives `/newsession` and makes
+ * HOT state tier (`ward.conversation.<userId>`). It survives `/newsession` and makes
  * the memory *visibly accumulate* turn over turn — beyond the caps ledger.
  *
  * `maybeSummarize` is fire-and-forget from the gateway after each turn.
@@ -16,11 +16,11 @@ import { loadConfig } from "../config.ts";
 const SUMMARIZE_EVERY = 4; // human turns
 const MAX_SUMMARY_CHARS = 600;
 
-export async function maybeSummarize(tgId: string, messages: BaseMessage[]): Promise<void> {
+export async function maybeSummarize(userId: string, messages: BaseMessage[]): Promise<void> {
   const humanTurns = messages.filter((m) => m instanceof HumanMessage).length;
   if (humanTurns === 0 || humanTurns % SUMMARIZE_EVERY !== 0) return;
 
-  const existing = await readConversation(tgId).catch(() => null);
+  const existing = await readConversation(userId).catch(() => null);
   if (existing && existing.turn_count >= humanTurns) return; // already covered
 
   const transcript = messages
@@ -30,7 +30,7 @@ export async function maybeSummarize(tgId: string, messages: BaseMessage[]): Pro
     .join("\n");
 
   const summary = await summarize(transcript, existing?.summary);
-  if (summary) await writeConversation(tgId, summary.slice(0, MAX_SUMMARY_CHARS), humanTurns);
+  if (summary) await writeConversation(userId, summary.slice(0, MAX_SUMMARY_CHARS), humanTurns);
 }
 
 async function summarize(transcript: string, prior?: string): Promise<string> {

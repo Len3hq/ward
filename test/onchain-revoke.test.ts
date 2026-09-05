@@ -8,7 +8,7 @@ import {
   newGraph,
   onboard,
   say,
-  TG,
+  USER,
   walletCalls,
 } from "./support.ts";
 
@@ -32,8 +32,8 @@ describe("on-chain spend-permission revocation", () => {
     const callsBefore = walletCalls().length;
 
     // revoke ONLY the on-chain permission record — leave revocation_log clean
-    const wallet = await readWallet(TG);
-    await writeWallet(TG, {
+    const wallet = await readWallet(USER);
+    await writeWallet(USER, {
       ...wallet!,
       spend_permission: { ...wallet!.spend_permission!, status: "revoked" },
     });
@@ -43,7 +43,7 @@ describe("on-chain spend-permission revocation", () => {
     expect(walletCalls().length).toBe(callsBefore); // no swap broadcast
 
     // memory is untouched
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record).not.toBeNull();
     expect(record?.revocation_log).toHaveLength(0);
     expect(record?.standing_caps.daily_limit_usd).toBe(100);
@@ -55,8 +55,8 @@ describe("on-chain spend-permission revocation", () => {
     await say(graph, "oc2", "connect my wallet");
     await say(graph, "oc2", "grant a $100 daily permission");
 
-    const wallet = await readWallet(TG);
-    await writeWallet(TG, {
+    const wallet = await readWallet(USER);
+    await writeWallet(USER, {
       ...wallet!,
       spend_permission: { ...wallet!.spend_permission!, status: "revoked" },
     });

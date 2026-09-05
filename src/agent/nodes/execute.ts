@@ -30,14 +30,18 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
   if (!confirmed) return {};
 
   const clear: Partial<WardStateType> = { confirmedIntent: null };
-  const record = await read(state.tgId);
+  const record = await read(state.userId);
   if (record === null) {
     return { ...clear, messages: [new AIMessage("Your authorization is gone — I won't act.")] };
   }
 
-  const spent = await spentToday(state.tgId);
-  const wallet = await readWallet(state.tgId);
+  const spent = await spentToday(state.userId);
+  const wallet = await readWallet(state.userId);
   const permission = wallet?.spend_permission ?? null;
+  // The provider is addressed by the wallet's pinned key, never by the principal —
+  // see `nodes/wallet.ts`. Absent only when no wallet was ever connected, which the
+  // stub provider tolerates and the CDP provider rejects.
+  const accountKey = wallet?.account_key ?? state.userId;
 
   let onchainAllowanceUsd: number | null = null;
   if (permission) {
@@ -45,7 +49,7 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
       return { ...clear, messages: [new AIMessage("Spend permission revoked — nothing moved.")] };
     }
     const live = await walletProvider()
-      .readSpendPermission(state.tgId)
+      .readSpendPermission(accountKey)
       .catch(() => null);
     if (live?.status === "revoked") {
       return {
@@ -61,7 +65,7 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
     actionType: confirmed.action_type,
     amountUsd: confirmed.amount_usd,
     spentTodayUsd: spent,
-    revoked: await isRevoked(state.tgId, confirmed.action_type),
+    revoked: await isRevoked(state.userId, confirmed.action_type),
     onchainAllowanceUsd,
     endpointSeen: confirmed.endpoint
       ? record.x402_ledger.some((e) => e.url === confirmed.endpoint!.url)
@@ -80,20 +84,20 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
   try {
     if (confirmed.action_type === "x402_data_purchase" && confirmed.endpoint) {
       const endpoint = confirmed.endpoint;
-      const result = await provider.payX402(state.tgId, {
+      const result = await provider.payX402(accountKey, {
         url: endpoint.url,
         method: endpoint.method,
         body: endpoint.body,
         expectedUsd: endpoint.cost_usd,
         maxUsd: round2(endpoint.cost_usd * 1.5),
       });
-      await appendSpend(state.tgId, {
+      await appendSpend(state.userId, {
         action_type: "x402_data_purchase",
         amount_usd: result.amountUsd,
         tx_hash: result.txHash,
         idempotency_key: confirmed.id,
       });
-      await appendX402(state.tgId, { url: endpoint.url, ok: true, amount_usd: result.amountUsd });
+      await appendX402(state.userId, { url: endpoint.url, ok: true, amount_usd: result.amountUsd });
       return {
         ...clear,
         messages: [
@@ -106,12 +110,12 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
 
     if (confirmed.action_type === "swap") {
       const [sell = "USDC", buy = "ETH"] = (confirmed.pair ?? "USDC/ETH").split("/");
-      const result = await provider.swap(state.tgId, {
+      const result = await provider.swap(accountKey, {
         sellSymbol: sell,
         buySymbol: buy,
         amountUsd: confirmed.amount_usd,
       });
-      await appendSpend(state.tgId, {
+      await appendSpend(state.userId, {
         action_type: "swap",
         amount_usd: result.sellUsd,
         tx_hash: result.txHash,
@@ -129,7 +133,8 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
 
     if (confirmed.action_type === "acp_job") {
       const run = await runAcpJob({
-        tgId: state.tgId,
+        userId: state.userId,
+        accountKey,
         subject: confirmed.acp?.subject ?? "the token",
         budgetUsd: confirmed.amount_usd,
         idempotencyKey: confirmed.id,
@@ -140,7 +145,7 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
     return { ...clear, messages: [new AIMessage("Nothing to execute.")] };
   } catch (error) {
     if (confirmed.endpoint) {
-      await appendX402(state.tgId, {
+      await appendX402(state.userId, {
         url: confirmed.endpoint.url,
         ok: false,
         amount_usd: 0,

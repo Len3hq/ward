@@ -20,7 +20,7 @@ import {
 
 // These exercise the domain logic against the hermetic `fs` backend; the Sibyl
 // Memory MCP path has its own suite in memory.sibyl-mcp.test.ts.
-const TG = 123456789;
+const USER = "ward_01J9XQ4M7BZK3TVWXY0123456E";
 let dir: string;
 
 beforeEach(async () => {
@@ -38,10 +38,10 @@ afterEach(async () => {
 });
 
 const onboard = () =>
-  initialize(TG, { risk_label: "moderate", per_action_limit_usd: 50, daily_limit_usd: 100 });
+  initialize(USER, { risk_label: "moderate", per_action_limit_usd: 50, daily_limit_usd: 100 });
 
 const spend = (over: Partial<Parameters<typeof appendSpend>[1]> = {}) =>
-  appendSpend(TG, {
+  appendSpend(USER, {
     amount_usd: 10,
     action_type: "swap",
     tx_hash: "0xabc",
@@ -51,11 +51,19 @@ const spend = (over: Partial<Parameters<typeof appendSpend>[1]> = {}) =>
 
 describe("read", () => {
   test("returns null when the file does not exist (the gate's trigger)", async () => {
-    expect(await read(TG)).toBeNull();
+    expect(await read(USER)).toBeNull();
   });
 
-  test("rejects a non-numeric telegram id (path-traversal guard)", async () => {
-    await expect(read("../evil" as unknown as number)).rejects.toThrow("invalid telegram id");
+  test("rejects anything that is not a Ward user id (path-traversal guard)", async () => {
+    await expect(read("../evil")).rejects.toThrow("not a Ward user id");
+  });
+
+  // The collision this prevents: a Discord snowflake is a bare integer, and so is a
+  // Telegram id. A numeric principal would let one silently resolve onto the other's
+  // authorization record. See MULTI-CHANNEL.md §2.
+  test("rejects a bare integer — a channel account is not a principal", async () => {
+    await expect(read("700100200")).rejects.toThrow("not a Ward user id");
+    await expect(read("551234567890123456")).rejects.toThrow("not a Ward user id");
   });
 });
 
@@ -65,7 +73,7 @@ describe("initialize", () => {
     expect(record.risk_label).toBe("moderate");
     expect(record.standing_caps.daily_limit_usd).toBe(100);
     expect(record.spent_ledger).toEqual([]);
-    expect(await read(TG)).toEqual(record);
+    expect(await read(USER)).toEqual(record);
   });
 
   test("throws on a second initialize", async () => {
@@ -75,7 +83,7 @@ describe("initialize", () => {
 
   test("rejects invalid caps", async () => {
     await expect(
-      initialize(TG, { risk_label: "moderate", per_action_limit_usd: -1, daily_limit_usd: 100 }),
+      initialize(USER, { risk_label: "moderate", per_action_limit_usd: -1, daily_limit_usd: 100 }),
     ).rejects.toThrow();
   });
 });
@@ -108,14 +116,14 @@ describe("appendSpend", () => {
     await Promise.all(
       Array.from({ length: 8 }, (_, i) => spend({ idempotency_key: `c${i}`, amount_usd: 1 })),
     );
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record!.spent_ledger).toHaveLength(8);
   });
 });
 
 describe("spentToday", () => {
   test("returns 0 for a missing record", async () => {
-    expect(await spentToday(TG)).toBe(0);
+    expect(await spentToday(USER)).toBe(0);
   });
 
   test("sums only rows in the current UTC day", async () => {
@@ -126,61 +134,61 @@ describe("spentToday", () => {
     await spend({ idempotency_key: "tomorrow", ts: "2026-09-06T00:00:00Z", amount_usd: 100 });
 
     const now = new Date("2026-09-05T12:00:00Z");
-    expect(await spentToday(TG, now)).toBe(42.5);
+    expect(await spentToday(USER, now)).toBe(42.5);
   });
 
   test("day boundary: a row at 00:00:00Z counts for that day, 23:59:59Z the day before does not", async () => {
     await onboard();
     await spend({ idempotency_key: "edge-a", ts: "2026-09-05T00:00:00Z", amount_usd: 5 });
     await spend({ idempotency_key: "edge-b", ts: "2026-09-04T23:59:59.999Z", amount_usd: 7 });
-    expect(await spentToday(TG, new Date("2026-09-05T00:00:01Z"))).toBe(5);
-    expect(await spentToday(TG, new Date("2026-09-04T12:00:00Z"))).toBe(7);
+    expect(await spentToday(USER, new Date("2026-09-05T00:00:01Z"))).toBe(5);
+    expect(await spentToday(USER, new Date("2026-09-04T12:00:00Z"))).toBe(7);
   });
 });
 
 describe("revocation", () => {
   test("isRevoked is false with no record and with an empty log", async () => {
-    expect(await isRevoked(TG, "swap")).toBe(false);
+    expect(await isRevoked(USER, "swap")).toBe(false);
     await onboard();
-    expect(await isRevoked(TG, "swap")).toBe(false);
+    expect(await isRevoked(USER, "swap")).toBe(false);
   });
 
   test("appendRevocation blocks that action type, fresh on every read", async () => {
     await onboard();
-    await appendRevocation(TG, { action_type: "swap", reason: "user paused trading" });
-    expect(await isRevoked(TG, "swap")).toBe(true);
-    expect(await isRevoked(TG, "x402_data_purchase")).toBe(false);
+    await appendRevocation(USER, { action_type: "swap", reason: "user paused trading" });
+    expect(await isRevoked(USER, "swap")).toBe(true);
+    expect(await isRevoked(USER, "x402_data_purchase")).toBe(false);
   });
 });
 
 describe("acp jobs & trust", () => {
   test("trustScore is the neutral prior with no history", async () => {
     await onboard();
-    expect(await trustScore(TG, "agent://acme")).toBe(0.5);
+    expect(await trustScore(USER, "agent://acme")).toBe(0.5);
   });
 
   test("appended jobs raise trust for that counterparty only", async () => {
     await onboard();
-    await appendAcpJob(TG, {
+    await appendAcpJob(USER, {
       counterparty_id: "agent://acme",
       job_type: "token_risk",
       outcome_summary: "flagged rug indicators, correct",
       trust_delta: 0.6,
     });
-    await appendAcpJob(TG, {
+    await appendAcpJob(USER, {
       counterparty_id: "agent://acme",
       job_type: "token_risk",
       outcome_summary: "correct again",
       trust_delta: 0.6,
     });
-    expect(await trustScore(TG, "agent://acme")).toBeGreaterThan(0.5);
-    expect(await trustScore(TG, "agent://other")).toBe(0.5);
+    expect(await trustScore(USER, "agent://acme")).toBeGreaterThan(0.5);
+    expect(await trustScore(USER, "agent://other")).toBe(0.5);
   });
 
   test("rejects a trust_delta outside [-1, 1]", async () => {
     await onboard();
     await expect(
-      appendAcpJob(TG, {
+      appendAcpJob(USER, {
         counterparty_id: "agent://acme",
         job_type: "token_risk",
         outcome_summary: "x",
@@ -192,19 +200,20 @@ describe("acp jobs & trust", () => {
 
 describe("wallet", () => {
   const record: WalletRecord = {
+    account_key: USER,
     smart_account: "0x1111111111111111111111111111111111111111",
     agent_spender: "0x2222222222222222222222222222222222222222",
     spend_permission: null,
   };
 
   test("readWallet is null until written, then round-trips", async () => {
-    expect(await readWallet(TG)).toBeNull();
-    await writeWallet(TG, record);
-    expect(await readWallet(TG)).toEqual(record);
+    expect(await readWallet(USER)).toBeNull();
+    await writeWallet(USER, record);
+    expect(await readWallet(USER)).toEqual(record);
   });
 
   test("stores an active spend permission", async () => {
-    await writeWallet(TG, {
+    await writeWallet(USER, {
       ...record,
       spend_permission: {
         token: "USDC",
@@ -214,24 +223,27 @@ describe("wallet", () => {
         status: "active",
       },
     });
-    expect((await readWallet(TG))!.spend_permission!.status).toBe("active");
+    expect((await readWallet(USER))!.spend_permission!.status).toBe("active");
   });
 
   test("rejects a malformed address", async () => {
-    await expect(writeWallet(TG, { ...record, smart_account: "not-an-address" })).rejects.toThrow();
+    await expect(
+      writeWallet(USER, { ...record, smart_account: "not-an-address" }),
+    ).rejects.toThrow();
   });
 });
 
 describe("authorization vs wallet independence", () => {
   test("a user can connect a wallet before onboarding caps, and vice versa", async () => {
-    await writeWallet(TG, {
+    await writeWallet(USER, {
+      account_key: USER,
       smart_account: "0x1111111111111111111111111111111111111111",
       agent_spender: "0x2222222222222222222222222222222222222222",
       spend_permission: null,
     });
-    expect(await read(TG)).toBeNull();
+    expect(await read(USER)).toBeNull();
     await onboard();
-    expect(await read(TG)).not.toBeNull();
-    expect(await readWallet(TG)).not.toBeNull();
+    expect(await read(USER)).not.toBeNull();
+    expect(await readWallet(USER)).not.toBeNull();
   });
 });

@@ -14,16 +14,16 @@ import { buildAuthorizationContext } from "./prompts.ts";
  */
 
 /**
- * The `tgId` is injected per-call by `boundTools(tgId)` rather than exposed to the
+ * The `userId` is injected per-call by `boundTools(userId)` rather than exposed to the
  * model — the model must never be able to read another user's authorization.
  */
-export function boundTools(tgId: string) {
+export function boundTools(userId: string) {
   const readAuthorization = tool(
     async () => {
       const [record, wallet, spent] = await Promise.all([
-        read(tgId),
-        readWallet(tgId),
-        spentToday(tgId),
+        read(userId),
+        readWallet(userId),
+        spentToday(userId),
       ]);
       return buildAuthorizationContext(record, wallet, spent);
     },
@@ -38,8 +38,8 @@ export function boundTools(tgId: string) {
   return [readAuthorization];
 }
 
-export function toolNodeFor(tgId: string): ToolNode {
-  return new ToolNode(boundTools(tgId));
+export function toolNodeFor(userId: string): ToolNode {
+  return new ToolNode(boundTools(userId));
 }
 
 /** Tool names that must pass through the HITL approval interrupt. Empty until Phase 5. */

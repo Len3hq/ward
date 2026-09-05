@@ -3,29 +3,40 @@
  * citing an *existing* trust score (plan §3.3 — real hindsight evaluation takes
  * time you don't have on camera).
  *
- *   bun run scripts/seed-acp.ts <telegram_id> [counterparty_id]
+ *   bun run scripts/seed-acp.ts <ward_user_id | telegram:700100200> [counterparty_id]
  *
- * Uses whatever memory backend the env selects (SIBYL_MEMORY_MODE).
+ * Takes the principal or a `<channel>:<account_id>` reference, like
+ * `forget-auth.ts`. Uses whatever memory backend the env selects
+ * (SIBYL_MEMORY_MODE).
  */
 import { appendAcpJob, initialize, read } from "../memory/index.ts";
+import { resolveRef } from "../src/identity/index.ts";
 
-const [, , tgId, counterparty = "agent://ward-analyst.stub"] = process.argv;
+const [, , ref, counterparty = "agent://ward-analyst.stub"] = process.argv;
 
-if (!tgId) {
-  console.error("usage: bun run scripts/seed-acp.ts <telegram_id> [counterparty_id]");
+if (!ref) {
+  console.error(
+    "usage: bun run scripts/seed-acp.ts <ward_user_id | channel:account_id> [counterparty_id]",
+  );
   process.exit(1);
 }
 
-if ((await read(tgId)) === null) {
-  await initialize(tgId, {
+const userId = await resolveRef(ref);
+if (userId === null) {
+  console.error(`Could not resolve ${JSON.stringify(ref)} to a Ward user.`);
+  process.exit(1);
+}
+
+if ((await read(userId)) === null) {
+  await initialize(userId, {
     risk_label: "moderate",
     per_action_limit_usd: 50,
     daily_limit_usd: 100,
   });
-  console.log(`initialized authorization for ${tgId}`);
+  console.log(`initialized authorization for ${userId}`);
 }
 
-await appendAcpJob(tgId, {
+await appendAcpJob(userId, {
   ts: new Date(Date.now() - 3 * 86_400_000).toISOString(),
   counterparty_id: counterparty,
   job_type: "token_risk",
@@ -34,7 +45,7 @@ await appendAcpJob(tgId, {
   trust_delta: 0.4,
 });
 
-const record = await read(tgId);
+const record = await read(userId);
 console.log(
   `seeded 1 evaluated job for ${counterparty}. acp_job_history now has ${record?.acp_job_history.length} entr(y/ies).`,
 );

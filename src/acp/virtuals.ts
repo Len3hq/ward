@@ -29,7 +29,7 @@ import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
  * every ACP job would be Ward paying while the ledger recorded a user spend. So
  * each job moves the user's own money through it and leaves it flat:
  *
- *   pull budget from ward-user-<tgId>   (their Spend Permission) → CDP spender
+ *   pull budget from ward-user-<accountKey>   (their Spend Permission) → CDP spender
  *   forward CDP spender → buyerAddress  (skipped if they're the same address)
  *   session.fund()                      escrow draws on buyerAddress
  *   refund buyerAddress → user          whatever the job didn't consume
@@ -64,7 +64,13 @@ export class VirtualsAcpProvider implements AcpProvider {
     }
   }
 
-  async hire(tgId: string, job: AcpJobRequest): Promise<AcpJobResult> {
+  async hire(accountKey: string | null, job: AcpJobRequest): Promise<AcpJobResult> {
+    if (accountKey === null) {
+      throw new Error(
+        "cannot hire on ACP without a connected wallet — escrow must be funded from " +
+          "the user's own Spend Permission, not Ward's float",
+      );
+    }
     const wallet = walletProvider();
     const { agent, adapter, stop } = await this.#agent();
     /** What we pulled from *this user's* smart account to fund escrow. */
@@ -100,8 +106,8 @@ export class VirtualsAcpProvider implements AcpProvider {
               // The user's money, not Ward's: pull the budget through *this user's*
               // Spend Permission, then forward it to the address escrow will draw
               // on. Throws if they have no active permission — the job never funds.
-              ({ pulledUsd } = await wallet.fundAgentFromUser(tgId, budget));
-              const spender = (await wallet.connect(tgId)).agentSpender;
+              ({ pulledUsd } = await wallet.fundAgentFromUser(accountKey, budget));
+              const spender = (await wallet.connect(accountKey)).agentSpender;
               if (spender.toLowerCase() !== buyerAddress.toLowerCase()) {
                 await wallet.transferUsdcFromSpender(buyerAddress, pulledUsd);
               }
@@ -156,20 +162,20 @@ export class VirtualsAcpProvider implements AcpProvider {
       const unspent = round6(pulledUsd - (settled.settled ? settled.amountUsd : 0));
       if (unspent > 0) {
         try {
-          const { smartAccount } = await wallet.connect(tgId);
+          const { smartAccount } = await wallet.connect(accountKey);
           const sent = await refundFromBuyer(adapter, chainId, buyerAddress, smartAccount, unspent);
           const short = round6(unspent - sent);
           if (short > DUST_USD) {
             // Base gas is sub-cent, so a gap this size is a real discrepancy, not
             // the paymaster — surface it instead of quietly keeping the money.
-            console.error(`ACP refund to ${tgId} short by $${short}`);
+            console.error(`ACP refund to ${accountKey} short by $${short}`);
             settled.outcomeSummary += ` [refunded $${sent.toFixed(2)} of $${unspent.toFixed(2)} — $${short.toFixed(2)} owed to user]`;
           }
         } catch (err) {
           // The user is owed money — say so loudly and persist it in the job history
           // rather than let a silent catch bury it.
           const why = err instanceof Error ? err.message : String(err);
-          console.error(`ACP refund of $${unspent} to ${tgId} FAILED: ${why}`);
+          console.error(`ACP refund of $${unspent} to ${accountKey} FAILED: ${why}`);
           settled.outcomeSummary += ` [refund of $${unspent.toFixed(2)} failed — owed to user]`;
         }
       }

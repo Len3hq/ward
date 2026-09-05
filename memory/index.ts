@@ -18,6 +18,11 @@ export {
 export {
   read,
   initialize,
+  appendJournalEvent,
+  readIdentity,
+  readAccounts,
+  writeIdentity,
+  forgetIdentity,
   appendSpend,
   appendRevocation,
   isRevoked,

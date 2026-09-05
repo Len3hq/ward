@@ -1,6 +1,6 @@
 import { Annotation, MessagesAnnotation } from "@langchain/langgraph";
 
-import type { ActionType, RiskLabel } from "../../memory/index.ts";
+import type { ActionType, Channel, RiskLabel } from "../../memory/index.ts";
 import type { ParsedIntent } from "./intent.ts";
 
 /**
@@ -8,6 +8,12 @@ import type { ParsedIntent } from "./intent.ts";
  * everything durable lives in Sibyl Memory. The checkpointer (`MemorySaver`) holds
  * this per `thread_id` — a `/newsession` starts a fresh thread, so `messages` and
  * `onboarding` reset while Sibyl Memory persists.
+ *
+ * Identity arrives as three fields, injected by the gateway. The graph reads and
+ * writes memory by `userId` alone; `channel` / `channelAccountId` are carried for
+ * audit and for replies that name where the user is, never for authorization.
+ * Threads are per-channel (`<channel>:<chat>:<seq>`) while the memory they read is
+ * shared — see `MULTI-CHANNEL.md`.
  */
 
 export type Route = "onboarding" | "agent" | "refuse" | "confirm" | "wallet";
@@ -32,8 +38,14 @@ export interface ConfirmedIntent {
 export const WardState = Annotation.Root({
   ...MessagesAnnotation.spec,
 
-  /** Telegram user id, injected by the gateway on every invoke. */
-  tgId: Annotation<string>(),
+  /** The principal (`ward_<ulid>`), resolved by the gateway on every invoke. */
+  userId: Annotation<string>(),
+
+  /** Which surface this turn arrived on. */
+  channel: Annotation<Channel>({ reducer: (_, next) => next, default: () => "telegram" }),
+
+  /** That channel's own id for the account — the Telegram id, the Discord snowflake. */
+  channelAccountId: Annotation<string>({ reducer: (_, next) => next, default: () => "" }),
 
   /** Set by the router, read by its conditional edge. */
   route: Annotation<Route | undefined>(),

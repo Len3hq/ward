@@ -65,8 +65,8 @@ export async function onboardingNode(state: WardStateType): Promise<Partial<Ward
     per_action_limit_usd: draft.per_action_limit_usd!,
     daily_limit_usd: draft.daily_limit_usd!,
   };
-  if ((await read(state.tgId)) === null) {
-    await initialize(state.tgId, complete);
+  if ((await read(state.userId)) === null) {
+    await initialize(state.userId, complete);
   }
   return {
     onboardingDraft: patch,

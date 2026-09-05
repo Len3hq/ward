@@ -8,7 +8,7 @@ import { resetBackend } from "../memory/backend.ts";
 import { readConversation } from "../memory/store.ts";
 import { maybeSummarize } from "../src/agent/summary.ts";
 
-const TG = "900900900";
+const USER = "ward_01J9XQ4M7BZK3TVWXY0123456D";
 let dir: string;
 
 beforeEach(async () => {
@@ -33,22 +33,22 @@ function turns(...texts: string[]) {
 
 describe("maybeSummarize (episodic conversation memory)", () => {
   test("does nothing before the threshold", async () => {
-    await maybeSummarize(TG, turns("hi", "what can you do"));
-    expect(await readConversation(TG)).toBeNull();
+    await maybeSummarize(USER, turns("hi", "what can you do"));
+    expect(await readConversation(USER)).toBeNull();
   });
 
   test("writes a HOT-state summary at the threshold and accumulates", async () => {
     await maybeSummarize(
-      TG,
+      USER,
       turns("I mostly hold ETH and USDC", "watching PEPE", "set a $50 cap", "swap $20 to eth"),
     );
-    const first = await readConversation(TG);
+    const first = await readConversation(USER);
     expect(first).not.toBeNull();
     expect(first?.turn_count).toBe(4);
     expect(first?.summary.toLowerCase()).toContain("pepe");
 
     await maybeSummarize(
-      TG,
+      USER,
       turns(
         "I mostly hold ETH and USDC",
         "watching PEPE",
@@ -60,7 +60,7 @@ describe("maybeSummarize (episodic conversation memory)", () => {
         "actually resume",
       ),
     );
-    const second = await readConversation(TG);
+    const second = await readConversation(USER);
     expect(second?.turn_count).toBe(8);
     expect(second?.updated_at).not.toBe(first?.updated_at);
   });

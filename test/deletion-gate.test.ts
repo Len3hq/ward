@@ -9,7 +9,7 @@ import {
   newGraph,
   onboard,
   say,
-  TG,
+  USER,
   walletCalls,
 } from "./support.ts";
 
@@ -33,20 +33,20 @@ describe("deletion gate", () => {
     const ok = await confirmAction(graph, "gate", "swap $20 usdc for eth");
     expect(ok).toMatch(/swapped \$20/i);
     expect(walletCalls()).toContain("swap");
-    expect((await read(TG))?.spent_ledger).toHaveLength(1);
+    expect((await read(USER))?.spent_ledger).toHaveLength(1);
 
     const callsBefore = walletCalls().length;
 
     // --- remove the ward.authorization entity from Sibyl Memory ---
-    await backend().forgetEntity("ward.authorization", TG);
-    expect(await read(TG)).toBeNull();
+    await backend().forgetEntity("ward.authorization", USER);
+    expect(await read(USER)).toBeNull();
 
     // --- same request → refused, no broadcast ---
     const refusal = await say(graph, "gate2", "swap $20 usdc for eth");
     expect(refusal).toMatch(/no authorization/i);
     expect(refusal).toMatch(/won'?t move|set me up/i);
     expect(walletCalls().length).toBe(callsBefore); // provider.swap never called again
-    expect(await read(TG)).toBeNull(); // still gone
+    expect(await read(USER)).toBeNull(); // still gone
   });
 
   test("an x402 purchase is refused the same way once the record is gone", async () => {
@@ -55,7 +55,7 @@ describe("deletion gate", () => {
     await confirmAction(graph, "gx", "risk score on PEPE");
     const before = walletCalls().length;
 
-    await backend().forgetEntity("ward.authorization", TG);
+    await backend().forgetEntity("ward.authorization", USER);
 
     const refusal = await say(graph, "gx2", "risk score on WOOF");
     expect(refusal).toMatch(/no authorization/i);
@@ -65,7 +65,7 @@ describe("deletion gate", () => {
   test("the refusal does not leak the deleted caps", async () => {
     const graph = newGraph();
     await onboard(graph, "gl", { perAction: 77, daily: 333 });
-    await backend().forgetEntity("ward.authorization", TG);
+    await backend().forgetEntity("ward.authorization", USER);
 
     const refusal = await say(graph, "gl2", "swap $10 usdc for eth");
     expect(refusal).not.toContain("77");

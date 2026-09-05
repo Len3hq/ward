@@ -22,7 +22,7 @@ export class StubAcpProvider implements AcpProvider {
     return COUNTERPARTY;
   }
 
-  async hire(tgId: string, job: AcpJobRequest): Promise<AcpJobResult> {
+  async hire(accountKey: string | null, job: AcpJobRequest): Promise<AcpJobResult> {
     this.calls.push("hire");
     // A deterministic, plausible token-risk assessment.
     const seed = parseInt(createHash("sha256").update(job.subject).digest("hex").slice(0, 8), 16);
@@ -45,7 +45,7 @@ export class StubAcpProvider implements AcpProvider {
       outcomeSummary: `risk ${rawResult.band} (${score}/100)${flags.length ? `, flags: ${flags.join("; ")}` : ""}`,
       rawResult,
       settled: true,
-      txHash: `0x${createHash("sha256").update(`acp-${tgId}-${job.subject}-${Date.now()}`).digest("hex")}`,
+      txHash: `0x${createHash("sha256").update(`acp-${accountKey}-${job.subject}-${Date.now()}`).digest("hex")}`,
       amountUsd: job.maxUsd,
     };
   }

@@ -20,12 +20,12 @@ import { boundTools } from "../tools.ts";
  * Adapted from Len3's `graph/nodes/agent.ts`.
  */
 export async function agentNode(state: WardStateType): Promise<Partial<WardStateType>> {
-  const { tgId } = state;
+  const { userId } = state;
   const [record, wallet, spent, conversation] = await Promise.all([
-    read(tgId),
-    readWallet(tgId),
-    spentToday(tgId),
-    readConversation(tgId).catch(() => null),
+    read(userId),
+    readWallet(userId),
+    spentToday(userId),
+    readConversation(userId).catch(() => null),
   ]);
 
   const context = buildAuthorizationContext(record, wallet, spent);
@@ -65,7 +65,7 @@ export async function agentNode(state: WardStateType): Promise<Partial<WardState
     apiKey: config.openaiApiKey,
     temperature: 0,
     maxTokens: 1024,
-  }).bindTools(boundTools(tgId));
+  }).bindTools(boundTools(userId));
 
   const response = await model.invoke([
     new SystemMessage(system),

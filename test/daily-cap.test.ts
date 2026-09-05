@@ -9,7 +9,7 @@ import {
   newGraph,
   onboard,
   say,
-  TG,
+  USER,
   walletCalls,
 } from "./support.ts";
 
@@ -27,7 +27,7 @@ describe("daily cap enforcement", () => {
 
     expect(await confirmAction(graph, "cap", "swap $50 usdc for eth")).toMatch(/swapped/i);
     expect(await confirmAction(graph, "cap", "swap $45 usdc for eth")).toMatch(/swapped/i);
-    expect(await spentToday(TG)).toBeCloseTo(95, 5);
+    expect(await spentToday(USER)).toBeCloseTo(95, 5);
 
     const callsBefore = walletCalls().length;
 
@@ -38,7 +38,7 @@ describe("daily cap enforcement", () => {
     // a $0.05 x402 purchase still fits under the ~$5 of headroom
     expect(await askAction(graph, "cap", "smart money positioning on ETH")).toMatch(/confirm/i);
 
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.spent_ledger.reduce((s, r) => s + r.amount_usd, 0)).toBeCloseTo(95, 5);
   });
 
@@ -56,6 +56,6 @@ describe("daily cap enforcement", () => {
     await onboard(graph, "cap3", { perAction: 20, daily: 500 });
     const reply = await say(graph, "cap3", "swap $100 usdc for eth");
     expect(reply).toMatch(/per-action limit/i);
-    expect(await spentToday(TG)).toBe(0);
+    expect(await spentToday(USER)).toBe(0);
   });
 });

@@ -48,8 +48,16 @@ export interface AcpProvider {
   readonly kind: "virtuals" | "stub";
   /** The counterparty a hire would use — read its trust score BEFORE hiring. */
   preferredCounterparty(jobType: string): Promise<string>;
-  /** Post a job and drive it to resolution. Never throws for a normal "did not settle" — sets `settled: false`. */
-  hire(tgId: string, job: AcpJobRequest): Promise<AcpJobResult>;
+  /**
+   * Post a job and drive it to resolution. Never throws for a normal "did not
+   * settle" — sets `settled: false`.
+   *
+   * `accountKey` is the user's pinned wallet key, which escrow funding pulls
+   * against; `null` when they have no wallet. The stub ignores it; the Virtuals
+   * path refuses, because a job funded from anywhere but the user's own Spend
+   * Permission would be Ward's float rather than the user's spend.
+   */
+  hire(accountKey: string | null, job: AcpJobRequest): Promise<AcpJobResult>;
 }
 
 let cached: AcpProvider | null = null;

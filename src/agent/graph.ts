@@ -27,7 +27,7 @@ import { APPROVAL_REQUIRED, toolNodeFor } from "./tools.ts";
  */
 
 async function toolsNode(state: WardStateType): Promise<Partial<WardStateType>> {
-  return toolNodeFor(state.tgId).invoke(state) as Promise<Partial<WardStateType>>;
+  return toolNodeFor(state.userId).invoke(state) as Promise<Partial<WardStateType>>;
 }
 
 function afterGuard(state: WardStateType): "refuse" | "intent" {

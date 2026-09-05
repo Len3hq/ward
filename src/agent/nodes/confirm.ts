@@ -37,7 +37,7 @@ export async function confirmNode(
   config?: LangGraphRunnableConfig,
 ): Promise<Partial<WardStateType>> {
   const intent = state.parsedIntent;
-  const record = await read(state.tgId);
+  const record = await read(state.userId);
   if (!intent || record === null) {
     return { messages: [new AIMessage("I lost the thread there — say that again?")] };
   }
@@ -80,7 +80,7 @@ export async function confirmNode(
   if (action === "x402_data_purchase" && endpoint) {
     summary = `Buy "${endpoint.name}" (~$${endpoint.cost_usd})`;
   } else if (action === "acp_job" && acpCounterparty) {
-    const trust = await trustScore(state.tgId, acpCounterparty);
+    const trust = await trustScore(state.userId, acpCounterparty);
     const seen = record.acp_job_history.filter((j) => j.counterparty_id === acpCounterparty).length;
     summary =
       `Hire ${acpCounterparty} (trust ${trust.toFixed(2)}${seen ? `, ${seen} prior job(s)` : ", unproven"}) ` +
@@ -90,9 +90,11 @@ export async function confirmNode(
   }
 
   // --- gate (for the confirmation copy; execute re-checks on fresh reads) ---
-  const spent = await spentToday(state.tgId);
-  const wallet = await readWallet(state.tgId);
+  const spent = await spentToday(state.userId);
+  const wallet = await readWallet(state.userId);
   const permission = wallet?.spend_permission ?? null;
+  // Addressed by the wallet's pinned key, never the principal — see `nodes/wallet.ts`.
+  const accountKey = wallet?.account_key ?? state.userId;
 
   if (permission && permission.status !== "active") {
     return {
@@ -107,7 +109,7 @@ export async function confirmNode(
   let onchainAllowanceUsd: number | null = null;
   if (permission) {
     const live = await walletProvider()
-      .readSpendPermission(state.tgId)
+      .readSpendPermission(accountKey)
       .catch(() => null);
     if (live?.status === "revoked") {
       return {
@@ -128,7 +130,7 @@ export async function confirmNode(
     actionType: action,
     amountUsd,
     spentTodayUsd: spent,
-    revoked: await isRevoked(state.tgId, action),
+    revoked: await isRevoked(state.userId, action),
     onchainAllowanceUsd,
     endpointSeen,
   });

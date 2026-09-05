@@ -4,8 +4,12 @@ import { z } from "zod";
  * Sibyl Memory — the record.
  *
  * The authorization record is persisted as a **Sibyl Memory WARM entity**
- * (`ward.authorization` / `<telegram_id>`); every mutation also appends a
+ * (`ward.authorization` / `<ward_user_id>`); every mutation also appends a
  * **COLD journal event**. See `memory/README.md` for the tier map.
+ *
+ * The entity name is a `WardUserId` — an opaque principal, never a channel's own
+ * account id. One user reaches Ward from Telegram, Discord or an MCP client and
+ * lands on the same record; see `MULTI-CHANNEL.md`.
  *
  * Every field of `UserAuthorization` except `risk_label` grows only through use.
  * There is deliberately **no `trust_score` stored**: it is derived from
@@ -40,6 +44,62 @@ export type RiskLabel = z.infer<typeof riskLabelSchema>;
 export const ACTION_TYPES = ["swap", "x402_data_purchase", "acp_job"] as const;
 export const actionTypeSchema = z.enum(ACTION_TYPES);
 export type ActionType = z.infer<typeof actionTypeSchema>;
+
+// --- identity ---
+
+export const CHANNELS = ["telegram", "discord", "mcp"] as const;
+export const channelSchema = z.enum(CHANNELS);
+export type Channel = z.infer<typeof channelSchema>;
+
+/**
+ * `ward_` + a 26-character Crockford base32 ULID.
+ *
+ * Deliberately **not** numeric. Telegram ids and Discord snowflakes are both bare
+ * integers, so a numeric principal would let a Discord account silently resolve
+ * onto a Telegram user's authorization record. A non-numeric principal makes that
+ * class of bug unrepresentable rather than merely unlikely.
+ */
+export const WARD_USER_ID_RE = /^ward_[0-9A-HJKMNP-TV-Z]{26}$/;
+export const wardUserIdSchema = z.string().regex(WARD_USER_ID_RE, "expected a ward_<ulid> user id");
+export type WardUserId = z.infer<typeof wardUserIdSchema>;
+
+/** A channel's own id for an account: an integer for Telegram/Discord, a token hash for MCP. */
+export const ACCOUNT_ID_RE = /^[A-Za-z0-9_.-]{1,128}$/;
+export const accountIdSchema = z.string().regex(ACCOUNT_ID_RE, "invalid channel account id");
+
+/** How a channel account came to be attached to its principal. */
+export const LINK_METHODS = ["first_contact", "link_code", "migration"] as const;
+export const linkMethodSchema = z.enum(LINK_METHODS);
+export type LinkMethod = z.infer<typeof linkMethodSchema>;
+
+/**
+ * The lookup index: one WARM entity per channel account, named
+ * `<channel>:<account_id>`, whose body carries the principal it belongs to.
+ * Resolving an inbound message is one read of this.
+ */
+export const wardIdentitySchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  channel: channelSchema,
+  account_id: accountIdSchema,
+  linked_at: isoDatetime,
+  linked_via: linkMethodSchema,
+});
+export type WardIdentity = z.infer<typeof wardIdentitySchema>;
+
+export const linkedAccountSchema = wardIdentitySchema.omit({ ward_user_id: true });
+export type LinkedAccount = z.infer<typeof linkedAccountSchema>;
+
+/**
+ * The reverse index, `ward.accounts` / `<ward_user_id>`. Neither backend can list
+ * or query entities, so "which accounts does this principal own?" — needed for
+ * `/whoami` and for the origin-channel notification on a new link — is kept as its
+ * own document, written in the same lock as the forward entry.
+ */
+export const accountIndexSchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  accounts: z.array(linkedAccountSchema),
+});
+export type AccountIndex = z.infer<typeof accountIndexSchema>;
 
 // --- ledger entries ---
 
@@ -110,6 +170,17 @@ export const spendPermissionSchema = z.object({
 export type SpendPermission = z.infer<typeof spendPermissionSchema>;
 
 export const walletRecordSchema = z.object({
+  /**
+   * The stable key the wallet provider derives its CDP account names from
+   * (`ward-user-<account_key>`). Minted once at connect and **never rewritten**:
+   * the smart-account address is a function of this string, so rekeying it would
+   * strand the user's funds and their granted spend permission at the old address.
+   *
+   * New records use the `WardUserId`. Records migrated from the Telegram-only
+   * build keep their original Telegram id — which is the whole reason the field
+   * exists rather than being derived from the principal.
+   */
+  account_key: nonEmpty,
   smart_account: evmAddress, // user's CDP Embedded Wallet smart account
   agent_spender: evmAddress, // agent's CDP Server Wallet
   spend_permission: spendPermissionSchema.nullable(), // null until the user grants one on-chain
@@ -153,13 +224,22 @@ export const JOURNAL_EVENT_KINDS = [
   "acp_job",
   "x402_purchase",
   "wallet_update",
+  "identity_link",
+  "identity_unlink",
+  "identity_migrate",
 ] as const;
 export const journalEventKindSchema = z.enum(JOURNAL_EVENT_KINDS);
 export type JournalEventKind = z.infer<typeof journalEventKindSchema>;
 
 export const journalEventSchema = z.object({
   ts: isoDatetime,
-  tg_id: z.string().regex(/^\d+$/),
+  user_id: wardUserIdSchema,
+  /**
+   * The channel the turn arrived on, where the writer knows it. Store-level writes
+   * (a spend, a revocation) are made below the gateway and genuinely don't know,
+   * so they record `null`; identity events always carry it.
+   */
+  channel: channelSchema.nullable().default(null),
   kind: journalEventKindSchema,
   summary: nonEmpty,
   detail: z.record(z.string(), z.unknown()).default({}),

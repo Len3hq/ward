@@ -8,7 +8,14 @@ import { validateExternalData } from "../agent/guardrails.ts";
  * next hire reads the re-derived `trustScore` first.
  */
 export interface AcpRunInput {
-  tgId: string;
+  /** The principal — everything written to Sibyl Memory is keyed by this. */
+  userId: string;
+  /**
+   * The wallet record's pinned `account_key` — escrow is funded by pulling on the
+   * Spend Permission granted by *that* smart account. `null` when no wallet was ever
+   * connected: the stub tolerates it, the real Virtuals path refuses.
+   */
+  accountKey: string | null;
   subject: string;
   budgetUsd: number;
   idempotencyKey: string;
@@ -25,9 +32,9 @@ export interface AcpRunOutput {
 export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
   const provider = acpProvider();
   const counterpartyId = await provider.preferredCounterparty("token_risk");
-  const trustBefore = await trustScore(input.tgId, counterpartyId);
+  const trustBefore = await trustScore(input.userId, counterpartyId);
 
-  const result = await provider.hire(input.tgId, {
+  const result = await provider.hire(input.accountKey, {
     jobType: "token_risk",
     subject: input.subject,
     maxUsd: input.budgetUsd,
@@ -38,7 +45,7 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
   const delta = jobTrustDelta(result, validated.flagged);
 
   if (result.settled) {
-    await appendSpend(input.tgId, {
+    await appendSpend(input.userId, {
       action_type: "acp_job",
       amount_usd: result.amountUsd,
       tx_hash: result.txHash ?? "0x",
@@ -46,7 +53,7 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
     });
   }
 
-  await appendAcpJob(input.tgId, {
+  await appendAcpJob(input.userId, {
     counterparty_id: result.counterpartyId,
     job_type: result.jobType,
     outcome_summary: validated.flagged
@@ -55,7 +62,7 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
     trust_delta: delta,
   });
 
-  const trustAfter = await trustScore(input.tgId, result.counterpartyId);
+  const trustAfter = await trustScore(input.userId, result.counterpartyId);
 
   const message = result.settled
     ? [

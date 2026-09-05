@@ -11,7 +11,7 @@ import type { WardStateType } from "../state.ts";
  */
 export async function intentNode(state: WardStateType): Promise<Partial<WardStateType>> {
   const draftStarted = Object.keys(state.onboardingDraft).length > 0;
-  if (draftStarted && (await read(state.tgId)) === null) {
+  if (draftStarted && (await read(state.userId)) === null) {
     return { parsedIntent: null };
   }
 

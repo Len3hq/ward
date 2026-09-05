@@ -14,7 +14,7 @@ import { read, readWallet, writeWallet } from "../memory/store.ts";
 // Hermetic: fs backend, no OPENAI_API_KEY → the agent node's deterministic
 // recall path. Exercises the graph topology + Sibyl Memory integration end to end.
 
-const TG = "555000111";
+const USER = "ward_01J9XQ4M7BZK3TVWXY0123456B";
 let dir: string;
 
 beforeEach(async () => {
@@ -50,7 +50,12 @@ async function say(
   text: string,
 ): Promise<string> {
   const result = await graph.invoke(
-    { messages: [new HumanMessage(text)], tgId: TG },
+    {
+      messages: [new HumanMessage(text)],
+      userId: USER,
+      channel: "telegram" as const,
+      channelAccountId: "",
+    },
     { configurable: { thread_id: threadId } },
   );
   return lastText(result.messages);
@@ -63,7 +68,12 @@ async function askAction(
   text: string,
 ): Promise<string> {
   const result = (await graph.invoke(
-    { messages: [new HumanMessage(text)], tgId: TG },
+    {
+      messages: [new HumanMessage(text)],
+      userId: USER,
+      channel: "telegram" as const,
+      channelAccountId: "",
+    },
     { configurable: { thread_id: threadId } },
   )) as { __interrupt__?: Array<{ value: { text: string } }> };
   const pending = result.__interrupt__?.[0]?.value.text;
@@ -113,7 +123,7 @@ describe("onboarding", () => {
     expect(confirm).toContain("$50");
     expect(confirm).toContain("$100");
 
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.standing_caps).toEqual({ per_action_limit_usd: 50, daily_limit_usd: 100 });
     expect(record?.risk_label).toBe("moderate");
   });
@@ -156,7 +166,7 @@ describe("intent → confirmation → execution", () => {
     expect(done).toMatch(/swapped \$30 usdc → eth/i);
     expect(done).toMatch(/basescan\.org\/tx\/0x/);
 
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.spent_ledger).toHaveLength(1);
     expect(record?.spent_ledger[0]).toMatchObject({ action_type: "swap", amount_usd: 30 });
   });
@@ -166,7 +176,7 @@ describe("intent → confirmation → execution", () => {
     await onboard(graph, "c2");
     await askAction(graph, "c2", "swap $20 usdc to eth");
     expect(await resume(graph, "c2", false)).toMatch(/cancelled/i);
-    expect((await read(TG))?.spent_ledger).toHaveLength(0);
+    expect((await read(USER))?.spent_ledger).toHaveLength(0);
   });
 
   test("an amount over the per-action limit is blocked before confirmation", async () => {
@@ -199,7 +209,7 @@ describe("x402 + swap on one ledger", () => {
     expect(done).toContain('"method": "POST"');
     expect(done).toContain('"token_address": "PEPE"');
 
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.spent_ledger).toHaveLength(1);
     expect(record?.spent_ledger[0]?.action_type).toBe("x402_data_purchase");
     expect(record?.x402_ledger).toHaveLength(1);
@@ -211,7 +221,7 @@ describe("x402 + swap on one ledger", () => {
     await onboard(graph, "e3");
     const reply = await say(graph, "e3", "show me whale flows");
     expect(reply).toMatch(/which token/i);
-    expect((await read(TG))?.x402_ledger ?? []).toHaveLength(0);
+    expect((await read(USER))?.x402_ledger ?? []).toHaveLength(0);
   });
 
   test("x402 and swap share the daily cap; hitting it blocks the next action of either type", async () => {
@@ -225,7 +235,7 @@ describe("x402 + swap on one ledger", () => {
     const blocked = await say(graph, "e2", "swap $10 usdc for eth");
     expect(blocked).toMatch(/daily cap|exceeds/i);
 
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.spent_ledger.reduce((s, r) => s + r.amount_usd, 0)).toBeCloseTo(95, 5);
 
     // a cheap x402 purchase still fits under the ~$5 left
@@ -240,13 +250,13 @@ describe("wallet & spend permission", () => {
 
     const connected = await say(graph, "w1", "connect my wallet");
     expect(connected).toMatch(/wallet connected/i);
-    const wallet = await readWallet(TG);
+    const wallet = await readWallet(USER);
     expect(wallet?.smart_account).toMatch(/^0x[0-9a-f]{40}$/);
     expect(wallet?.spend_permission).toBeNull();
 
     const granted = await say(graph, "w1", "grant a $100 daily permission");
     expect(granted).toMatch(/spend permission/i);
-    expect((await readWallet(TG))?.spend_permission).toMatchObject({
+    expect((await readWallet(USER))?.spend_permission).toMatchObject({
       status: "active",
       allowance_usd: 100,
       token: "USDC",
@@ -274,8 +284,8 @@ describe("wallet & spend permission", () => {
     await say(graph, "w3", "grant a $100 daily permission");
 
     // revoke only the on-chain permission record, leave the memory revocation_log clean
-    const wallet = await readWallet(TG);
-    await writeWallet(TG, {
+    const wallet = await readWallet(USER);
+    await writeWallet(USER, {
       ...wallet!,
       spend_permission: { ...wallet!.spend_permission!, status: "revoked" },
     });
@@ -307,7 +317,7 @@ describe("ACP hire + trust write-back", () => {
     expect(done).toMatch(/hired agent:\/\//i);
     expect(done).toMatch(/trust in this counterparty: 0\.50 →/i);
 
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.acp_job_history).toHaveLength(1);
     expect(record?.spent_ledger.at(-1)?.action_type).toBe("acp_job");
 
@@ -325,11 +335,11 @@ describe("deletion gate", () => {
     await say(graph, "d1", "aggressive");
     await say(graph, "d1", "500");
     await say(graph, "d1", "1000");
-    expect(await read(TG)).not.toBeNull();
+    expect(await read(USER)).not.toBeNull();
 
-    await backend().forgetEntity("ward.authorization", TG);
+    await backend().forgetEntity("ward.authorization", USER);
     await resetBackend();
-    expect(await read(TG)).toBeNull();
+    expect(await read(USER)).toBeNull();
 
     const refusal = await say(graph, "d2", "swap $100 of USDC for ETH");
     expect(refusal).toMatch(/no authorization/i);

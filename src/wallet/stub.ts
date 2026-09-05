@@ -43,15 +43,15 @@ export class StubWalletProvider implements WalletProvider {
     return this.#network;
   }
 
-  async connect(tgId: string): Promise<UserWallet> {
+  async connect(accountKey: string): Promise<UserWallet> {
     return {
-      smartAccount: fakeAddress(`ward-user-${tgId}`),
+      smartAccount: fakeAddress(`ward-user-${accountKey}`),
       agentSpender: fakeAddress("ward-agent-spender"),
     };
   }
 
   async grantSpendPermission(
-    tgId: string,
+    accountKey: string,
     allowanceUsd: number,
     periodDays: number,
   ): Promise<SpendPermissionState> {
@@ -59,28 +59,28 @@ export class StubWalletProvider implements WalletProvider {
       status: "active",
       allowanceUsd,
       periodSeconds: Math.round(periodDays * 86_400),
-      permissionHash: fakeHash(`perm-${tgId}-${allowanceUsd}`),
-      grantedTx: fakeHash(`grant-${tgId}-${Date.now()}`),
+      permissionHash: fakeHash(`perm-${accountKey}-${allowanceUsd}`),
+      grantedTx: fakeHash(`grant-${accountKey}-${Date.now()}`),
     };
-    this.#permissions.set(tgId, state);
+    this.#permissions.set(accountKey, state);
     return state;
   }
 
-  async readSpendPermission(tgId: string): Promise<SpendPermissionState | null> {
-    return this.#permissions.get(tgId) ?? null;
+  async readSpendPermission(accountKey: string): Promise<SpendPermissionState | null> {
+    return this.#permissions.get(accountKey) ?? null;
   }
 
-  async revokeSpendPermission(tgId: string): Promise<{ txHash: string }> {
-    const current = this.#permissions.get(tgId);
-    if (current) this.#permissions.set(tgId, { ...current, status: "revoked" });
-    return { txHash: fakeHash(`revoke-${tgId}-${Date.now()}`) };
+  async revokeSpendPermission(accountKey: string): Promise<{ txHash: string }> {
+    const current = this.#permissions.get(accountKey);
+    if (current) this.#permissions.set(accountKey, { ...current, status: "revoked" });
+    return { txHash: fakeHash(`revoke-${accountKey}-${Date.now()}`) };
   }
 
   async usdcBalanceUsd(): Promise<number> {
     return 1000; // plenty, for the demo
   }
 
-  async payX402(tgId: string, request: X402Request): Promise<X402Result> {
+  async payX402(accountKey: string, request: X402Request): Promise<X402Result> {
     this.calls.push("payX402");
     return {
       data: {
@@ -90,12 +90,12 @@ export class StubWalletProvider implements WalletProvider {
         body: request.body ?? null,
         note: "stub provider — no real payment",
       },
-      txHash: fakeHash(`x402-${tgId}-${request.url}-${Date.now()}`),
+      txHash: fakeHash(`x402-${accountKey}-${request.url}-${Date.now()}`),
       amountUsd: request.expectedUsd,
     };
   }
 
-  async fundAgentFromUser(_tgId: string, amountUsd: number): Promise<{ pulledUsd: number }> {
+  async fundAgentFromUser(_accountKey: string, amountUsd: number): Promise<{ pulledUsd: number }> {
     this.calls.push("fundAgentFromUser");
     return { pulledUsd: amountUsd };
   }
@@ -105,17 +105,17 @@ export class StubWalletProvider implements WalletProvider {
     return { txHash: fakeHash(`transfer-${to}-${amountUsd}-${Date.now()}`) };
   }
 
-  async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
+  async refundUser(accountKey: string, amountUsd: number): Promise<{ txHash: string }> {
     this.calls.push("refundUser");
-    return { txHash: fakeHash(`refund-${tgId}-${amountUsd}-${Date.now()}`) };
+    return { txHash: fakeHash(`refund-${accountKey}-${amountUsd}-${Date.now()}`) };
   }
 
-  async swap(tgId: string, request: SwapRequest): Promise<SwapResult> {
+  async swap(accountKey: string, request: SwapRequest): Promise<SwapResult> {
     this.calls.push("swap");
     const price = APPROX_USD_PER_TOKEN[request.buySymbol.toUpperCase()] ?? 1;
     const received = request.amountUsd / price;
     return {
-      txHash: fakeHash(`swap-${tgId}-${Date.now()}`),
+      txHash: fakeHash(`swap-${accountKey}-${Date.now()}`),
       sellUsd: request.amountUsd,
       buyDisplay: `~${received.toPrecision(3)} ${request.buySymbol.toUpperCase()}`,
     };

@@ -22,7 +22,7 @@ const WALLET_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
  * branch is what makes the deletion gate structural.
  */
 export async function routerNode(state: WardStateType): Promise<Partial<WardStateType>> {
-  const record = await read(state.tgId);
+  const record = await read(state.userId);
   const intent = state.parsedIntent;
 
   if (record !== null) {

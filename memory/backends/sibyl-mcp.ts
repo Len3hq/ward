@@ -125,7 +125,13 @@ export class SibylMcpBackend implements MemoryBackend {
     await this.#call(TOOL.recordEvent, {
       kind: event.kind,
       category: `ward.${event.kind}`,
-      body: { ts: event.ts, tg_id: event.tg_id, summary: event.summary, ...event.detail },
+      body: {
+        ts: event.ts,
+        user_id: event.user_id,
+        channel: event.channel,
+        summary: event.summary,
+        ...event.detail,
+      },
     });
   }
 

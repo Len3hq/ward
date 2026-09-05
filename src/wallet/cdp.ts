@@ -18,7 +18,7 @@ import type {
  * Coinbase CDP wallet provider — the judged path.
  *
  * - Agent spender: one CDP Server Account (`ward-agent-spender`), shared.
- * - User wallet: a per-user CDP Smart Account (`ward-user-<tgId>`) owned by a
+ * - User wallet: a per-user CDP Smart Account (`ward-user-<accountKey>`) owned by a
  *   per-user CDP Server Account. Hackathon-scoped managed-MPC custody — non-custodial
  *   in spirit (revocable Spend Permission), not an audited production custody stack.
  * - Spend Permission: `{ token: USDC, allowance, period: 1 day, spender }` granted
@@ -81,30 +81,30 @@ export class CdpWalletProvider implements WalletProvider {
     return this.#cdp.evm.getOrCreateAccount({ name: AGENT_SPENDER_NAME });
   }
 
-  async #userSmartAccount(tgId: string) {
-    const owner = await this.#cdp.evm.getOrCreateAccount({ name: `ward-owner-${tgId}` });
+  async #userSmartAccount(accountKey: string) {
+    const owner = await this.#cdp.evm.getOrCreateAccount({ name: `ward-owner-${accountKey}` });
     return this.#cdp.evm.getOrCreateSmartAccount({
-      name: `ward-user-${tgId}`,
+      name: `ward-user-${accountKey}`,
       owner,
       enableSpendPermissions: true,
     });
   }
 
-  async connect(tgId: string): Promise<UserWallet> {
+  async connect(accountKey: string): Promise<UserWallet> {
     const [smart, spender] = await Promise.all([
-      this.#userSmartAccount(tgId),
+      this.#userSmartAccount(accountKey),
       this.#agentSpender(),
     ]);
     return { smartAccount: smart.address as Hex, agentSpender: spender.address as Hex };
   }
 
   async grantSpendPermission(
-    tgId: string,
+    accountKey: string,
     allowanceUsd: number,
     periodDays: number,
   ): Promise<SpendPermissionState> {
     const [smart, spender] = await Promise.all([
-      this.#userSmartAccount(tgId),
+      this.#userSmartAccount(accountKey),
       this.#agentSpender(),
     ]);
     const op = await this.#cdp.evm.createSpendPermission({
@@ -118,7 +118,7 @@ export class CdpWalletProvider implements WalletProvider {
       network: this.#network,
     });
     const grantedTx = await this.#settle(smart.address as Hex, op);
-    const state = await this.readSpendPermission(tgId);
+    const state = await this.readSpendPermission(accountKey);
     return (
       state ?? {
         status: "active",
@@ -129,9 +129,9 @@ export class CdpWalletProvider implements WalletProvider {
     );
   }
 
-  async readSpendPermission(tgId: string): Promise<SpendPermissionState | null> {
+  async readSpendPermission(accountKey: string): Promise<SpendPermissionState | null> {
     const [smart, spender] = await Promise.all([
-      this.#userSmartAccount(tgId),
+      this.#userSmartAccount(accountKey),
       this.#agentSpender(),
     ]);
     const { spendPermissions } = await this.#cdp.evm.listSpendPermissions({
@@ -151,9 +151,9 @@ export class CdpWalletProvider implements WalletProvider {
     };
   }
 
-  async revokeSpendPermission(tgId: string): Promise<{ txHash: string }> {
-    const smart = await this.#userSmartAccount(tgId);
-    const state = await this.readSpendPermission(tgId);
+  async revokeSpendPermission(accountKey: string): Promise<{ txHash: string }> {
+    const smart = await this.#userSmartAccount(accountKey);
+    const state = await this.readSpendPermission(accountKey);
     if (!state?.permissionHash) throw new Error("no active spend permission to revoke");
     const op = await this.#cdp.evm.revokeSpendPermission({
       address: smart.address as Hex,
@@ -182,9 +182,9 @@ export class CdpWalletProvider implements WalletProvider {
    * GET endpoints send no body; POST/PUT/PATCH endpoints send `request.body` as
    * `application/json` (the catalog's `body_template`, with `{subject}` filled).
    */
-  async payX402(tgId: string, request: X402Request): Promise<X402Result> {
+  async payX402(accountKey: string, request: X402Request): Promise<X402Result> {
     const spender = await this.#agentSpender();
-    const permission = await this.#rawPermission(tgId);
+    const permission = await this.#rawPermission(accountKey);
     if (permission) {
       await spender.useSpendPermission({
         spendPermission: permission,
@@ -225,9 +225,9 @@ export class CdpWalletProvider implements WalletProvider {
    * Base via the CDP swap API. Testnet DEX liquidity is thin — the plan's fallback
    * is a WETH wrap/unwrap presented honestly as the swap primitive.
    */
-  async swap(tgId: string, request: SwapRequest): Promise<SwapResult> {
+  async swap(accountKey: string, request: SwapRequest): Promise<SwapResult> {
     const spender = await this.#agentSpender();
-    const permission = await this.#rawPermission(tgId);
+    const permission = await this.#rawPermission(accountKey);
     const fromAmount = parseUnits(String(request.amountUsd), USDC_DECIMALS);
 
     if (permission) {
@@ -267,9 +267,9 @@ export class CdpWalletProvider implements WalletProvider {
    * while the ledger recorded it as the user's spend. A missing permission is a
    * hard error here, not the soft skip the near-atomic swap/x402 paths take.
    */
-  async fundAgentFromUser(tgId: string, amountUsd: number): Promise<{ pulledUsd: number }> {
+  async fundAgentFromUser(accountKey: string, amountUsd: number): Promise<{ pulledUsd: number }> {
     const spender = await this.#agentSpender();
-    const permission = await this.#rawPermission(tgId);
+    const permission = await this.#rawPermission(accountKey);
     if (!permission) {
       throw new Error(
         "no active Spend Permission — grant one before Ward can spend your USDC on an ACP job",
@@ -296,15 +296,15 @@ export class CdpWalletProvider implements WalletProvider {
   }
 
   /** VERIFY LIVE. Send unspent USDC back from the agent spender to the user's smart account. */
-  async refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }> {
-    const smart = await this.#userSmartAccount(tgId);
+  async refundUser(accountKey: string, amountUsd: number): Promise<{ txHash: string }> {
+    const smart = await this.#userSmartAccount(accountKey);
     return this.transferUsdcFromSpender(smart.address as Hex, amountUsd);
   }
 
   /** The full on-chain SpendPermission struct, needed by `useSpendPermission`. */
-  async #rawPermission(tgId: string) {
+  async #rawPermission(accountKey: string) {
     const [smart, spender] = await Promise.all([
-      this.#userSmartAccount(tgId),
+      this.#userSmartAccount(accountKey),
       this.#agentSpender(),
     ]);
     const { spendPermissions } = await this.#cdp.evm.listSpendPermissions({

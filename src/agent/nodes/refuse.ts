@@ -12,7 +12,7 @@ export async function refuseNode(state: WardStateType): Promise<Partial<WardStat
   const last = state.messages.at(-1);
   if (last instanceof AIMessage) return {};
 
-  const hadRecord = (await read(state.tgId)) !== null;
+  const hadRecord = (await read(state.userId)) !== null;
   const message = hadRecord
     ? "I can't do that right now."
     : "I have no authorization on file for you in Sibyl Memory, so I won't move any funds — " +

@@ -6,12 +6,19 @@ import { Context, Telegraf } from "telegraf";
 import type { WardGraph } from "../agent/graph.ts";
 import { maybeSummarize } from "../agent/summary.ts";
 import { BRAND } from "../config.ts";
+import { resolveUser } from "../identity/index.ts";
 
 /**
  * Telegram gateway. Adapted from Len3's `gateways/telegram.ts` — Telegraf
  * long-polling, streamed message edits, markdown→HTML, 4096-char split, and
- * approval-interrupt detection (`/newsession`, `/defaultsession`). User = Telegram
- * id; no linking / JWT.
+ * approval-interrupt detection (`/newsession`, `/defaultsession`).
+ *
+ * A Telegram id is not an identity here, it is an *account*: `resolveUser` maps it
+ * to the principal that keys everything in Sibyl Memory, minting one on first
+ * contact. The account itself is the proof — a Telegram DM is already
+ * authenticated — which is why `first_contact` is sound on this channel and not on
+ * MCP. Threads stay per-channel (`telegram:<chat>:<seq>`) while the memory behind
+ * them is shared. See `MULTI-CHANNEL.md`.
  */
 
 const EDIT_THROTTLE_MS = 900;
@@ -38,7 +45,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     }
     return s;
   };
-  const threadId = (chatId: number, seq: number) => `tg:${chatId}:${seq}`;
+  const threadId = (chatId: number, seq: number) => `telegram:${chatId}:${seq}`;
 
   bot.start((ctx) =>
     ctx.reply(
@@ -80,6 +87,16 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     const thread = threadId(chatId, s.seq);
     const config = { configurable: { thread_id: thread } };
 
+    const accountId = String(ctx.from.id);
+    let userId: string;
+    try {
+      ({ userId } = await resolveUser("telegram", accountId));
+    } catch (error) {
+      console.error("identity resolution failed:", error);
+      await ctx.reply("I couldn't work out who you are just now. Try again in a moment.");
+      return;
+    }
+
     // Resuming a pending confirmation?
     if (s.awaiting && s.awaiting.thread === thread) {
       const approved = YES.test(text) ? true : NO.test(text) ? false : null;
@@ -89,7 +106,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       }
       s.awaiting = undefined;
       await runGraph(ctx, chatId, graph, config, new Command({ resume: { approved } }), s, thread);
-      await refreshSummary(graph, config, String(ctx.from.id));
+      await refreshSummary(graph, config, userId);
       return;
     }
 
@@ -98,11 +115,16 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       chatId,
       graph,
       config,
-      { messages: [new HumanMessage(text)], tgId: String(ctx.from.id) },
+      {
+        messages: [new HumanMessage(text)],
+        userId,
+        channel: "telegram" as const,
+        channelAccountId: accountId,
+      },
       s,
       thread,
     );
-    await refreshSummary(graph, config, String(ctx.from.id));
+    await refreshSummary(graph, config, userId);
   });
 
   return bot;
@@ -112,12 +134,12 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 async function refreshSummary(
   graph: WardGraph,
   config: { configurable: { thread_id: string } },
-  tgId: string,
+  userId: string,
 ): Promise<void> {
   try {
     const snapshot = await graph.getState(config);
     const messages = (snapshot.values as { messages?: BaseMessage[] }).messages ?? [];
-    await maybeSummarize(tgId, messages);
+    await maybeSummarize(userId, messages);
   } catch (error) {
     console.error("summary refresh failed:", error);
   }

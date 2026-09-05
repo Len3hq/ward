@@ -37,24 +37,24 @@ export interface WalletProvider {
   readonly kind: "cdp" | "stub";
   network(): "base" | "base-sepolia";
   /** Create/fetch the user's smart account and the shared agent spender. Idempotent. */
-  connect(tgId: string): Promise<UserWallet>;
+  connect(accountKey: string): Promise<UserWallet>;
   /** Grant a USDC Spend Permission from the user's smart account to the agent spender. */
   grantSpendPermission(
-    tgId: string,
+    accountKey: string,
     allowanceUsd: number,
     periodDays: number,
   ): Promise<SpendPermissionState>;
   /** Current permission for this user (from chain), or `null` if none was ever granted. */
-  readSpendPermission(tgId: string): Promise<SpendPermissionState | null>;
+  readSpendPermission(accountKey: string): Promise<SpendPermissionState | null>;
   /** Submit the on-chain revocation. */
-  revokeSpendPermission(tgId: string): Promise<{ txHash: string }>;
+  revokeSpendPermission(accountKey: string): Promise<{ txHash: string }>;
   /** USDC balance of an address, in whole USD. */
   usdcBalanceUsd(address: Hex): Promise<number>;
 
   /** Pay an x402 endpoint from the agent spender (pulls within the Spend Permission). */
-  payX402(tgId: string, request: X402Request): Promise<X402Result>;
+  payX402(accountKey: string, request: X402Request): Promise<X402Result>;
   /** Capped swap on Base, funded from the agent spender. */
-  swap(tgId: string, request: SwapRequest): Promise<SwapResult>;
+  swap(accountKey: string, request: SwapRequest): Promise<SwapResult>;
 
   /**
    * Pull `amountUsd` USDC from the user's smart account into the agent spender,
@@ -62,7 +62,7 @@ export interface WalletProvider {
    * balance, so this pull is what makes a job **the user's** spend rather than
    * Ward's float. No active permission → throw; never silently fall back.
    */
-  fundAgentFromUser(tgId: string, amountUsd: number): Promise<{ pulledUsd: number }>;
+  fundAgentFromUser(accountKey: string, amountUsd: number): Promise<{ pulledUsd: number }>;
   /**
    * Send USDC from the agent spender to any address. Used to forward a user's
    * pulled budget on to whatever address the ACP escrow actually draws on, which
@@ -73,7 +73,7 @@ export interface WalletProvider {
    * Return unspent USDC to the user's smart account — a job that doesn't settle,
    * or settles under budget, must not leave the user's money in a Ward wallet.
    */
-  refundUser(tgId: string, amountUsd: number): Promise<{ txHash: string }>;
+  refundUser(accountKey: string, amountUsd: number): Promise<{ txHash: string }>;
 }
 
 export interface X402Request {

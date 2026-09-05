@@ -20,7 +20,7 @@ import { appendSpend, initialize, isRevoked, read, spentToday } from "../memory/
  */
 const enabled = Bun.which("sibyl-memory-mcp") !== null && process.env.SIBYL_MEMORY_MCP_TEST === "1";
 
-const TG = 987654321;
+const USER = "ward_01J9XQ4M7BZK3TVWXY0123456F";
 let dbDir: string;
 
 beforeAll(async () => {
@@ -42,57 +42,57 @@ beforeEach(async () => {
 
 describe.skipIf(!enabled)("Sibyl Memory MCP backend", () => {
   test("onboards and reads back through the MCP server", async () => {
-    expect(await read(TG)).toBeNull();
-    await initialize(TG, {
+    expect(await read(USER)).toBeNull();
+    await initialize(USER, {
       risk_label: "moderate",
       per_action_limit_usd: 50,
       daily_limit_usd: 100,
     });
-    const record = await read(TG);
+    const record = await read(USER);
     expect(record?.standing_caps.daily_limit_usd).toBe(100);
   });
 
   test("appends a spend and the ledger survives a fresh connection", async () => {
-    await appendSpend(TG, {
+    await appendSpend(USER, {
       amount_usd: 12.5,
       action_type: "x402_data_purchase",
       tx_hash: "0xfeed",
       idempotency_key: "sibyl-1",
     });
     await resetBackend(); // force a brand-new MCP connection
-    expect(await spentToday(TG, new Date())).toBeGreaterThanOrEqual(12.5);
+    expect(await spentToday(USER, new Date())).toBeGreaterThanOrEqual(12.5);
   });
 
   test("idempotent appendSpend across the real server", async () => {
-    const before = await spentToday(TG, new Date());
-    await appendSpend(TG, {
+    const before = await spentToday(USER, new Date());
+    await appendSpend(USER, {
       amount_usd: 5,
       action_type: "swap",
       tx_hash: "0x1",
       idempotency_key: "sibyl-dup",
     });
-    await appendSpend(TG, {
+    await appendSpend(USER, {
       amount_usd: 5,
       action_type: "swap",
       tx_hash: "0x1",
       idempotency_key: "sibyl-dup",
     });
-    expect(await spentToday(TG, new Date())).toBeCloseTo(before + 5, 5);
+    expect(await spentToday(USER, new Date())).toBeCloseTo(before + 5, 5);
   });
 
   test("deletion gate: forgetting the entity makes read() null again", async () => {
-    expect(await read(TG)).not.toBeNull();
-    await backend().forgetEntity("ward.authorization", String(TG));
+    expect(await read(USER)).not.toBeNull();
+    await backend().forgetEntity("ward.authorization", String(USER));
     await resetBackend();
-    expect(await read(TG)).toBeNull();
-    expect(await isRevoked(TG, "swap")).toBe(false);
+    expect(await read(USER)).toBeNull();
+    expect(await isRevoked(USER, "swap")).toBe(false);
   });
 
   test("deletion gate at the graph level, on the real MCP backend", async () => {
     const graph = buildGraph();
-    const tg = String(TG);
+    const tg = String(USER);
     const thread = { configurable: { thread_id: `mcp-gate-${Date.now()}` } };
-    await initialize(TG, {
+    await initialize(USER, {
       risk_label: "moderate",
       per_action_limit_usd: 50,
       daily_limit_usd: 100,
@@ -102,12 +102,17 @@ describe.skipIf(!enabled)("Sibyl Memory MCP backend", () => {
     await resetBackend();
 
     const result = await graph.invoke(
-      { messages: [new HumanMessage("swap $20 usdc for eth")], tgId: tg },
+      {
+        messages: [new HumanMessage("swap $20 usdc for eth")],
+        userId: tg,
+        channel: "telegram" as const,
+        channelAccountId: "",
+      },
       thread,
     );
     const reply = (result.messages.at(-1) as { content?: unknown }).content;
     expect(String(reply)).toMatch(/no authorization/i);
-    expect(await read(TG)).toBeNull();
+    expect(await read(USER)).toBeNull();
   });
 });
 
