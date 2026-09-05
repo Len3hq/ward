@@ -74,8 +74,13 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   [`src/execution/`](./src/execution/), [X402.md](./X402.md).
 - **Counterparty market** — Virtuals ACP hire with trust write-back ·
   [`src/acp/`](./src/acp/), [ACP.md](./ACP.md).
-- **Interface** — Telegram (Telegraf; streamed edits, HTML, 4096-split, confirm
-  resume, `/newsession` / `/defaultsession`) · [`src/telegram/`](./src/telegram/).
+- **Interface** — Telegram (Telegraf; streamed edits, HTML, 4096-split, typed
+  confirmations) · [`src/telegram/`](./src/telegram/) — and Discord (discord.js;
+  DM-only, native markdown, 2000-split, button confirmations) ·
+  [`src/discord/`](./src/discord/). Both drive one channel-free turn loop in
+  [`src/gateway/`](./src/gateway/), against one authorization record: linked
+  accounts share a daily cap, a spend ledger and every revocation. See
+  [`MULTI-CHANNEL.md`](./MULTI-CHANNEL.md).
 
 Build history and every design decision: [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
@@ -137,7 +142,8 @@ loop.
 
 ```sh
 bun install
-cp .env.example .env               # TELEGRAM_BOT_TOKEN from @BotFather
+cp .env.example .env               # TELEGRAM_BOT_TOKEN from @BotFather,
+                                   # and/or DISCORD_BOT_TOKEN — at least one
 
 pipx install 'sibyl-memory-cli[mcp]'   # Python 3.10+ — see SIBYL-MEMORY.md
 sibyl init                              # or run with SIBYL_MEMORY_MODE=fs

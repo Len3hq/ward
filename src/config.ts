@@ -34,7 +34,13 @@ export interface AcpConfig {
 }
 
 export interface Config {
-  telegramBotToken: string;
+  /**
+   * Gateway tokens. Neither channel is required and both may run at once — a user
+   * who links the two accounts reaches the same authorization record from either.
+   * `loadConfig` fails only when *no* gateway is configured.
+   */
+  telegramBotToken: string | undefined;
+  discordBotToken: string | undefined;
   /** Optional: when absent, the agent node falls back to a deterministic memory recall. */
   openaiApiKey: string | undefined;
   models: Models;
@@ -53,14 +59,6 @@ export interface Config {
   /** Default escrow budget for an ACP job, in USD. */
   acpBudgetUsd: number;
   nodeEnv: NodeEnv;
-}
-
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required env var: ${name}. Copy .env.example to .env and fill it in.`);
-  }
-  return value;
 }
 
 function optional(name: string): string | undefined {
@@ -92,8 +90,18 @@ function acpConfig(): AcpConfig | undefined {
 }
 
 export function loadConfig(): Config {
+  const telegramBotToken = optional("TELEGRAM_BOT_TOKEN");
+  const discordBotToken = optional("DISCORD_BOT_TOKEN");
+  if (!telegramBotToken && !discordBotToken) {
+    throw new Error(
+      "No chat gateway configured. Set TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN, or both. " +
+        "Copy .env.example to .env and fill it in.",
+    );
+  }
+
   return {
-    telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
+    telegramBotToken,
+    discordBotToken,
     openaiApiKey: optional("OPENAI_API_KEY"),
     models: {
       agent: optional("WARD_AGENT_MODEL") ?? "gpt-4o-mini",

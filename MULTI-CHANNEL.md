@@ -295,7 +295,7 @@ somebody. Phase 11 folds this into `ChannelAdapter.notify`.
 case — a code embedded in prose is rejected as malformed and, importantly, is _still
 redeemable afterwards_, so a failed injection doesn't burn a real user's code.
 
-### Phase 11 — Channel abstraction + Discord gateway
+### Phase 11 — Channel abstraction + Discord gateway — **DONE**
 
 The existing Telegraf gateway holds real logic worth not duplicating: graph streaming,
 throttled edits, interrupt detection, yes/no resolution, message splitting.
@@ -322,6 +322,44 @@ askConfirm, notify }`.
 
 **Done when:** Telegram tests unchanged and green; a Discord adapter test drives the same
 `runTurn` through onboarding, a confirm, and a refusal.
+
+#### What actually shipped
+
+The order held: Telegram was refitted onto the adapter first and its suite stayed at
+161 green before a line of Discord was written, which is what proved the abstraction
+rather than merely asserting it.
+
+**The confirmation shape drove the interface.** The plan listed `askConfirm` beside
+`send` and `edit` as if it were another output method, but the two channels answer a
+confirmation in fundamentally different ways — Telegram waits for the _next message_
+matched against a yes/no regex, Discord waits for an _interaction event_ on a button.
+Rather than leak that into `runTurn`, `askConfirm(text)` blocks and returns
+`Promise<boolean | null>`. Telegram implements it with a pending resolver the text
+handler settles; Discord awaits a component collector. `runTurn` just does
+`await adapter.askConfirm(...)` and resumes the graph, which is why it stayed
+channel-free. That works because a LangGraph `interrupt()` has already ended the run —
+resuming is a fresh `invoke`, so blocking costs nothing.
+
+`null` is the third answer, and it is load-bearing: a confirmation that was never
+answered is a **refusal**. It says so rather than leaving a silent pending action the
+user might assume went through, and there is a test for it.
+
+Discord specifics that are not cosmetic: 2000 characters (so `splitMessage` takes the
+limit from the adapter), native markdown (so the render step is identity and
+`mdToHtml` has no analogue), buttons with an explicit `interaction.user.id` check, and
+DM-only. DM-only pays for itself twice — a confirmation naming someone's daily cap
+doesn't belong in a shared channel, _and_ Discord exempts DMs from the privileged
+Message Content intent, so the bot asks only for `Guilds` + `DirectMessages`.
+`Partials.Channel` is required or DM events never fire at all; both of those are
+asserted by test, because each fails silently.
+
+`src/index.ts` now starts whichever gateways have tokens, and `loadConfig` fails only
+when neither is set.
+
+**Result:** 176 pass / 8 skip / 0 fail on `fs`, 180 / 4 / 0 against live
+`sibyl-memory-mcp`. `gateway.channel.test.ts` drives `runTurn` through a fake adapter
+(onboarding, approve, decline, unanswered, refusal) and asserts the cross-channel
+property directly: Telegram spends $8 of a $10 cap, Discord is refused the next $20.
 
 ### Phase 12 — MCP server surface
 
