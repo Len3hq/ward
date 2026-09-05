@@ -1,0 +1,14 @@
+# `railway up` uploads this directory. .env is already gitignored, but a secret
+# leaking into a build context is not a mistake worth risking on inheritance.
+.env
+.env.*
+!.env.example
+counterparty/.env
+
+.git
+node_modules
+counterparty/node_modules
+memory/users
+memory/state
+memory/journal.ndjson
+*.log
