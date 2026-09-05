@@ -68,7 +68,7 @@ export const ACCOUNT_ID_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 export const accountIdSchema = z.string().regex(ACCOUNT_ID_RE, "invalid channel account id");
 
 /** How a channel account came to be attached to its principal. */
-export const LINK_METHODS = ["first_contact", "link_code", "migration"] as const;
+export const LINK_METHODS = ["first_contact", "link_code", "migration", "mcp_token"] as const;
 export const linkMethodSchema = z.enum(LINK_METHODS);
 export type LinkMethod = z.infer<typeof linkMethodSchema>;
 
@@ -227,6 +227,7 @@ export const JOURNAL_EVENT_KINDS = [
   "identity_link",
   "identity_unlink",
   "identity_migrate",
+  "proposal",
 ] as const;
 export const journalEventKindSchema = z.enum(JOURNAL_EVENT_KINDS);
 export type JournalEventKind = z.infer<typeof journalEventKindSchema>;

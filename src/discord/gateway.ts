@@ -15,10 +15,10 @@ import { randomUUID } from "node:crypto";
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
 import type { ChannelAdapter } from "../gateway/adapter.ts";
+import { registerChannel } from "../gateway/channels.ts";
 import { runTurn } from "../gateway/core.ts";
 import { linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
-import { registerNotifier } from "../identity/notify.ts";
 
 /**
  * Discord gateway. Same graph, same Sibyl Memory, same principal as Telegram — a
@@ -87,9 +87,18 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
     return s;
   };
 
-  registerNotifier("discord", async (accountId, text) => {
-    const user = await client.users.fetch(accountId);
-    await user.send(text);
+  registerChannel("discord", {
+    async notify(accountId, text) {
+      const user = await client.users.fetch(accountId);
+      await user.send(text);
+    },
+    async adapterFor(accountId) {
+      // Open (or reuse) the DM channel, so a proposal can be delivered to someone
+      // who is not currently talking to us.
+      const user = await client.users.fetch(accountId);
+      const dm = await user.createDM();
+      return discordAdapter(dm, accountId);
+    },
   });
 
   client.once(Events.ClientReady, (ready) => {

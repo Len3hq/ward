@@ -110,6 +110,17 @@ async function hitRateLimit(scope: string, limit: number, now: Date): Promise<bo
 }
 
 const mintScope = (userId: string) => `mint.${userId}`;
+
+/**
+ * Spend one mint from this user's hourly allowance. Shared with MCP token issuing,
+ * so a caller cannot dodge the limit by asking for a different kind of credential.
+ */
+export async function consumeMintAllowance(
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return !(await hitRateLimit(mintScope(userId), MINTS_PER_HOUR, now));
+}
 const redeemScope = (channel: Channel, accountId: string) => `redeem.${channel}_${accountId}`;
 
 // --- mint ---

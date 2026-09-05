@@ -1,13 +1,15 @@
 import { channelSchema, type Channel } from "../../memory/index.ts";
+import { notifyAccount } from "../gateway/channels.ts";
+import { issueToken, revokeAllTokens, tokenCount } from "../mcp/token.ts";
 import { accountsFor, resolveUser, unlink } from "./index.ts";
 import {
   CODE_TTL_MS,
+  consumeMintAllowance,
   mintLinkCode,
   otherAccounts,
   RateLimited,
   redeemLinkCode,
 } from "./linking.ts";
-import { notifyAccount } from "./notify.ts";
 
 /**
  * `/link`, `/unlink` and `/whoami`, written once for every channel. The Telegram
@@ -29,10 +31,51 @@ export interface CommandContext {
 
 const MINUTES = Math.round(CODE_TTL_MS / 60000);
 
-/** `/link` with no argument: mint a code to be typed on another channel. */
+/**
+ * `/link` — no argument mints a code for another chat app; `mcp` mints a bearer
+ * token for an MCP client; anything else is treated as a code to redeem.
+ *
+ * `mcp` cannot collide with a real code: codes are eight characters, so "mcp"
+ * never normalizes to one. It is still matched first, so the check does not depend
+ * on that.
+ */
 export async function linkCommand(ctx: CommandContext, argument: string): Promise<string> {
   const arg = argument.trim();
+  if (arg.toLowerCase() === "mcp") return mintMcpToken(ctx);
   return arg.length > 0 ? redeem(ctx, arg) : mint(ctx);
+}
+
+/**
+ * Mint an MCP bearer token. Unlike a link code this is long-lived, so the reply is
+ * blunt about what it is and what it deliberately cannot do.
+ */
+async function mintMcpToken(ctx: CommandContext): Promise<string> {
+  if (ctx.channel === "mcp") {
+    return "An MCP client can't mint its own access. Ask for this from Telegram or Discord.";
+  }
+
+  const { userId } = await resolveUser(ctx.channel, ctx.accountId);
+  if (!(await consumeMintAllowance(userId))) {
+    return "You've minted too many credentials in the last hour — try again later.";
+  }
+
+  const token = await issueToken(userId);
+  const existing = await tokenCount(userId);
+
+  return [
+    "Add this to your MCP client config:",
+    "",
+    `    WARD_USER_TOKEN=${token}`,
+    "",
+    "I won't show it again — mint another if you lose it.",
+    "",
+    "That client can read your limits, your spend history and your wallet, and it can " +
+      "*propose* a spend. It cannot approve one: every proposal comes back here for you " +
+      "to confirm. So a leaked token can't move your money.",
+    existing > 1 ? `\nYou now have ${existing} MCP tokens. "/unlink mcp" revokes all of them.` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function mint(ctx: CommandContext): Promise<string> {
@@ -92,6 +135,21 @@ export async function unlinkCommand(ctx: CommandContext, argument: string): Prom
   if (!target.success) {
     const linked = accounts.map((a) => a.channel).join(", ") || "none";
     return `Which one? Say "/unlink <channel>". You currently have: ${linked}.`;
+  }
+
+  // MCP tokens go all at once: "revoke my MCP access" must not leave a second
+  // token the user forgot they minted still working.
+  if (target.data === "mcp") {
+    try {
+      const revoked = await revokeAllTokens(userId);
+      if (revoked === 0) return "You have no MCP tokens.";
+      return (
+        `Revoked ${revoked} MCP token${revoked === 1 ? "" : "s"}. Any client using one now ` +
+        `gets nothing.\n\nYour authorization in Sibyl Memory is unchanged.`
+      );
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   }
 
   const match = accounts.find((a) => a.channel === target.data);

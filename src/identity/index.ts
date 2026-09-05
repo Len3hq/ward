@@ -163,6 +163,39 @@ export async function unlink(userId: string, channel: Channel, accountId: string
   );
 }
 
+/**
+ * Detach every account on one channel at once, and return how many went.
+ *
+ * This is for credentials rather than chat accounts: "revoke my MCP access" must not
+ * leave a second token the user forgot they minted still working. It keeps the same
+ * guarantee as `unlink` — it will not remove the principal's last remaining account,
+ * which would leave the authorization record unreachable.
+ */
+export async function unlinkAll(userId: string, channel: Channel): Promise<number> {
+  const ch = channelSchema.parse(channel);
+  const accounts = await readAccounts(userId);
+  const doomed = accounts.filter((a) => a.channel === ch);
+  if (doomed.length === 0) return 0;
+  if (doomed.length === accounts.length) {
+    throw new Error(
+      `those are your only linked accounts — removing them would leave your ` +
+        `authorization record unreachable`,
+    );
+  }
+
+  for (const account of doomed) {
+    await forgetIdentity(userId, ch, account.account_id);
+  }
+  await appendJournalEvent(
+    userId,
+    "identity_unlink",
+    `unlinked ${doomed.length} ${ch} account(s)`,
+    { channel: ch, count: doomed.length },
+    ch,
+  );
+  return doomed.length;
+}
+
 /** Every channel account this principal owns — for `/whoami` and link notifications. */
 export async function accountsFor(userId: string): Promise<LinkedAccount[]> {
   return readAccounts(userId);

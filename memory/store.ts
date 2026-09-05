@@ -56,6 +56,7 @@ import { computeTrustScore } from "./trust.ts";
  */
 
 const isoDatetimeString = z.iso.datetime({ offset: true });
+const nonEmptyString = z.string().min(1);
 
 const AUTHORIZATION = "ward.authorization";
 const WALLET = "ward.wallet";
@@ -496,6 +497,62 @@ export async function readRateWindow(scope: string): Promise<string[]> {
 
 export async function writeRateWindow(scope: string, hits: string[]): Promise<void> {
   await backend().setState(rateKey(scope), rateWindowSchema.parse({ hits }));
+}
+
+// --- proposals from the MCP surface (Sibyl Memory HOT state) ---
+
+/**
+ * A spend an MCP client has *asked for* but cannot itself authorise.
+ *
+ * The MCP surface holds a bearer token, not a person, so it may propose and never
+ * confirm. A proposal carries only the request text: delivery replays that text
+ * through the ordinary graph on a human channel, so it meets exactly the same gate,
+ * the same caps and the same confirmation a typed message would. There is no path
+ * by which proposing is cheaper than asking.
+ */
+const proposalSchema = z.object({
+  id: nonEmptyString,
+  ward_user_id: wardUserIdSchema,
+  created_at: isoDatetimeString,
+  /** Verbatim request, replayed through the graph on the human channel. */
+  request: nonEmptyString,
+  /** What the MCP server made of it, for the notification copy only — never authority. */
+  summary: nonEmptyString,
+  /** Which MCP account asked, so the notification can say where it came from. */
+  source_account: nonEmptyString,
+});
+export type Proposal = z.infer<typeof proposalSchema>;
+
+const proposalQueueSchema = z.object({ pending: z.array(proposalSchema) });
+
+/**
+ * One queue for every user.
+ *
+ * The MCP server runs as its own process (stdio, spawned by the client), so this
+ * document is written by one process and drained by another, and `withLock` cannot
+ * span them. A simultaneous append and drain could lose a proposal. That is
+ * accepted rather than hidden: proposals arrive at human speed, a lost one is a
+ * missing notification rather than an unauthorised spend, and nothing here can move
+ * money on its own. If the surface ever gets busy, this wants a real queue.
+ */
+const PROPOSAL_QUEUE = "ward.proposals";
+
+export async function readProposalQueue(): Promise<Proposal[]> {
+  const raw = await backend().getState(PROPOSAL_QUEUE);
+  if (raw === null || raw === undefined) return [];
+  return proposalQueueSchema.parse(raw).pending;
+}
+
+export async function writeProposalQueue(pending: Proposal[]): Promise<void> {
+  await backend().setState(PROPOSAL_QUEUE, proposalQueueSchema.parse({ pending }));
+}
+
+/** Append one proposal, preserving whatever else is queued. */
+export async function enqueueProposal(proposal: Proposal): Promise<Proposal> {
+  const validated = proposalSchema.parse(proposal);
+  const pending = await readProposalQueue();
+  await writeProposalQueue([...pending, validated]);
+  return validated;
 }
 
 // --- conversation summary (Sibyl Memory HOT state) ---

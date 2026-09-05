@@ -1,6 +1,7 @@
 import { buildGraph } from "./agent/graph.ts";
 import { loadConfig } from "./config.ts";
 import { createDiscordGateway } from "./discord/gateway.ts";
+import { startProposalWatcher } from "./gateway/proposals.ts";
 import { installCdpProxy } from "./net.ts";
 import { createGateway } from "./telegram/gateway.ts";
 
@@ -34,6 +35,11 @@ async function main(): Promise<void> {
     await client.login(config.discordBotToken);
     shutdown.push(() => void client.destroy());
   }
+
+  // Proposals made over MCP are queued in Sibyl Memory by that separate process;
+  // this is what picks them up and replays them as a real turn on a human channel.
+  const proposals = startProposalWatcher(graph);
+  shutdown.push(() => proposals.stop());
 
   const stop = (signal: string) => {
     console.log(`\nReceived ${signal}, stopping Ward.`);

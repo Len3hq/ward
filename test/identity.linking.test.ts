@@ -16,7 +16,7 @@ import {
   normalizeCode,
   redeemLinkCode,
 } from "../src/identity/linking.ts";
-import { clearNotifiers, registerNotifier } from "../src/identity/notify.ts";
+import { clearChannels, registerChannel } from "../src/gateway/channels.ts";
 
 /**
  * Phase 10 — the linking flow.
@@ -36,12 +36,12 @@ beforeEach(async () => {
   process.env.WARD_MEMORY_DIR = dir;
   process.env.SIBYL_MEMORY_MODE = "fs";
   await resetBackend();
-  clearNotifiers();
+  clearChannels();
 });
 
 afterEach(async () => {
   await resetBackend();
-  clearNotifiers();
+  clearChannels();
   delete process.env.WARD_MEMORY_DIR;
   delete process.env.SIBYL_MEMORY_MODE;
   if (dir) await rm(dir, { recursive: true, force: true });
@@ -238,8 +238,13 @@ describe("the origin-channel announcement", () => {
   test("tells every other linked account that a link just happened", async () => {
     const userId = await onboardedTelegramUser();
     const sent: Array<{ accountId: string; text: string }> = [];
-    registerNotifier("telegram", async (accountId, text) => {
-      sent.push({ accountId, text });
+    registerChannel("telegram", {
+      async notify(accountId: string, text: string) {
+        sent.push({ accountId, text });
+      },
+      async adapterFor() {
+        return null;
+      },
     });
 
     const { code } = await mintLinkCode(userId, "telegram");
@@ -254,8 +259,13 @@ describe("the origin-channel announcement", () => {
 
   test("says so when an account could not be reached, rather than passing silently", async () => {
     const userId = await onboardedTelegramUser();
-    registerNotifier("telegram", async () => {
-      throw new Error("telegram is down");
+    registerChannel("telegram", {
+      async notify() {
+        throw new Error("telegram is down");
+      },
+      async adapterFor() {
+        return null;
+      },
     });
 
     const { code } = await mintLinkCode(userId, "telegram");

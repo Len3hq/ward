@@ -79,7 +79,10 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   DM-only, native markdown, 2000-split, button confirmations) ·
   [`src/discord/`](./src/discord/). Both drive one channel-free turn loop in
   [`src/gateway/`](./src/gateway/), against one authorization record: linked
-  accounts share a daily cap, a spend ledger and every revocation. See
+  accounts share a daily cap, a spend ledger and every revocation. Ward is also an
+  **MCP server** ([`src/mcp/`](./src/mcp/), [`MCP.md`](./MCP.md)) — read-mostly by
+  design: an MCP client can propose a spend but never approve one, because it holds
+  a token rather than being a person. See
   [`MULTI-CHANNEL.md`](./MULTI-CHANNEL.md).
 
 Build history and every design decision: [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).

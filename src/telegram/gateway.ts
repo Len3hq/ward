@@ -1,12 +1,12 @@
-import { Context, Telegraf } from "telegraf";
+import { Context, Telegraf, type Telegram } from "telegraf";
 
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
+import { registerChannel } from "../gateway/channels.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
 import { linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
-import { registerNotifier } from "../identity/notify.ts";
 
 /**
  * Telegram gateway. Adapted from Len3's `gateways/telegram.ts` — Telegraf
@@ -59,9 +59,22 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
   };
   const threadId = (chatId: number, seq: number) => `telegram:${chatId}:${seq}`;
 
-  // So another channel's link can be announced here — the phishing backstop.
-  registerNotifier("telegram", async (accountId, text) => {
-    await bot.telegram.sendMessage(accountId, text);
+  /**
+   * Make this gateway reachable without a `ctx`: another channel's link has to be
+   * announced here (the phishing backstop), and an MCP proposal has to be delivered
+   * here as a real turn.
+   */
+  registerChannel("telegram", {
+    async notify(accountId, text) {
+      await bot.telegram.sendMessage(accountId, text);
+    },
+    async adapterFor(accountId) {
+      // In a DM the chat id and the user id are the same, so an account id is
+      // enough to open a conversation with someone who isn't currently talking.
+      const chatId = Number(accountId);
+      if (!Number.isFinite(chatId)) return null;
+      return telegramAdapter(bot.telegram, chatId, session(chatId));
+    },
   });
 
   bot.start((ctx) =>
@@ -162,7 +175,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 
     await runTurn({
       graph,
-      adapter: telegramAdapter(ctx, chatId, s),
+      adapter: telegramAdapter(ctx.telegram, chatId, s),
       threadId: threadId(chatId, s.seq),
       userId,
       accountId,
@@ -178,8 +191,13 @@ function cancelPending(s: ChatSession): void {
   s.pending = undefined;
 }
 
-/** The Telegram half of the contract in `gateway/adapter.ts`. */
-function telegramAdapter(ctx: Context, chatId: number, s: ChatSession): ChannelAdapter {
+/**
+ * The Telegram half of the contract in `gateway/adapter.ts`.
+ *
+ * Built from `Telegram` + a chat id rather than a Telegraf `Context`, so it works
+ * both for the user who just messaged us and for one we are pushing a proposal to.
+ */
+function telegramAdapter(telegram: Telegram, chatId: number, s: ChatSession): ChannelAdapter {
   const body = (text: string, mode: SendMode) =>
     mode === "rendered" ? mdToHtml(text) : text.slice(0, TELEGRAM_LIMIT);
 
@@ -194,19 +212,19 @@ function telegramAdapter(ctx: Context, chatId: number, s: ChatSession): ChannelA
     editThrottleMs: EDIT_THROTTLE_MS,
 
     async typing() {
-      await ctx.sendChatAction("typing").catch(() => undefined);
+      await telegram.sendChatAction(chatId, "typing").catch(() => undefined);
     },
 
     async send(text, mode) {
       // A rendering slip must not lose the message — fall back to plain text.
-      const sent = await ctx
-        .reply(body(text, mode), extra(mode))
-        .catch(() => ctx.reply(text.slice(0, TELEGRAM_LIMIT)));
+      const sent = await telegram
+        .sendMessage(chatId, body(text, mode), extra(mode))
+        .catch(() => telegram.sendMessage(chatId, text.slice(0, TELEGRAM_LIMIT)));
       return String(sent.message_id);
     },
 
     async edit(handle, text, mode) {
-      await ctx.telegram
+      await telegram
         .editMessageText(chatId, Number(handle), undefined, body(text, mode), extra(mode))
         .catch(() => undefined);
     },
@@ -217,7 +235,7 @@ function telegramAdapter(ctx: Context, chatId: number, s: ChatSession): ChannelA
      * holds the resolver, so this turn simply awaits it.
      */
     async askConfirm(text) {
-      await ctx.reply(mdToHtml(text), {
+      await telegram.sendMessage(chatId, mdToHtml(text), {
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
       });

@@ -361,7 +361,7 @@ when neither is set.
 (onboarding, approve, decline, unanswered, refusal) and asserts the cross-channel
 property directly: Telegram spends $8 of a $10 cap, Discord is refused the next $20.
 
-### Phase 12 — MCP server surface
+### Phase 12 — MCP server surface — **DONE**
 
 Ward stops only consuming MCP and starts serving it. `@modelcontextprotocol/sdk` is
 already a dependency.
@@ -380,6 +380,52 @@ mcp` on a human channel, stored hashed as a `ward.identity/mcp:<token_hash>` lin
 
 **Done when:** an MCP client reads the live authorization record; a proposal surfaces as
 a Telegram confirmation; a deleted record makes every tool refuse.
+
+#### What actually shipped
+
+All three, plus the piece this plan skipped over entirely.
+
+**"Push the confirmation to the primary human channel" has no in-process route.** The
+MCP server runs as its _own process_ — stdio, spawned by whatever client is using it —
+so the notifier registry from Phase 10 is empty there. It cannot reach a running
+gateway at all. Written naively, `ward_propose_action` would have silently done
+nothing, and the "surfaces as a Telegram confirmation" criterion would have quietly
+failed.
+
+So a proposal is queued in Sibyl Memory (`ward.proposals`) and drained by
+`src/gateway/proposals.ts` inside the main process. Delivery is deliberately **not a
+notification**: the request text is replayed through the ordinary graph on the user's
+own channel, so it meets the same intent parser, the same gate, the same caps and the
+same confirmation as a typed message. A test asserts exactly that — a proposal made
+with $95 of a $100 daily cap already spent is refused on delivery. The MCP route buys
+attention, never authority.
+
+That in turn needed gateways reachable without a `ctx`, so Phase 10's notifier
+registry became `src/gateway/channels.ts` — a `ChannelPort` with both `notify` and
+`adapterFor(accountId)` — and the Telegram adapter was rebuilt on `Telegram` + a chat
+id rather than a Telegraf `Context`. It now serves both the user who just messaged and
+one being pushed to.
+
+Three smaller decisions:
+
+- **`/unlink mcp` revokes every token**, not just the newest (`unlinkAll`). Chat
+  accounts are unlinked one at a time; a credential is not, and a forgotten second
+  token surviving a revoke is exactly the failure that matters.
+- **Neither the token nor its digest is ever echoed back** to the client that
+  presented it — the digest is as good as the credential for lookup.
+- `ward_recent_activity` wraps its output in `<untrusted_data>`: ledger rows carry
+  counterparty-supplied text, which is data and never instruction.
+
+The queue is written by one process and drained by another, and the in-process lock
+cannot span them. That race is documented in `memory/store.ts` and `MCP.md` rather
+than papered over: proposals arrive at human speed, and a lost one is a missing
+notification, not an unauthorised spend.
+
+**Result:** 193 pass / 8 skip / 0 fail on `fs`, 197 / 4 / 0 against live
+`sibyl-memory-mcp`. `test/mcp.server.test.ts` adds 17, including a test that asserts
+the tool list contains nothing matching `execute|swap|pay|send|transfer|approve`, and
+one that an ignored proposal moves nothing — silence is never approval. Operator setup
+is in `MCP.md`.
 
 ### Phase 13 — Cross-channel proofs + docs
 
