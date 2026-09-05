@@ -16,11 +16,13 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@account-kit/infra": "^4.88.5",
     "@coinbase/cdp-sdk": "^1.55.0",
     "@langchain/core": "^1.2.9",
     "@langchain/langgraph": "^1.4.13",
     "@langchain/openai": "^1.5.11",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@virtuals-protocol/acp-node-v2": "^0.1.12",
     "dotenv": "^17.4.2",
     "telegraf": "^4.16.3",
     "viem": "^2.56.3",
