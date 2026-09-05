@@ -59,28 +59,44 @@ function pinnedCounterparty(): string | null {
 }
 
 /**
- * The agent to hire: the pinned wallet if it is discoverable, else the top match.
+ * The agent to hire: the pinned wallet, looked up directly, else the top search match.
  *
- * A pin that finds nothing is a hard error rather than a silent fallback — quietly
- * hiring a stranger because your own agent has no offering is exactly the failure
- * that should be loud.
+ * A pin resolves through `getAgentByWalletAddress` rather than `browseAgents`,
+ * deliberately. Virtuals' marketplace search is a separate index that an agent can be
+ * absent from for a long time after its offering exists — measured on Ward's own
+ * seller, which `getAgentByWalletAddress` returned complete with its offering while
+ * `browseAgents` could not find it under any keyword, including the agent's own name,
+ * at topK 50. Search is the right tool for "find me someone"; it is the wrong tool
+ * for "fetch the agent I already named".
+ *
+ * A pin that resolves to nothing, or to an agent with no offering, is a hard error.
+ * Quietly hiring a stranger because your own agent is not indexed yet is exactly the
+ * failure that should be loud.
  */
-async function selectCounterparty<T extends { walletAddress: string }>(
-  browse: (keyword: string, opts: { topK: number }) => Promise<T[]>,
-): Promise<T> {
+async function selectCounterparty<
+  T extends { walletAddress: string; offerings?: unknown[] },
+>(lookup: {
+  byWallet: (wallet: string) => Promise<T | null>;
+  browse: (keyword: string, opts: { topK: number }) => Promise<T[]>;
+}): Promise<T> {
   const pinned = pinnedCounterparty();
   if (pinned === null) {
-    const [top] = await browse(OFFERING_KEYWORD, { topK: 1 });
+    const [top] = await lookup.browse(OFFERING_KEYWORD, { topK: 1 });
     if (!top) throw new Error("no ACP agent offers token-risk assessment");
     return top;
   }
 
-  const results = await browse(OFFERING_KEYWORD, { topK: 25 });
-  const match = results.find((a) => a.walletAddress.toLowerCase() === pinned);
+  const match = await lookup.byWallet(pinned);
   if (!match) {
     throw new Error(
-      `ACP_COUNTERPARTY_WALLET ${pinned} is not discoverable for "${OFFERING_KEYWORD}" — ` +
-        `it needs a visible offering on app.virtuals.io. Refusing to hire someone else instead.`,
+      `ACP_COUNTERPARTY_WALLET ${pinned} is not a registered ACP agent. ` +
+        `Refusing to hire someone else instead.`,
+    );
+  }
+  if (!match.offerings?.length) {
+    throw new Error(
+      `ACP_COUNTERPARTY_WALLET ${pinned} has no offerings, so there is nothing to buy ` +
+        `and no price for escrow to fund. Add one on app.virtuals.io.`,
     );
   }
   return match;
@@ -98,9 +114,14 @@ export class VirtualsAcpProvider implements AcpProvider {
   async preferredCounterparty(): Promise<string> {
     const { agent, stop } = await this.#agent();
     try {
-      const chosen = await selectCounterparty<{ walletAddress: string; name?: string }>(
-        (keyword, opts) => agent.browseAgents(keyword, opts),
-      );
+      const chosen = await selectCounterparty<{
+        walletAddress: string;
+        name?: string;
+        offerings?: unknown[];
+      }>({
+        byWallet: (wallet) => agent.getAgentByWalletAddress(wallet),
+        browse: (keyword, opts) => agent.browseAgents(keyword, opts),
+      });
       return `agent://${chosen.walletAddress}`;
     } finally {
       await stop();
@@ -125,7 +146,10 @@ export class VirtualsAcpProvider implements AcpProvider {
         provider = await selectCounterparty<{
           walletAddress: string;
           offerings: Array<{ name: string }>;
-        }>((keyword, opts) => agent.browseAgents(keyword, opts));
+        }>({
+          byWallet: (wallet) => agent.getAgentByWalletAddress(wallet),
+          browse: (keyword, opts) => agent.browseAgents(keyword, opts),
+        });
       } catch (error) {
         return notSettled(job, error instanceof Error ? error.message : String(error));
       }
