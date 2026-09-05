@@ -3,12 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Seller-side ACP agent: sells a reproducible Base token-risk report. Run by the Ward team — see README.md.",
+  "description": "Seller-side ACP agent: sells a reproducible Base token-risk report. Run by the Ward team \u2014 see README.md.",
   "license": "MIT",
   "scripts": {
     "start": "bun run index.ts"
   },
   "dependencies": {
+    "@account-kit/infra": "^4.88.5",
     "@virtuals-protocol/acp-node-v2": "*"
   }
 }

@@ -39,6 +39,52 @@ import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
  */
 
 const OFFERING_KEYWORD = "token risk";
+/**
+ * Pin the counterparty to one wallet, when set (`ACP_COUNTERPARTY_WALLET`).
+ *
+ * Without it, selection is `browseAgents(keyword, { topK: 1 })` — whichever agent
+ * Virtuals happens to rank first for "token risk". That is the right default:
+ * `ACP.md` prefers hiring a genuinely independent agent over Ward's own seller. But
+ * it also means the counterparty can change between runs without anything in Ward
+ * changing, which makes a demo unreproducible and makes "who did we hire, and do we
+ * trust them?" a question about a stranger.
+ *
+ * Setting this pins the hire to a known address — used to reach Ward's own
+ * `counterparty/` seller, which `ACP.md` requires be disclosed as same-team rather
+ * than passed off as a third party.
+ */
+function pinnedCounterparty(): string | null {
+  const pinned = process.env.ACP_COUNTERPARTY_WALLET?.trim().toLowerCase();
+  return pinned && /^0x[a-f0-9]{40}$/.test(pinned) ? pinned : null;
+}
+
+/**
+ * The agent to hire: the pinned wallet if it is discoverable, else the top match.
+ *
+ * A pin that finds nothing is a hard error rather than a silent fallback — quietly
+ * hiring a stranger because your own agent has no offering is exactly the failure
+ * that should be loud.
+ */
+async function selectCounterparty<T extends { walletAddress: string }>(
+  browse: (keyword: string, opts: { topK: number }) => Promise<T[]>,
+): Promise<T> {
+  const pinned = pinnedCounterparty();
+  if (pinned === null) {
+    const [top] = await browse(OFFERING_KEYWORD, { topK: 1 });
+    if (!top) throw new Error("no ACP agent offers token-risk assessment");
+    return top;
+  }
+
+  const results = await browse(OFFERING_KEYWORD, { topK: 25 });
+  const match = results.find((a) => a.walletAddress.toLowerCase() === pinned);
+  if (!match) {
+    throw new Error(
+      `ACP_COUNTERPARTY_WALLET ${pinned} is not discoverable for "${OFFERING_KEYWORD}" — ` +
+        `it needs a visible offering on app.virtuals.io. Refusing to hire someone else instead.`,
+    );
+  }
+  return match;
+}
 /** USDC on Base — the escrow asset. */
 const USDC_BASE: Hex = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const USDC_DECIMALS = 6;
@@ -52,13 +98,10 @@ export class VirtualsAcpProvider implements AcpProvider {
   async preferredCounterparty(): Promise<string> {
     const { agent, stop } = await this.#agent();
     try {
-      const results: Array<{ walletAddress: string; name?: string }> = await agent.browseAgents(
-        OFFERING_KEYWORD,
-        { topK: 1 },
+      const chosen = await selectCounterparty<{ walletAddress: string; name?: string }>(
+        (keyword, opts) => agent.browseAgents(keyword, opts),
       );
-      const top = results[0];
-      if (!top) throw new Error("no ACP agent offers token-risk assessment");
-      return `agent://${top.walletAddress}`;
+      return `agent://${chosen.walletAddress}`;
     } finally {
       await stop();
     }
@@ -77,11 +120,14 @@ export class VirtualsAcpProvider implements AcpProvider {
     let pulledUsd = 0;
     try {
       const buyerAddress = (await agent.getAddress()) as Hex;
-      const found: Array<{ walletAddress: string; offerings: Array<{ name: string }> }> =
-        await agent.browseAgents(OFFERING_KEYWORD, { topK: 1 });
-      const provider = found[0];
-      if (!provider) {
-        return notSettled(job, "no counterparty offering token-risk assessment");
+      let provider: { walletAddress: string; offerings: Array<{ name: string }> };
+      try {
+        provider = await selectCounterparty<{
+          walletAddress: string;
+          offerings: Array<{ name: string }>;
+        }>((keyword, opts) => agent.browseAgents(keyword, opts));
+      } catch (error) {
+        return notSettled(job, error instanceof Error ? error.message : String(error));
       }
 
       const chainId = CHAIN_ID;
