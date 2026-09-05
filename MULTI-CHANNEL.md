@@ -230,7 +230,7 @@ more than one to distinguish.
 and 141 pass / 4 skip / 0 fail against the live `sibyl-memory-mcp` server, which
 confirms the changed journal wire body. Lint, typecheck and format green.
 
-### Phase 10 — The linking flow
+### Phase 10 — The linking flow — **DONE**
 
 - `src/identity/linking.ts` — `mintLinkCode(userId, ttl)` → high-entropy short code
   (`WARD-XXXX-XXXX`, unambiguous alphabet, no 0/O/1/I); `redeemLinkCode(code, channel,
@@ -250,6 +250,50 @@ accountId)`. Codes in Sibyl HOT state (`ward.linkcode.<hash>`) so a restart does
 **Done when:** a Telegram-onboarded user redeems a code on a second channel stub and
 `read(userId)` returns the same record from both; expired, reused, and cross-principal
 codes are each rejected with a distinct test.
+
+#### What actually shipped
+
+All of the above, plus one case this plan didn't think through.
+
+**"Refuse a cross-principal redeem" was too blunt.** The ordinary path for a new
+Discord user is to say "hi" _before_ linking — which mints a principal for that
+account. Refusing every cross-principal redeem would have made that user permanently
+unlinkable: `/unlink` refuses to remove a principal's last account, so there was no
+way out of the state the flow itself creates.
+
+So the refusal is now conditioned on whether the sitting principal holds anything.
+No authorization record and no wallet means it is an empty shell, and rebinding loses
+nothing — `redeemLinkCode` detaches it (via the store's `forgetIdentity`, not
+`unlink`, whose last-account guard is exactly wrong here), journals the release, and
+links. The moment that principal has a record or a wallet, redeeming is refused
+outright, because merging would combine two spend ledgers and two revocation logs.
+`RedeemResult.rebound` reports which happened, and both are tested.
+
+Two details worth keeping:
+
+- **The code is never stored.** The HOT-state key _is_ its sha256, so what lands in
+  Sibyl Memory cannot be replayed by someone reading the store. Keying by digest is
+  also what disposes of the constant-time-compare requirement in the plan: there is
+  no secret comparison to make constant-time, because nothing is ever compared — a
+  miss is an absent document.
+- **Burn before link.** A crash between the two costs the user a code they can mint
+  again; the other order would leave a live code that had already worked.
+
+Codes are `WARD-XXXX-XXXX` over a 30-character alphabet with no `0/O`, `1/I/L` or
+`U` — chosen for transcription between two screens, not density. `randomInt` is
+rejection-sampled, so a 30-character alphabet stays uniform where `randomBytes % 30`
+would not.
+
+`src/identity/notify.ts` is a small notifier registry so the announcement can cross
+gateways — the Discord gateway redeeming has no handle on the Telegram one. Delivery
+is best-effort and never unwinds a completed link, but a failure is reported to the
+redeemer rather than passing silently, so an undelivered announcement is visible to
+somebody. Phase 11 folds this into `ChannelAdapter.notify`.
+
+**Result:** 161 pass / 8 skip / 0 fail on `fs`, 165 / 4 / 0 against live
+`sibyl-memory-mcp`. `test/identity.linking.test.ts` adds 24, including the injection
+case — a code embedded in prose is rejected as malformed and, importantly, is _still
+redeemable afterwards_, so a failed injection doesn't burn a real user's code.
 
 ### Phase 11 — Channel abstraction + Discord gateway
 

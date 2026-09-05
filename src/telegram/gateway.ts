@@ -6,7 +6,9 @@ import { Context, Telegraf } from "telegraf";
 import type { WardGraph } from "../agent/graph.ts";
 import { maybeSummarize } from "../agent/summary.ts";
 import { BRAND } from "../config.ts";
+import { linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
+import { registerNotifier } from "../identity/notify.ts";
 
 /**
  * Telegram gateway. Adapted from Len3's `gateways/telegram.ts` — Telegraf
@@ -19,6 +21,10 @@ import { resolveUser } from "../identity/index.ts";
  * authenticated — which is why `first_contact` is sound on this channel and not on
  * MCP. Threads stay per-channel (`telegram:<chat>:<seq>`) while the memory behind
  * them is shared. See `MULTI-CHANNEL.md`.
+ *
+ * `/link`, `/unlink` and `/whoami` are registered as Telegraf commands, so they run
+ * **outside the graph entirely** — a link code is only ever read from a slash-command
+ * argument, never from anything the model has seen. Keep it that way.
  */
 
 const EDIT_THROTTLE_MS = 900;
@@ -36,6 +42,11 @@ interface ChatSession {
 export function createGateway(token: string, graph: WardGraph): Telegraf {
   const bot = new Telegraf(token);
   const sessions = new Map<number, ChatSession>();
+
+  // So another channel's link can be announced here — the phishing backstop.
+  registerNotifier("telegram", async (accountId, text) => {
+    await bot.telegram.sendMessage(accountId, text);
+  });
 
   const session = (chatId: number): ChatSession => {
     let s = sessions.get(chatId);
@@ -59,6 +70,11 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
         "/newsession — start a fresh conversation (your authorization in Sibyl Memory is unchanged)",
         "/defaultsession — go back to your default conversation",
         "",
+        "/link — get a code to reach this same Ward from another app",
+        "/link <code> — redeem a code minted somewhere else",
+        "/unlink <channel> — detach an app from your Ward",
+        "/whoami — which accounts share your authorization",
+        "",
         "Otherwise just talk to me: onboarding, your limits, or a trade.",
       ].join("\n"),
     ),
@@ -77,6 +93,36 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     s.awaiting = undefined;
     return ctx.reply("Back to your default session.");
   });
+
+  /**
+   * Identity commands. These never enter the graph: the argument is taken straight
+   * off the command text, so no model output or fetched content can ever reach
+   * `redeemLinkCode`.
+   */
+  const identity = (
+    handler: (ctx: { channel: "telegram"; accountId: string }, argument: string) => Promise<string>,
+  ) => {
+    return async (ctx: Context & { message: { text: string } }) => {
+      const argument = ctx.message.text.replace(/^\/\S+\s*/, "");
+      try {
+        const reply = await handler(
+          { channel: "telegram", accountId: String(ctx.from?.id ?? "") },
+          argument,
+        );
+        await ctx.reply(reply, { link_preview_options: { is_disabled: true } });
+      } catch (error) {
+        console.error("identity command failed:", error);
+        await ctx.reply("That didn't work. Try again in a moment.");
+      }
+    };
+  };
+
+  bot.command("link", identity(linkCommand));
+  bot.command("unlink", identity(unlinkCommand));
+  bot.command(
+    "whoami",
+    identity((ctx) => whoamiCommand(ctx)),
+  );
 
   bot.on("text", async (ctx) => {
     const text = ctx.message.text;

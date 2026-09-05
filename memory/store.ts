@@ -13,6 +13,7 @@ import {
   userAuthorizationSchema,
   walletRecordSchema,
   wardIdentitySchema,
+  wardUserIdSchema,
   WARD_USER_ID_RE,
   x402InputSchema,
   type AccountIndex,
@@ -53,6 +54,8 @@ import { computeTrustScore } from "./trust.ts";
  * Writes for one user are serialised by an in-process lock so a read-modify-write
  * cannot lose an appended ledger row under concurrent Telegram turns.
  */
+
+const isoDatetimeString = z.iso.datetime({ offset: true });
 
 const AUTHORIZATION = "ward.authorization";
 const WALLET = "ward.wallet";
@@ -433,6 +436,66 @@ export async function forgetIdentity(
     });
     await backend().putEntity(ACCOUNTS, id, index);
   });
+}
+
+// --- link codes + rate limits (Sibyl Memory HOT state) ---
+
+/**
+ * A pending link code. The **code itself is never stored** — the state key is its
+ * sha256, so what lands in Sibyl Memory cannot be replayed even by someone reading
+ * the store. Keying by digest is also what removes the timing question: there is no
+ * secret comparison to make constant-time, because nothing is compared. A miss is
+ * an absent document.
+ */
+const linkCodeSchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  /** Where it was minted — shown to the redeemer so a wrong-account link is obvious. */
+  minted_on: channelSchema,
+  minted_at: isoDatetimeString,
+  expires_at: isoDatetimeString,
+  /** Set on redemption. Present = burnt; a second attempt is refused, not ignored. */
+  used_at: isoDatetimeString.nullable().default(null),
+  used_by: z.string().nullable().default(null),
+});
+export type LinkCode = z.infer<typeof linkCodeSchema>;
+
+function linkCodeKey(codeHash: string): string {
+  if (!/^[0-9a-f]{64}$/.test(codeHash))
+    throw new Error("link code key must be a sha256 hex digest");
+  return `ward.linkcode.${codeHash}`;
+}
+
+export async function readLinkCode(codeHash: string): Promise<LinkCode | null> {
+  const raw = await backend().getState(linkCodeKey(codeHash));
+  if (raw === null || raw === undefined) return null;
+  return linkCodeSchema.parse(raw);
+}
+
+export async function writeLinkCode(codeHash: string, value: LinkCode): Promise<void> {
+  await backend().setState(linkCodeKey(codeHash), linkCodeSchema.parse(value));
+}
+
+/**
+ * A sliding-window counter, held in HOT state so a restart cannot reset a limit.
+ * `scope` is a caller-built, path-safe label (`mint.ward_01J9…`,
+ * `redeem.telegram_700100200`).
+ */
+const rateWindowSchema = z.object({ hits: z.array(isoDatetimeString) });
+export type RateWindow = z.infer<typeof rateWindowSchema>;
+
+function rateKey(scope: string): string {
+  if (!/^[A-Za-z0-9_.-]{1,180}$/.test(scope)) throw new Error(`unsafe rate-limit scope: ${scope}`);
+  return `ward.linkrate.${scope}`;
+}
+
+export async function readRateWindow(scope: string): Promise<string[]> {
+  const raw = await backend().getState(rateKey(scope));
+  if (raw === null || raw === undefined) return [];
+  return rateWindowSchema.parse(raw).hits;
+}
+
+export async function writeRateWindow(scope: string, hits: string[]): Promise<void> {
+  await backend().setState(rateKey(scope), rateWindowSchema.parse({ hits }));
 }
 
 // --- conversation summary (Sibyl Memory HOT state) ---

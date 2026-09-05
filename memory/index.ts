@@ -35,5 +35,10 @@ export {
   writeWallet,
   readConversation,
   writeConversation,
+  readLinkCode,
+  writeLinkCode,
+  readRateWindow,
+  writeRateWindow,
   type ConversationMemory,
+  type LinkCode,
 } from "./store.ts";
