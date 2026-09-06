@@ -669,6 +669,22 @@ and cutting to Discord the DM is already waiting. It keeps the code flow as a
 documented fallback for a machine where OAuth isn't configured, so the beat can
 always be shot.
 
+### Phase 16 — Remote MCP, and execution within a grant — **PLANNED**
+
+Specified separately in [`PHASE-16.md`](./PHASE-16.md), because it is the first phase
+that adds **authority** rather than surface: an MCP client would be able to execute,
+not only propose.
+
+The short version: authority still originates in an authenticated DM and still lives
+in Sibyl Memory. A client executes because the user granted it a capped, expiring,
+revocable **execution grant** — Ward's own Spend Permission idea applied one level up,
+making the centrepiece `min(grant, memory cap, on-chain allowance)`. A token with no
+grant behaves exactly as it does today.
+
+It also fixes the constraint that made MCP awkward to test: over HTTP the server _is_
+the running Ward, so it shares Sibyl Memory by construction rather than by being run
+inside the container.
+
 ---
 
 ## 6. Risks
