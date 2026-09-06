@@ -4,12 +4,16 @@ import { announceLink } from "../identity/commands.ts";
 import { accountsFor } from "../identity/index.ts";
 import { redeemLinkState } from "../identity/linking.ts";
 import { challenge, redeemWalletSignature } from "../identity/wallet.ts";
+import { handleMcpRequest } from "../mcp/http.ts";
 
 /**
  * The linking callback server — the one thing in Ward that serves HTTP.
  *
  * It exists for two flows, both in `MULTI-CHANNEL.md`:
  *
+ * - **The MCP surface (Phase 16.1)** — the same five read-and-propose tools the
+ *   stdio server exposes, for a client that cannot spawn a local process. It adds no
+ *   authority: there is still no tool that executes. Needs only `WARD_PUBLIC_URL`.
  * - **Wallet-signature linking (Phase 14)** — the user signs a challenge with a
  *   wallet *they* control, which proves an identity Ward cannot forge and gives them
  *   a way back in if they lose the chat account. Needs only `WARD_PUBLIC_URL`.
@@ -18,10 +22,11 @@ import { challenge, redeemWalletSignature } from "../identity/wallet.ts";
  *   `integration_type=1` installs the app to the *user*, which is also what lets Ward
  *   open the DM afterwards. Needs an OAuth app as well.
  *
- * What it deliberately is not: an API. There is no route that reads a limit, a spend
- * history or a balance, and none that can move money. The only state any of it can
- * alter is which principal a channel account belongs to, and only on presentation of
- * a state Ward minted, inside an authenticated DM, less than five minutes earlier.
+ * `/mcp` is the one route that reads user data, and it is the reason the others are
+ * worth keeping narrow: everything else here can only change which principal a
+ * channel account belongs to, and only on presentation of a state Ward minted, inside
+ * an authenticated DM, less than five minutes earlier. Nothing served here can move
+ * money.
  *
  * Security notes, none of them optional:
  *
@@ -86,6 +91,11 @@ export function startLinkServer(config: LinkServerConfig, port: number): LinkSer
       const url = new URL(request.url);
 
       if (url.pathname === "/healthz") return text("ok");
+
+      // The MCP surface (Phase 16.1). Read-and-propose only, exactly as over stdio —
+      // no tool here executes anything. It owns `/mcp` and returns null otherwise.
+      const mcp = await handleMcpRequest(request, url.pathname);
+      if (mcp !== null) return mcp;
 
       // `/link/discord/<state>` — hand the browser to Discord. The state never
       // leaves Ward's own origin until Discord echoes it back.

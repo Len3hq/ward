@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+
+import { executeForToken, receiptFor } from "./execute.ts";
+import { grantSpentToday, liveGrant } from "./grants.ts";
+import { tokenAccountId } from "./token.ts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -28,12 +32,15 @@ import { resolveToken } from "./token.ts";
  * local process holding a bearer token, started by whatever wrote that token into a
  * config file. There is nobody on the other end of the stdio pipe to ask.
  *
- * So this surface is read-mostly, and the omission is the design: **there is no
+ * So this surface is propose-only by default, and that default is the design: **there
+ * is no
  * `ward_execute` tool.** A client may read the authorization record and it may
  * *propose* a spend, but the proposal is delivered to a human channel and replayed
  * through the ordinary graph there — meeting the same gate, the same caps and the
  * same confirmation a typed message would. A leaked token therefore cannot move
- * money; it can only ask someone to.
+ * money; it can only ask someone to. A token the user has deliberately granted a
+ * capped, expiring execution grant is the one exception, and it arrives with its own
+ * limits, its own ledger tag and an announcement on every spend (Phase 16.3).
  *
  * That is the deletion gate's argument, extended to a caller who cannot be a person.
  *
@@ -79,14 +86,29 @@ function describeAccount(account: LinkedAccount): string {
   return `${account.channel}:${account.account_id}`;
 }
 
-export function createMcpServer(getToken: () => string | undefined): McpServer {
+/**
+ * `canExecute` decides whether the execution tools exist at all (Phase 16.3).
+ *
+ * Registration is conditional rather than the tools refusing at call time, so a
+ * client with no grant sees exactly the surface it had before 16.3 — and the
+ * project's oldest claim, that the tool list contains nothing that can spend, stays
+ * literally true for every token that was not granted anything.
+ */
+export interface McpServerOptions {
+  canExecute?: boolean;
+}
+
+export function createMcpServer(
+  getToken: () => string | undefined,
+  options: McpServerOptions = {},
+): McpServer {
   const server = new McpServer(
     { name: "ward", version: "0.0.0" },
     {
       instructions:
         "Ward's authorization record for one user: standing caps, spend ledger, " +
-        "revocations, wallet and counterparty trust. This surface is read-mostly by " +
-        "design — it can propose a spend but never approve one, because an MCP client " +
+        "revocations, wallet and counterparty trust. This surface is propose-only unless " +
+        "the user granted this client an execution grant — it can never approve a spend " +
         "holds a token rather than being a person. Every proposal is confirmed by the " +
         "user on Telegram or Discord.",
     },
@@ -190,6 +212,10 @@ export function createMcpServer(getToken: () => string | undefined): McpServer {
             : `Spend permission:  ${permission.status}, $${permission.allowance_usd} USDC / ${permission.period_seconds / 86_400}d`,
           "",
           `Entries: ${record.spent_ledger.length} spend, ${record.x402_ledger.length} x402, ${record.acp_job_history.length} ACP.`,
+          "",
+          // A model that can see its own ceiling stops proposing things it could
+          // never do — and a model that cannot see one should not assume it has any.
+          ...(await describeOwnGrant(userId, getToken())),
         ].join("\n"),
       );
     },
@@ -212,11 +238,21 @@ export function createMcpServer(getToken: () => string | undefined): McpServer {
       const { userId, record } = got;
       const take = limit ?? 10;
 
+      // Who caused each spend, not just that it happened (Phase 16.4). A user
+      // auditing a client needs to tell its spends apart from their own at a glance,
+      // and from another client's — one ledger, several authorities.
+      const own = tokenAccountId(getToken() ?? "");
       const lines: string[] = [];
       const spends = record.spent_ledger.slice(-take).reverse();
       lines.push(spends.length === 0 ? "Spends: none" : "Spends:");
       for (const e of spends) {
-        lines.push(`  ${e.ts}  $${e.amount_usd}  ${e.action_type}  ${e.tx_hash}`);
+        const by =
+          e.via_token === null
+            ? "you"
+            : e.via_token === own
+              ? "this client"
+              : `client ${e.via_token.slice(0, 8)}`;
+        lines.push(`  ${e.ts}  $${e.amount_usd}  ${e.action_type}  by ${by}  ${e.tx_hash}`);
       }
 
       const x402 = record.x402_ledger.slice(-take).reverse();
@@ -344,12 +380,128 @@ export function createMcpServer(getToken: () => string | undefined): McpServer {
     },
   );
 
+  if (options.canExecute === true) registerExecutionTools(server, getToken, authorized);
+
   return server;
+}
+
+/**
+ * The tools that spend. Reached only when the caller holds a live grant, and even
+ * then every limit still applies: `performSpend` re-reads memory and re-runs the gate
+ * on fresh values, so a revocation between the grant and the call still blocks.
+ */
+type Authorized = () => Promise<
+  { userId: string; record: UserAuthorization } | { refusal: ToolResult }
+>;
+
+function registerExecutionTools(
+  server: McpServer,
+  getToken: () => string | undefined,
+  authorized: Authorized,
+): void {
+  server.registerTool(
+    "ward_execute_action",
+    {
+      title: "Execute a spend within your grant",
+      description:
+        "Execute a spend the user has granted this client authority for. Returns a receipt " +
+        "id immediately — settlement takes time — which you poll with ward_receipt. The " +
+        "spend is still bounded by the grant, the user's own caps and their on-chain " +
+        "allowance, whichever is lowest, and the user is told about every one.",
+      inputSchema: {
+        request: z
+          .string()
+          .min(3)
+          .max(500)
+          .describe(
+            'What to do, phrased as the user would say it, e.g. "buy a risk score on PEPE"',
+          ),
+      },
+    },
+    async ({ request }): Promise<ToolResult> => {
+      const got = await authorized();
+      if ("refusal" in got) return got.refusal;
+      const token = getToken();
+      if (!token) return text("No token presented.", true);
+
+      const result = await executeForToken(got.userId, tokenAccountId(token), request);
+      if (!result.ok) return text(result.message, true);
+      return text(
+        `Started. Receipt ${result.receiptId} — poll it with ward_receipt. ` +
+          "The user has been told this happened.",
+      );
+    },
+  );
+
+  server.registerTool(
+    "ward_receipt",
+    {
+      title: "Check a spend receipt",
+      description:
+        "The status of a spend started with ward_execute_action: pending, done or failed, " +
+        "with the transaction hash once it settles.",
+      inputSchema: {
+        receipt_id: z.string().min(1).describe("The id ward_execute_action returned"),
+      },
+    },
+    async ({ receipt_id }): Promise<ToolResult> => {
+      const got = await authorized();
+      if ("refusal" in got) return got.refusal;
+      const token = getToken();
+      if (!token) return text("No token presented.", true);
+
+      const receipt = await receiptFor(receipt_id, got.userId, tokenAccountId(token));
+      if (receipt === null) return text("No such receipt for this client.", true);
+      return text(
+        [
+          `Status:  ${receipt.status}`,
+          `Request: ${receipt.request}`,
+          receipt.amount_usd === null ? "" : `Amount:  $${receipt.amount_usd}`,
+          receipt.tx_hash === null ? "" : `Tx:      ${receipt.tx_hash}`,
+          "",
+          receipt.message,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    },
+  );
+}
+
+/**
+ * What the *calling token* is allowed to do, as opposed to what the user is.
+ *
+ * Phase 16.2 ships this read-only: a grant can exist and be described here while
+ * still, by construction, permitting nothing — no code path consults it when
+ * deciding a spend until 16.3.
+ */
+async function describeOwnGrant(userId: string, token: string | undefined): Promise<string[]> {
+  if (!token) return [];
+  const grant = await liveGrant(tokenAccountId(token));
+  if (grant === null) {
+    return [
+      "This client:      read and propose only. It cannot spend.",
+      'The user can change that from Telegram or Discord with "/mcp grant".',
+    ];
+  }
+  const spent = await grantSpentToday(userId, grant.token_hash);
+  return [
+    `This client:      may spend ${grant.action_types.join(", ")}`,
+    `  per action:     $${grant.per_action_limit_usd}`,
+    `  per day:        $${grant.daily_limit_usd} (spent $${spent.toFixed(2)})`,
+    `  expires:        ${grant.expires_at}`,
+    "Still bounded by the user's own caps and their on-chain allowance, whichever is lowest.",
+  ];
 }
 
 /** Entrypoint when run as an MCP stdio server. */
 async function main(): Promise<void> {
-  const server = createMcpServer(() => process.env.WARD_USER_TOKEN?.trim());
+  const token = process.env.WARD_USER_TOKEN?.trim();
+  // Resolved once, at startup: a grant issued later needs a client restart, exactly
+  // as a new token does. Registering the tools conditionally is what keeps "there is
+  // no tool that spends" literally true for an ungranted client.
+  const canExecute = token ? (await liveGrant(tokenAccountId(token))) !== null : false;
+  const server = createMcpServer(() => token, { canExecute });
   await server.connect(new StdioServerTransport());
 }
 

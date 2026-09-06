@@ -19,6 +19,8 @@ export interface AcpRunInput {
   subject: string;
   budgetUsd: number;
   idempotencyKey: string;
+  /** The MCP token that caused this job, when one did (Phase 16). */
+  viaToken?: string | null;
 }
 
 export interface AcpRunOutput {
@@ -50,6 +52,7 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
       amount_usd: result.amountUsd,
       tx_hash: result.txHash ?? "0x",
       idempotency_key: input.idempotencyKey,
+      via_token: input.viaToken ?? null,
     });
   }
 

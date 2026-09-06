@@ -21,6 +21,17 @@ export interface GateInput {
   onchainAllowanceUsd: number | null;
   /** x402 only: has this endpoint been paid before? First-time endpoints need approval. */
   endpointSeen?: boolean;
+  /**
+   * A third ceiling, when an MCP token's execution grant is what is spending
+   * (Phase 16). It can only ever narrow: `min(grant, memory cap, on-chain
+   * allowance)`. Absent for every spend the user makes themselves.
+   */
+  grant?: {
+    perActionLimitUsd: number;
+    dailyLimitUsd: number;
+    /** What this token alone has already spent today. */
+    spentTodayUsd: number;
+  };
 }
 
 export interface GateResult {
@@ -50,13 +61,32 @@ export function evaluateGate(input: GateInput): GateResult {
     return deny(`$${amountUsd} is over the $${caps.per_action_limit_usd} per-action limit.`);
   }
 
+  // The grant is checked first and separately so its refusals name *it*, not the
+  // user's cap — "over what you allowed this client" is a different fact from "over
+  // your own limit", and conflating them would send someone to change the wrong one.
+  const grant = input.grant;
+  if (grant && amountUsd > grant.perActionLimitUsd) {
+    return deny(
+      `$${amountUsd} is over the $${grant.perActionLimitUsd} per-action limit you granted this client.`,
+    );
+  }
+
   const memoryRemaining = Math.max(0, caps.daily_limit_usd - spentTodayUsd);
   const onchainRemaining =
     onchainAllowanceUsd === null ? Infinity : Math.max(0, onchainAllowanceUsd - spentTodayUsd);
+  const grantRemaining = grant ? Math.max(0, grant.dailyLimitUsd - grant.spentTodayUsd) : Infinity;
   const executableUsd = Math.min(
     memoryRemaining,
     onchainRemaining === Infinity ? memoryRemaining : onchainRemaining,
+    grantRemaining,
   );
+
+  if (grant && grantRemaining <= 0) {
+    return deny(
+      `this client has used the $${grant.dailyLimitUsd} you granted it for today. ` +
+        "Your own limits are untouched.",
+    );
+  }
 
   if (executableUsd <= 0) {
     return deny(
@@ -68,9 +98,11 @@ export function evaluateGate(input: GateInput): GateResult {
 
   if (amountUsd > executableUsd) {
     const binding =
-      onchainAllowanceUsd !== null && onchainRemaining < memoryRemaining
-        ? `on-chain allowance ($${onchainRemaining.toFixed(2)} left this period)`
-        : `daily cap ($${memoryRemaining.toFixed(2)} left)`;
+      grantRemaining <= Math.min(memoryRemaining, onchainRemaining)
+        ? `$${grant!.dailyLimitUsd} you granted this client ($${grantRemaining.toFixed(2)} left today)`
+        : onchainAllowanceUsd !== null && onchainRemaining < memoryRemaining
+          ? `on-chain allowance ($${onchainRemaining.toFixed(2)} left this period)`
+          : `daily cap ($${memoryRemaining.toFixed(2)} left)`;
     return deny(`$${amountUsd} exceeds the ${binding}.`);
   }
 

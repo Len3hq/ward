@@ -5,6 +5,12 @@ import {
   accountIdSchema,
   accountIndexSchema,
   evmAddressSchema,
+  mcpGrantIndexSchema,
+  mcpGrantSchema,
+  mcpReceiptSchema,
+  type McpReceipt,
+  type McpGrant,
+  type McpGrantIndex,
   ownerIndexSchema,
   verifiedOwnerSchema,
   type OwnerIndex,
@@ -68,6 +74,8 @@ const WALLET = "ward.wallet";
 const IDENTITY = "ward.identity";
 const ACCOUNTS = "ward.accounts";
 const OWNER = "ward.owner";
+const MCP_GRANT = "ward.mcp_grant";
+const MCP_GRANTS = "ward.mcp_grants";
 const OWNERS = "ward.owners";
 
 // --- helpers ---
@@ -509,6 +517,77 @@ export async function forgetOwner(userId: string, address: string): Promise<void
     });
     await backend().putEntity(OWNERS, id, index);
   });
+}
+
+// --- MCP execution grants (Phase 16) ---
+
+/** The grant attached to one token, or `null`. Expiry and revocation are the caller's to judge. */
+export async function readMcpGrant(tokenHash: string): Promise<McpGrant | null> {
+  const raw = await backend().getEntity(MCP_GRANT, tokenHash);
+  if (raw === null || raw === undefined) return null;
+  return mcpGrantSchema.parse(raw);
+}
+
+/** Every grant this principal has issued, live or not. */
+export async function readMcpGrants(userId: string): Promise<McpGrantIndex["grants"]> {
+  const raw = await backend().getEntity(MCP_GRANTS, normalizeUserId(userId));
+  if (raw === null || raw === undefined) return [];
+  return mcpGrantIndexSchema.parse(raw).grants;
+}
+
+/**
+ * Write a grant. Forward entry **last**, as everywhere else here: a crash should
+ * leave a token ungranted rather than granted against a half-built index.
+ */
+export async function writeMcpGrant(grant: McpGrant): Promise<McpGrant> {
+  const parsed = mcpGrantSchema.parse(grant);
+  const id = normalizeUserId(parsed.ward_user_id);
+
+  return withLock(id, async () => {
+    const grants = await readMcpGrants(id);
+    const { ward_user_id: _omit, ...entry } = parsed;
+    const index: McpGrantIndex = mcpGrantIndexSchema.parse({
+      ward_user_id: id,
+      grants: [...grants.filter((g) => g.token_hash !== parsed.token_hash), entry],
+    });
+    await backend().putEntity(MCP_GRANTS, id, index);
+    await backend().putEntity(MCP_GRANT, parsed.token_hash, parsed);
+    return parsed;
+  });
+}
+
+/**
+ * Revoke a grant. The forward entry is **forgotten**, not marked — an execution check
+ * that reads a missing document fails closed, while one that reads a document and has
+ * to notice a field is one `if` away from failing open.
+ */
+export async function forgetMcpGrant(userId: string, tokenHash: string): Promise<void> {
+  const id = normalizeUserId(userId);
+  await withLock(id, async () => {
+    await backend().forgetEntity(MCP_GRANT, tokenHash, "grant revoked");
+    const grants = await readMcpGrants(id);
+    const index: McpGrantIndex = mcpGrantIndexSchema.parse({
+      ward_user_id: id,
+      grants: grants.map((g) => (g.token_hash === tokenHash ? { ...g, revoked_at: nowIso() } : g)),
+    });
+    await backend().putEntity(MCP_GRANTS, id, index);
+  });
+}
+
+/** HOT state, because a receipt is short-lived working state, not a record of authority. */
+function receiptKey(id: string): string {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error("bad receipt id");
+  return `ward.mcp_receipt.${id}`;
+}
+
+export async function readMcpReceipt(id: string): Promise<McpReceipt | null> {
+  const raw = await backend().getState(receiptKey(id));
+  if (raw === null || raw === undefined) return null;
+  return mcpReceiptSchema.parse(raw);
+}
+
+export async function writeMcpReceipt(receipt: McpReceipt): Promise<void> {
+  await backend().setState(receiptKey(receipt.id), mcpReceiptSchema.parse(receipt));
 }
 
 // --- link codes + rate limits (Sibyl Memory HOT state) ---

@@ -125,7 +125,9 @@ So each channel carries a tier, and the tier decides what a turn may do:
 
 An MCP client can ask "what am I authorized for?", can read the ledger, and can _propose_
 a swap — but the confirmation interrupt is delivered to the user's primary human channel
-and must be answered there. A leaked MCP token therefore cannot move money on its own.
+and must be answered there. A leaked MCP token with no execution grant therefore
+cannot move money on its own — see [`PHASE-16.md`](./PHASE-16.md) for what a grant
+changes.
 This is not a limitation to apologise for; it is the same argument the deletion gate
 makes, extended to a surface where the caller cannot be a person.
 

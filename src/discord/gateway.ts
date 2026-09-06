@@ -20,7 +20,7 @@ import { BRAND } from "../config.ts";
 import type { ChannelAdapter } from "../gateway/adapter.ts";
 import { registerChannel, registerDmLink } from "../gateway/channels.ts";
 import { runTurn } from "../gateway/core.ts";
-import { linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
+import { linkCommand, mcpCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveExisting, resolveUser } from "../identity/index.ts";
 
 /**
@@ -100,6 +100,7 @@ const HELP = [
   "/unlink <channel> — detach an app from your Ward",
   "/unlink wallet <address> — drop a verified wallet",
   "/whoami — which accounts share your authorization",
+  "/mcp — MCP tokens and what each is allowed to do",
   "",
   "Otherwise just talk to me: onboarding, your limits, or a trade.",
 ].join("\n");
@@ -165,7 +166,10 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
         session(interaction.channelId),
         { channel: "discord", accountId: interaction.user.id },
         interaction.commandName,
-        interaction.options.getString("code") ?? interaction.options.getString("channel") ?? "",
+        interaction.options.getString("code") ??
+          interaction.options.getString("channel") ??
+          interaction.options.getString("args") ??
+          "",
       );
       await interaction.editReply(reply.slice(0, DISCORD_LIMIT));
     } catch (error) {
@@ -234,6 +238,8 @@ async function runCommand(
       return unlinkCommand(ctx, argument);
     case "whoami":
       return whoamiCommand(ctx);
+    case "mcp":
+      return mcpCommand(ctx, argument);
     default:
       return `I don't know that command.\n\n${HELP}`;
   }

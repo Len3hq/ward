@@ -10,6 +10,17 @@ import { issueToken, revokeAllTokens, tokenCount } from "../mcp/token.ts";
 import { accountsFor, resolveUser, unlink } from "./index.ts";
 import { ownersFor, revokeOwner } from "./wallet.ts";
 import {
+  DEFAULT_GRANT_DAYS,
+  checkGrant,
+  confirmGrant,
+  describeGrant,
+  liveGrants,
+  parseActionTypes,
+  proposeGrant,
+  revokeGrant,
+  tokenRef,
+} from "../mcp/grants.ts";
+import {
   CODE_TTL_MS,
   consumeMintAllowance,
   mintLinkCode,
@@ -217,6 +228,198 @@ export async function announceLink(
     .join("\n");
 }
 
+/**
+ * `/mcp …` — the execution-grant surface (Phase 16.2).
+ *
+ * Granting is the one command in Ward that hands out spending authority, so it is
+ * deliberately two steps: the first reads back in plain language exactly what the
+ * token would be allowed to do, the second applies it. The confirmation is a
+ * short-lived single-use code, the same shape as a link code, so "I typed a command I
+ * didn't understand" is not enough to arm a client.
+ */
+export async function mcpCommand(ctx: CommandContext, argument: string): Promise<string> {
+  if (ctx.channel === "mcp") {
+    return "An MCP client can't grant itself authority. Ask for this from Telegram or Discord.";
+  }
+
+  const [word = "", ...rest] = argument.trim().split(/\s+/);
+  const { userId } = await resolveUser(ctx.channel, ctx.accountId);
+
+  switch (word.toLowerCase()) {
+    case "tokens":
+      return listTokens(userId);
+    case "grants":
+      return listGrants(userId);
+    case "grant":
+      return proposeGrantCommand(ctx, userId, rest);
+    case "confirm":
+      return confirmGrantCommand(ctx, userId, rest[0] ?? "");
+    case "revoke":
+      return revokeGrantCommand(ctx, userId, rest[0] ?? "");
+    case "stop":
+      return stopCommand(ctx, userId);
+    default:
+      return MCP_HELP;
+  }
+}
+
+const MCP_HELP = [
+  "/mcp tokens — your MCP tokens and what each one is allowed to do",
+  "/mcp grants — the execution grants currently live",
+  "/mcp grant <token> <actions> <per-action $> <daily $> [days] — propose a grant",
+  "/mcp confirm <code> — apply the grant you were just shown",
+  "/mcp revoke <token> — take an execution grant back",
+  "/mcp stop — revoke EVERY grant at once; clients can still read and propose",
+  "",
+  'Actions are any of: x402, swap, acp — or "all". Example:',
+  "    /mcp grant a3f9c2d1 x402 0.5 2 7",
+  "",
+  "Without a grant a token can read and propose, never spend. That is the default.",
+].join("\n");
+
+async function listTokens(userId: string): Promise<string> {
+  const tokens = (await accountsFor(userId)).filter((a) => a.channel === "mcp");
+  if (tokens.length === 0) return 'You have no MCP tokens. Mint one with "/link mcp".';
+
+  const live = await liveGrants(userId);
+  const lines = tokens.map((t) => {
+    const ref = tokenRef(t.account_id);
+    const grant = live.find((g) => g.ref === ref);
+    return grant
+      ? `· ${ref} — ${grant.grant.action_types.join(", ")}, $${grant.grant.per_action_limit_usd}/action, ` +
+          `$${grant.grant.daily_limit_usd}/day, until ${grant.grant.expires_at.slice(0, 10)}`
+      : `· ${ref} — read and propose only`;
+  });
+  return [`${tokens.length} MCP token${tokens.length === 1 ? "" : "s"}:`, ...lines].join("\n");
+}
+
+async function listGrants(userId: string): Promise<string> {
+  const live = await liveGrants(userId);
+  if (live.length === 0) {
+    return "No execution grants. Every MCP token can read and propose, and none can spend.";
+  }
+  return [
+    "Live execution grants:",
+    ...live.map(
+      (g) =>
+        `· ${g.ref} — ${g.grant.action_types.join(", ")}, $${g.grant.per_action_limit_usd}/action, ` +
+        `$${g.grant.daily_limit_usd}/day, expires ${g.grant.expires_at.slice(0, 10)}`,
+    ),
+    "",
+    'Take one back with "/mcp revoke <token>".',
+  ].join("\n");
+}
+
+async function proposeGrantCommand(
+  ctx: CommandContext,
+  userId: string,
+  args: string[],
+): Promise<string> {
+  const [ref, actions, perAction, daily, days] = args;
+  if (!ref || !actions || !perAction || !daily) return MCP_HELP;
+
+  const tokens = (await accountsFor(userId)).filter((a) => a.channel === "mcp");
+  const token = tokens.find((t) => tokenRef(t.account_id) === ref.toLowerCase());
+  if (!token) return `You have no MCP token ${ref}. "/mcp tokens" lists them.`;
+
+  const actionTypes = parseActionTypes(actions);
+  if (actionTypes === null) {
+    return 'I didn\'t recognise those actions. Use x402, swap, acp, or "all".';
+  }
+
+  const request = {
+    userId,
+    tokenHash: token.account_id,
+    actionTypes,
+    perActionUsd: Number(perAction.replace(/^\$/, "")),
+    dailyUsd: Number(daily.replace(/^\$/, "")),
+    days: days === undefined ? DEFAULT_GRANT_DAYS : Number(days),
+    channel: ctx.channel,
+  };
+  if (!Number.isFinite(request.perActionUsd) || !Number.isFinite(request.dailyUsd)) {
+    return "Those limits need to be numbers, like: /mcp grant " + ref + " x402 0.5 2 7";
+  }
+  if (!Number.isFinite(request.days)) return `"${days}" isn't a number of days.`;
+
+  const check = await checkGrant(request);
+  if (!check.ok) return check.message;
+
+  const { code } = await proposeGrant(request);
+  return [
+    describeGrant(request, ref),
+    "",
+    `To apply it, send: /mcp confirm ${code}`,
+    "If that isn't what you meant, do nothing — it expires in 5 minutes.",
+  ].join("\n");
+}
+
+async function confirmGrantCommand(
+  ctx: CommandContext,
+  userId: string,
+  code: string,
+): Promise<string> {
+  if (!code) return 'Send "/mcp confirm <code>" with the code from the grant you were shown.';
+
+  const result = await confirmGrant(code, userId, ctx.channel);
+  if (!result.ok) return result.message;
+
+  // Every other account hears about it, for the same reason a link does: this is the
+  // moment a client stopped needing to ask.
+  const news =
+    `Token ${result.ref} can now spend on your Ward without asking: ` +
+    `${result.grant.action_types.join(", ")}, up to $${result.grant.per_action_limit_usd} per action ` +
+    `and $${result.grant.daily_limit_usd} per day, until ${result.grant.expires_at.slice(0, 10)}.` +
+    `\n\nIf that wasn't you, send "/mcp revoke ${result.ref}" now.`;
+  for (const account of await otherAccounts(userId, ctx.channel, ctx.accountId)) {
+    await notifyAccount(account.channel, account.account_id, news);
+  }
+
+  return [
+    `Granted. Token ${result.ref} can spend ${result.grant.action_types.join(", ")} up to ` +
+      `$${result.grant.per_action_limit_usd} per action and $${result.grant.daily_limit_usd} per day, ` +
+      `expiring ${result.grant.expires_at.slice(0, 10)}.`,
+    "",
+    "It still can't exceed your own caps or your on-chain allowance. Every spend will be " +
+      'announced here, and "/mcp revoke ' +
+      result.ref +
+      '" ends it immediately.',
+  ].join("\n");
+}
+
+/**
+ * The kill switch. Deliberately separate from `/unlink mcp`, which destroys the
+ * tokens themselves: this stops every client spending while leaving them able to read
+ * and propose, which is the thing you want at 3am when you are not yet sure whether
+ * anything is actually wrong.
+ */
+async function stopCommand(ctx: CommandContext, userId: string): Promise<string> {
+  const live = await liveGrants(userId);
+  if (live.length === 0) {
+    return "No MCP client can spend right now — there are no live grants.";
+  }
+  for (const { ref } of live) await revokeGrant(userId, ref, ctx.channel);
+  return [
+    `Stopped. ${live.length} grant${live.length === 1 ? "" : "s"} revoked: ` +
+      `${live.map((g) => g.ref).join(", ")}.`,
+    "",
+    "Those clients can still read your limits and propose spends for you to confirm — " +
+      'they just can\'t act on their own. "/unlink mcp" removes their access entirely.',
+  ].join("\n");
+}
+
+async function revokeGrantCommand(
+  ctx: CommandContext,
+  userId: string,
+  ref: string,
+): Promise<string> {
+  if (!ref) return 'Send "/mcp revoke <token>". "/mcp grants" lists them.';
+  const removed = await revokeGrant(userId, ref, ctx.channel);
+  return removed
+    ? `Revoked. Token ${ref} is back to read-and-propose only — it can ask you to spend, ` +
+        "and nothing more."
+    : `No live grant on token ${ref}.`;
+}
+
 /** `/unlink <channel>` — detach one channel from this principal. */
 export async function unlinkCommand(ctx: CommandContext, argument: string): Promise<string> {
   const { userId } = await resolveUser(ctx.channel, ctx.accountId);
@@ -294,6 +497,7 @@ export async function whoamiCommand(ctx: CommandContext): Promise<string> {
   // Verified wallets are listed apart from accounts on purpose: they are not a way
   // to *talk* to Ward, they are a way back to it (Phase 14).
   const wallets = await ownersFor(userId);
+  const grants = await liveGrants(userId);
 
   return [
     `You are ${userId}.`,
@@ -305,6 +509,21 @@ export async function whoamiCommand(ctx: CommandContext): Promise<string> {
           "",
           "Verified wallets (recovery only — they cannot spend):",
           ...wallets.map((w) => `· ${w}`),
+        ]
+      : []),
+    // Listed here because "/whoami" is where someone looks to ask *what can reach my
+    // Ward* — and a granted client is the only thing on this list that can spend
+    // without being asked.
+    ...(grants.length > 0
+      ? [
+          "",
+          "MCP clients that can spend WITHOUT asking you:",
+          ...grants.map(
+            (g) =>
+              `· ${g.ref} — ${g.grant.action_types.join(", ")}, $${g.grant.per_action_limit_usd}/action, ` +
+              `$${g.grant.daily_limit_usd}/day, until ${g.grant.expires_at.slice(0, 10)}`,
+          ),
+          'Stop all of them at once with "/mcp stop".',
         ]
       : []),
     "",

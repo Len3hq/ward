@@ -49,6 +49,7 @@ A second app is not a second allowance — that is asserted in
 | `acp_job_history[]` (append-only)                                                      | `trustScore()` — read **before** choosing a counterparty                                                  | a low-trust counterparty is flagged; the agent narrates `0.56 → 0.60` after each job | the agent has no memory of who it trusts                          |
 | `x402_ledger[]` (append-only)                                                          | `endpointTrust()`                                                                                         | per-endpoint success/failure feeds a derived trust score                             | —                                                                 |
 | `ward.wallet/<id>.spend_permission.status`                                             | `confirm.ts` / `execute.ts`                                                                               | `"revoked"` → refuse even with the memory record intact (the two-limit design)       | —                                                                 |
+| `ward.mcp_grant/<token_hash>` ([`src/mcp/grants.ts`](./src/mcp/grants.ts))             | `evaluateGate` via `execution/perform.ts`                                                                 | an MCP client may spend **without asking** — inside `min(grant, cap, allowance)`     | the client is back to propose-only; it can ask, never act         |
 | `ward.conversation.<id>` (HOT state, [`src/agent/summary.ts`](./src/agent/summary.ts)) | the `agent` node's system prompt                                                                          | a fresh session recalls the _conversation_, not just the caps                        | —                                                                 |
 
 The tier map, the exact JSON shape, and which function touches which field are in
@@ -99,8 +100,8 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   [`src/discord/`](./src/discord/). Both drive one channel-free turn loop in
   [`src/gateway/`](./src/gateway/), against one authorization record: linked
   accounts share a daily cap, a spend ledger and every revocation. Ward is also an
-  **MCP server** ([`src/mcp/`](./src/mcp/), [`MCP.md`](./MCP.md)) — read-mostly by
-  design: an MCP client can propose a spend but never approve one, because it holds
+  **MCP server** ([`src/mcp/`](./src/mcp/), [`MCP.md`](./MCP.md)) — propose-only by
+  default: an MCP client can ask for a spend but not approve one, because it holds
   a token rather than being a person. See
   [`MULTI-CHANNEL.md`](./MULTI-CHANNEL.md).
 

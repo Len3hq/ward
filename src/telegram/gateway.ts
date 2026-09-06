@@ -5,7 +5,13 @@ import { BRAND } from "../config.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel } from "../gateway/channels.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
-import { announceLink, linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
+import {
+  announceLink,
+  linkCommand,
+  mcpCommand,
+  unlinkCommand,
+  whoamiCommand,
+} from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
 import { redeemLinkState } from "../identity/linking.ts";
 
@@ -122,6 +128,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
         "/unlink <channel> — detach an app from your Ward",
         "/unlink wallet <address> — drop a verified wallet",
         "/whoami — which accounts share your authorization",
+        "/mcp — MCP tokens and what each is allowed to do",
         "",
         "Otherwise just talk to me: onboarding, your limits, or a trade.",
       ].join("\n"),
@@ -166,6 +173,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
   };
 
   bot.command("link", identity(linkCommand));
+  bot.command("mcp", identity(mcpCommand));
   bot.command("unlink", identity(unlinkCommand));
   bot.command(
     "whoami",

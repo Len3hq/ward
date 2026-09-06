@@ -124,6 +124,65 @@ export const ownerIndexSchema = z.object({
 });
 export type OwnerIndex = z.infer<typeof ownerIndexSchema>;
 
+/**
+ * An execution grant for one MCP token (Phase 16).
+ *
+ * The authority that lets a client execute rather than only propose — and it is
+ * Ward's own Spend Permission idea applied one level up: capped, scoped, expiring,
+ * revocable, granted from an authenticated DM. It can only ever narrow what the user
+ * may already do, never widen it, so the spend comparison becomes
+ * `min(grant, memory cap, on-chain allowance)`.
+ *
+ * Keyed by the **token's** hash rather than the principal, so a user can hold a
+ * read-only token and a narrowly executing one at the same time and revoke either
+ * without touching the other.
+ */
+export const mcpGrantSchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  /** sha256 of the token — the same account id `ward.identity/mcp:<hash>` uses. */
+  token_hash: z.string().regex(/^[0-9a-f]{64}$/, "expected a sha256 hex digest"),
+  /** An allow-list. `x402_data_purchase` is a very different risk from `swap`. */
+  action_types: z.array(actionTypeSchema).min(1),
+  per_action_limit_usd: usdNonNegative,
+  daily_limit_usd: usdNonNegative,
+  granted_at: isoDatetime,
+  granted_on: channelSchema,
+  /** Required. A grant that never ends is a key, and this must not be a key. */
+  expires_at: isoDatetime,
+  revoked_at: isoDatetime.nullable().default(null),
+});
+export type McpGrant = z.infer<typeof mcpGrantSchema>;
+
+/** Reverse index, `ward.mcp_grants` / `<ward_user_id>` — same reason as `ward.accounts`. */
+export const mcpGrantIndexSchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  grants: z.array(mcpGrantSchema.omit({ ward_user_id: true })).default([]),
+});
+export type McpGrantIndex = z.infer<typeof mcpGrantIndexSchema>;
+
+/**
+ * The outcome of an MCP-initiated spend (Phase 16.3).
+ *
+ * Settlement can take tens of seconds — long enough for a client to time out and
+ * retry — so `ward_execute_action` returns one of these immediately and the client
+ * polls it. It is a receipt, not an authorization: nothing here can cause a spend,
+ * it only records one that was already gated.
+ */
+export const mcpReceiptSchema = z.object({
+  id: nonEmpty,
+  ward_user_id: wardUserIdSchema,
+  token_hash: nonEmpty,
+  status: z.enum(["pending", "done", "failed"]),
+  request: nonEmpty,
+  action_type: actionTypeSchema.nullable().default(null),
+  amount_usd: usdNonNegative.nullable().default(null),
+  tx_hash: z.string().nullable().default(null),
+  message: z.string().default(""),
+  created_at: isoDatetime,
+  settled_at: isoDatetime.nullable().default(null),
+});
+export type McpReceipt = z.infer<typeof mcpReceiptSchema>;
+
 export const linkedAccountSchema = wardIdentitySchema.omit({ ward_user_id: true });
 export type LinkedAccount = z.infer<typeof linkedAccountSchema>;
 
@@ -148,6 +207,12 @@ export const spendEntrySchema = z.object({
   action_type: actionTypeSchema,
   tx_hash: nonEmpty,
   idempotency_key: nonEmpty,
+  /**
+   * The MCP token that caused this spend, when one did (Phase 16). One ledger, two
+   * authorities: the user's own cap counts every entry, a grant counts only its own.
+   * Nullable and defaulted, so every entry written before Phase 16 still parses.
+   */
+  via_token: z.string().nullable().default(null),
 });
 export type SpendEntry = z.infer<typeof spendEntrySchema>;
 
@@ -265,6 +330,8 @@ export const JOURNAL_EVENT_KINDS = [
   "identity_link",
   "identity_unlink",
   "identity_migrate",
+  "mcp_grant",
+  "mcp_grant_revoked",
   "owner_verified",
   "owner_revoked",
   "proposal",

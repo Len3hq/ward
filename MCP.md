@@ -7,17 +7,22 @@ so the account _is_ the person. An MCP client has neither. It is a local process
 holding a bearer token, started by whatever wrote that token into a config file.
 There is nobody on the other end of the stdio pipe to ask.
 
-So this surface is read-mostly, and **the omission is the design**.
+So this surface is **propose-only by default**, and that default is the design.
+
+A client can be given an explicit, capped, expiring **execution grant** (Phase 16.3),
+issued from an authenticated DM and revocable in one message — but it has one only if
+the user deliberately gave it one, and until then there is no tool here that spends.
 
 ## What it can and cannot do
 
-|                                                                        |                                |
-| ---------------------------------------------------------------------- | ------------------------------ |
-| Read the authorization record — caps, spend today, revocations, wallet | yes                            |
-| Read the spend / x402 / ACP ledgers                                    | yes                            |
-| See which accounts share the principal                                 | yes                            |
-| **Propose** a spend                                                    | yes                            |
-| **Approve** a spend                                                    | **no — there is no such tool** |
+|                                                                        |                                 |
+| ---------------------------------------------------------------------- | ------------------------------- |
+| Read the authorization record — caps, spend today, revocations, wallet | yes                             |
+| Read the spend / x402 / ACP ledgers                                    | yes                             |
+| See which accounts share the principal                                 | yes                             |
+| **Propose** a spend                                                    | yes                             |
+| **Approve** a spend on the user's behalf                               | **no — there is no such tool**  |
+| **Execute** a spend                                                    | only within a grant — see below |
 
 `ward_propose_action` does not execute. It queues the request; the main Ward process
 delivers it to the user on Telegram or Discord and **replays the request text through
@@ -26,7 +31,11 @@ same caps and the same confirmation as if the user had typed it. Nothing about
 arriving via MCP makes a spend cheaper to obtain — the client bought the user's
 attention, not their authority.
 
-A leaked token therefore cannot move money. It can only ask someone to.
+A leaked token with no grant therefore cannot move money — it can only ask someone
+to. A leaked token **with** a grant can spend what that grant allows, until it expires
+or is revoked, and every one of those spends is announced to the user immediately.
+That is the whole cost of the feature, and it is why grants are opt-in, capped and
+short-lived.
 
 This is the deletion gate's argument extended to a caller who cannot be a person:
 delete the authorization entity and every tool here refuses too.
@@ -43,7 +52,24 @@ Ward replies with a `wardmcp_…` token, once. It is stored only as a sha256 und
 `ward.identity/mcp:<hash>`, so what lands in Sibyl Memory is not a credential:
 reading the store does not get you in.
 
-**2. Put it in the MCP client's config.** For Claude Code, `.mcp.json`:
+**2a. Over HTTP** (Phase 16.1), for a client that cannot spawn a local process — and
+the way to reach a _deployed_ Ward, since the server is then the running process and
+shares its Sibyl Memory by construction:
+
+```
+POST https://<WARD_PUBLIC_URL>/mcp
+Authorization: Bearer wardmcp_…
+```
+
+The endpoint appears only when `WARD_PUBLIC_URL` is set. Missing, malformed, unknown
+and revoked tokens all get the same 401 with the same body — telling them apart would
+tell a prober which guess was once real.
+
+> ChatGPT connectors expect the MCP OAuth 2.1 authorization framework rather than a
+> static bearer, so they are **not** supported yet. Claude Desktop, Cursor and Zed are.
+
+**2b. Over stdio**, for a client on the same machine as the memory. For Claude Code,
+`.mcp.json`:
 
 ```json
 {
@@ -72,6 +98,32 @@ same `SIBYL_MEMORY_*` environment the main process uses.
 All of them, not just the newest. "Revoke my MCP access" must not leave a second
 token the user forgot they minted still working. Chat accounts are unlinked one at a
 time; a credential is not.
+
+## Grants (Phase 16.2)
+
+A token can be given a **scoped execution grant**: capped per action, capped per day,
+restricted to an allow-list of action types, expiring, revocable, and issued only from
+an authenticated DM. It is Ward's own Spend Permission idea one level up, and it can
+only ever _narrow_ what the user may already do — a grant wider than their own caps is
+refused, not clamped.
+
+```
+/mcp tokens                                  what each token may do
+/mcp grants                                  the grants currently live
+/mcp grant <token> <actions> <per> <daily> [days]
+/mcp confirm <code>                          apply the grant you were just shown
+/mcp revoke <token>                          take it back
+```
+
+Granting is two steps on purpose: the first reads back, in plain language, what the
+token would be able to do _without asking you first_; the second applies it. Every
+grant is announced on every other linked account.
+
+**As of Phase 16.2 a grant permits nothing.** The object exists, can be granted,
+listed and revoked, and is reported back to the calling token — but no code path
+consults it when deciding a spend, and a fully granted token still exposes no tool
+that executes. That arrives in 16.3, and the claim above changes with it. See
+[`PHASE-16.md`](./PHASE-16.md).
 
 ## Tools
 

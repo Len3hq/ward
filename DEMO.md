@@ -149,6 +149,50 @@ second allowance._
 Optionally revoke here and switch back to Telegram to show it refuse — the same point
 as Beat 6, made across two apps.
 
+## Beat 5c — an agent acting on its own, and the leash (≈40s)
+
+Only if an MCP client is connected. This is the strongest demonstration that the
+authorization is the _record_, not the surface.
+
+On Telegram, grant a client a deliberately tiny allowance:
+
+```
+you:  /mcp grant a3f9c2d1 x402 0.05 0.10 1
+ward: Token a3f9c2d1 would be able to spend **without asking you first**:
+      · only these actions: x402 data purchase
+      · at most $0.05 per action
+      · at most $0.10 per day
+      · for 1 day, then it stops on its own
+      To apply it, send: /mcp confirm K7M2XQ
+you:  /mcp confirm K7M2XQ
+```
+
+Now in the LLM client — Claude, Cursor, whatever is connected — ask it for a risk
+score. It calls `ward_execute_action` and the purchase happens with **nobody
+confirming anything**. Cut to Telegram: the announcement is already there, naming the
+amount and the token.
+
+Then ask it for a third purchase on the same day. It comes back refused:
+
+```
+Blocked at execution — $0.05 exceeds the $0.10 you granted this client
+($0.00 left today). Nothing moved.
+```
+
+Say it: _I gave that agent ten cents and a day. It spent inside that and then it
+couldn't, and I was told every time. Take it back —_
+
+```
+you:  /mcp stop
+ward: Stopped. 1 grant revoked: a3f9c2d1.
+      That client can still read your limits and propose spends for you to confirm —
+      it just can't act on its own.
+```
+
+**The point to land:** the client never had authority of its own. It had a loan of
+yours, written in Sibyl Memory, bounded by your caps and your on-chain allowance, and
+it ended the moment you said so.
+
 ## Beat 6 — revoke the Spend Permission on-chain (≈30s)
 
 ```
