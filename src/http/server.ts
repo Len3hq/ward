@@ -13,8 +13,8 @@ import { handleMcpRequest } from "../mcp/http.ts";
  *
  * It serves the landing page, and the linking flows in `MULTI-CHANNEL.md`:
  *
- * - **The landing page** — `GET /`, a static bundle in `public/index.html`. It is the
- *   only route with no user data in it and the only one that is safe to cache.
+ * - **The landing page** — `GET /` plus its two icons, from `public/`. They are the
+ *   only routes with no user data in them, and the only ones safe to cache.
  * - **The MCP surface (Phase 16.1)** — the same five read-and-propose tools the
  *   stdio server exposes, for a client that cannot spawn a local process. It adds no
  *   authority: there is still no tool that executes. Needs only `WARD_PUBLIC_URL`.
@@ -71,8 +71,27 @@ const DISCORD_ME = "https://discord.com/api/users/@me";
  * without touching this file; gzipped once on first request because a third of
  * 350 kB is worth not sending twice.
  */
-const LANDING = fileURLToPath(new URL("../../public/index.html", import.meta.url));
+const PUBLIC = new URL("../../public/", import.meta.url);
+const LANDING = fileURLToPath(new URL("index.html", PUBLIC));
 let landingGzip: Uint8Array | undefined;
+
+/**
+ * The icons. An explicit map, not a static directory: this server fronts the linking
+ * routes, and "serve anything under public/" is one path-traversal slip away from
+ * serving something that isn't an icon. The favicon also rides inline in the page as
+ * a data URI, so the page still renders correctly opened straight off disk; this
+ * copy is for `/favicon.svg` and for iOS, which fetches the touch icon by URL.
+ */
+const ICONS: Record<string, { file: string; type: string }> = {
+  "/favicon.svg": {
+    file: fileURLToPath(new URL("favicon.svg", PUBLIC)),
+    type: "image/svg+xml",
+  },
+  "/apple-touch-icon.png": {
+    file: fileURLToPath(new URL("apple-touch-icon.png", PUBLIC)),
+    type: "image/png",
+  },
+};
 
 /** Where Discord sends the browser back. Must match the portal entry exactly. */
 export function redirectUri(config: LinkServerConfig): string {
@@ -111,6 +130,16 @@ export function startLinkServer(config: LinkServerConfig, port: number): LinkSer
         (url.pathname === "/" || url.pathname === "/index.html")
       ) {
         return landing(request);
+      }
+
+      const icon = ICONS[url.pathname];
+      if (icon && (request.method === "GET" || request.method === "HEAD")) {
+        const file = Bun.file(icon.file);
+        if (await file.exists()) {
+          return new Response(file, {
+            headers: { "content-type": icon.type, "cache-control": "public, max-age=86400" },
+          });
+        }
       }
 
       // The MCP surface (Phase 16.1). Read-and-propose only, exactly as over stdio —

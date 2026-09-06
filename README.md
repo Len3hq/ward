@@ -106,8 +106,11 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   [`MULTI-CHANNEL.md`](./MULTI-CHANNEL.md).
 - **Landing page** — [`public/index.html`](./public/index.html), served at `/` by the
   same linking server ([`src/http/server.ts`](./src/http/server.ts)) whenever
-  `WARD_PUBLIC_URL` is set. A self-contained bundle: fonts and React are embedded, so
-  it fetches nothing at runtime and there is no second service to deploy.
+  `WARD_PUBLIC_URL` is set. A self-contained bundle: fonts, React and the favicon are
+  embedded, so it renders without fetching anything and there is no second service to
+  deploy. [`public/favicon.svg`](./public/favicon.svg) — the header mark on a solid
+  tile, so it survives 16px on dark browser chrome — is also served at `/favicon.svg`,
+  with `/apple-touch-icon.png` for iOS.
 
 Build history and every design decision: [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
@@ -129,7 +132,7 @@ real `sibyl-mcp` backend under `SIBYL_MEMORY_MCP_TEST=1`
 [`scripts/demo-deletion.sh`](./scripts/demo-deletion.sh) does it live on Telegram.
 
 ```sh
-bun test          # 316 pass on the fs backend
+bun test          # 317 pass on the fs backend
 ```
 
 ## Partner stacks (Base ×1.15, Virtuals ×1.25)

@@ -232,11 +232,36 @@ describe("the landing page", () => {
       // The bundle is self-contained: no CDN fetch at runtime.
       expect(body).toContain('type="__bundler/manifest"');
 
+      // The favicon rides inline, so the page still has its icon opened off disk.
+      expect(body).toContain('rel="icon" type="image/svg+xml" href="data:image/svg+xml,');
+
       // Gzip is negotiated, not forced.
       const plain = await fetch(`${base}/index.html`, {
         headers: { "accept-encoding": "identity" },
       });
       expect(plain.status).toBe(200);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("serves its icons, and nothing else out of public/", async () => {
+    const server = startLinkServer(OAUTH, 0);
+    try {
+      const base = `http://localhost:${server.port}`;
+
+      const svg = await fetch(`${base}/favicon.svg`);
+      expect(svg.status).toBe(200);
+      expect(svg.headers.get("content-type")).toBe("image/svg+xml");
+
+      const png = await fetch(`${base}/apple-touch-icon.png`);
+      expect(png.status).toBe(200);
+      expect(png.headers.get("content-type")).toBe("image/png");
+
+      // An allowlist, not a static directory: the page itself is the only other
+      // file reachable, and only at `/`.
+      expect((await fetch(`${base}/favicon.ico`)).status).toBe(404);
+      expect((await fetch(`${base}/../src/config.ts`)).status).toBe(404);
     } finally {
       server.stop();
     }
