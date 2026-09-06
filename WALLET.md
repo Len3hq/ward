@@ -55,14 +55,14 @@ Troubleshooting section of the [README](./README.md).
 ## Chat flow
 
 ```
-connect my wallet            → creates the smart account + spender, writes ward.wallet
+generate my wallet           → creates the smart account + spender, writes ward.wallet
 grant a $100 daily permission → on-chain Spend Permission, ward.wallet.spend_permission = active
 swap $40 usdc for eth        → confirmation cites "on-chain allowance $X remaining"
 revoke my permission         → on-chain revoke + pauses every spend action in memory
 pause swaps                   → memory-only revocation of one action type
 ```
 
-`connect_wallet` / `grant_permission` / `revoke` are deterministic (the `wallet`
+`generate_wallet` / `grant_permission` / `revoke` are deterministic (the `wallet`
 node), not LLM tool calls — they work without `OPENAI_API_KEY`.
 
 ## Verify live

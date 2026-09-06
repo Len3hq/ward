@@ -49,7 +49,7 @@ export function onboardingConfirmation(draft: {
   return [
     `Locked in: ${draft.risk_label} risk, $${draft.per_action_limit_usd} per action, $${draft.daily_limit_usd} per day.`,
     "I'll never exceed these, and you can tighten or revoke them any time.",
-    "Next step is connecting a wallet and granting an on-chain spend permission — that lands in a later build phase.",
+    'Next: say "generate my wallet", then grant an on-chain spend permission.',
   ].join(" ");
 }
 
@@ -133,7 +133,7 @@ export function buildAuthorizationContext(
   }
 
   if (wallet === null) {
-    lines.push("Wallet: not connected");
+    lines.push("Wallet: not generated yet");
   } else {
     const perm = wallet.spend_permission;
     lines.push(

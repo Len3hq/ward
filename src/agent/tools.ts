@@ -7,7 +7,7 @@ import { buildAuthorizationContext } from "./prompts.ts";
 
 /**
  * Agent tools. Phase 2 ships one read-only tool so the graph's `agent ⇄ tools`
- * loop is exercised end to end. Execution tools (`connect_wallet`,
+ * loop is exercised end to end. Execution tools (`generate_wallet`,
  * `grant_permission`, `revoke`, `swap_on_base`, `pay_x402_endpoint`,
  * `discover_x402`, `get_token_price`, `post_acp_job`) arrive in Phases 4–6, each
  * behind the shared authorization gate.

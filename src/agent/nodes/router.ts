@@ -3,7 +3,7 @@ import { SPEND_ACTIONS, type IntentAction } from "../intent.ts";
 import type { Route, WardStateType } from "../state.ts";
 
 const WALLET_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
-  "connect_wallet",
+  "generate_wallet",
   "grant_permission",
   "revoke",
 ]);

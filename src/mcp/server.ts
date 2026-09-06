@@ -183,7 +183,7 @@ export function createMcpServer(getToken: () => string | undefined): McpServer {
             : `Revocations:       ${[...new Set(record.revocation_log.map((r) => r.action_type))].join(", ")} (paused)`,
           "",
           wallet === null
-            ? "Wallet:            not connected"
+            ? "Wallet:            not generated yet"
             : `Wallet:            ${wallet.smart_account}`,
           permission === null
             ? "Spend permission:  none on chain — memory caps only"

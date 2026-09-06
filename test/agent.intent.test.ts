@@ -17,7 +17,10 @@ describe("tableIntent", () => {
   });
 
   test("recognises wallet / permission / revoke actions", () => {
-    expect(tableIntent("connect my wallet")?.action_type).toBe("connect_wallet");
+    expect(tableIntent("generate my wallet")?.action_type).toBe("generate_wallet");
+    // "connect" is still accepted — it is what earlier builds and DEMO.md taught.
+    expect(tableIntent("connect my wallet")?.action_type).toBe("generate_wallet");
+    expect(tableIntent("create a wallet for me")?.action_type).toBe("generate_wallet");
     expect(tableIntent("grant a $100 spend permission")).toMatchObject({
       action_type: "grant_permission",
       amount_usd: 100,

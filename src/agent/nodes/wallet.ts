@@ -13,7 +13,7 @@ import type { RevokeScope } from "../intent.ts";
 import type { WardStateType } from "../state.ts";
 
 /**
- * Deterministic wallet + authorization actions: `connect_wallet`,
+ * Deterministic wallet + authorization actions: `generate_wallet`,
  * `grant_permission`, `revoke`. Calls the wallet provider (CDP or stub), then
  * persists to the `ward.wallet` entity / `revocation_log` so memory and chain
  * agree. No LLM — the router sends these three intents straight here.
@@ -34,9 +34,9 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
 
   const provider = walletProvider();
 
-  if (intent.action_type === "connect_wallet") {
+  if (intent.action_type === "generate_wallet") {
     const existing = await readWallet(state.userId);
-    // Reconnecting must land on the same address, so an existing key always wins.
+    // Re-generating must land on the same address, so an existing key always wins.
     const accountKey = existing?.account_key ?? state.userId;
     const wallet = await provider.connect(accountKey);
     await writeWallet(state.userId, {
@@ -49,7 +49,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       messages: [
         new AIMessage(
           [
-            `Wallet connected on ${provider.network()}.`,
+            `Wallet generated on ${provider.network()}.`,
             `Your smart account: ${wallet.smartAccount}`,
             `Agent spender: ${wallet.agentSpender}`,
             `Next: grant a spend permission — say "grant a $${record.standing_caps.daily_limit_usd} daily permission".`,
@@ -62,7 +62,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
   if (intent.action_type === "grant_permission") {
     const wallet = await readWallet(state.userId);
     if (!wallet) {
-      return { messages: [new AIMessage('Connect a wallet first — say "connect my wallet".')] };
+      return { messages: [new AIMessage('Generate a wallet first — say "generate my wallet".')] };
     }
     const allowance = intent.amount_usd ?? record.standing_caps.daily_limit_usd;
     const permission = await provider.grantSpendPermission(wallet.account_key, allowance, 1);

@@ -65,11 +65,11 @@ ward: I have no authorization on file for you in Sibyl Memory, so I won't move a
 Say it: _the agent is still running. It just has no basis for authority. That's the
 gate._ Then re-onboard (say "set me up", `moderate` / `50` / `100`) to continue.
 
-## Beat 3 — connect + grant on-chain (≈30s)
+## Beat 3 — generate + grant on-chain (≈30s)
 
 ```
-you: connect my wallet
-ward: Wallet connected on base-sepolia. Your smart account: 0x… Agent spender: 0x…
+you: generate my wallet
+ward: Wallet generated on base-sepolia. Your smart account: 0x… Agent spender: 0x…
 you: grant a $100 daily permission
 ward: Granted an on-chain spend permission: $100 USDC per 1 day … tx 0x…
       I now act within min(your $100 memory cap, this $100 on-chain allowance).

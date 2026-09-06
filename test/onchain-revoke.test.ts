@@ -25,7 +25,7 @@ describe("on-chain spend-permission revocation", () => {
   test("a swap works with an active permission, then refuses once it is revoked on-chain", async () => {
     const graph = newGraph();
     await onboard(graph, "oc");
-    await say(graph, "oc", "connect my wallet");
+    await say(graph, "oc", "generate my wallet");
     await say(graph, "oc", "grant a $100 daily permission");
 
     expect(await confirmAction(graph, "oc", "swap $20 usdc for eth")).toMatch(/swapped/i);
@@ -52,7 +52,7 @@ describe("on-chain spend-permission revocation", () => {
   test("granting a fresh permission unblocks it again", async () => {
     const graph = newGraph();
     await onboard(graph, "oc2");
-    await say(graph, "oc2", "connect my wallet");
+    await say(graph, "oc2", "generate my wallet");
     await say(graph, "oc2", "grant a $100 daily permission");
 
     const wallet = await readWallet(USER);

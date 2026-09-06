@@ -244,12 +244,12 @@ describe("x402 + swap on one ledger", () => {
 });
 
 describe("wallet & spend permission", () => {
-  test("connect writes the wallet entity; grant writes an active permission", async () => {
+  test("generate writes the wallet entity; grant writes an active permission", async () => {
     const graph = buildGraph();
     await onboard(graph, "w1");
 
-    const connected = await say(graph, "w1", "connect my wallet");
-    expect(connected).toMatch(/wallet connected/i);
+    const generated = await say(graph, "w1", "generate my wallet");
+    expect(generated).toMatch(/wallet generated/i);
     const wallet = await readWallet(USER);
     expect(wallet?.smart_account).toMatch(/^0x[0-9a-f]{40}$/);
     expect(wallet?.spend_permission).toBeNull();
@@ -266,7 +266,7 @@ describe("wallet & spend permission", () => {
   test("the confirmation cites the on-chain allowance, and the tighter of the two limits binds", async () => {
     const graph = buildGraph();
     await onboard(graph, "w2"); // per-action $50, daily $100
-    await say(graph, "w2", "connect my wallet");
+    await say(graph, "w2", "generate my wallet");
     await say(graph, "w2", "grant a $30 daily permission");
 
     const prompt = await askAction(graph, "w2", "swap $20 usdc for eth");
@@ -280,7 +280,7 @@ describe("wallet & spend permission", () => {
   test("a revoked on-chain permission makes the next spend refuse", async () => {
     const graph = buildGraph();
     await onboard(graph, "w3");
-    await say(graph, "w3", "connect my wallet");
+    await say(graph, "w3", "generate my wallet");
     await say(graph, "w3", "grant a $100 daily permission");
 
     // revoke only the on-chain permission record, leave the memory revocation_log clean

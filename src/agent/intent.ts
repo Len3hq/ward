@@ -10,7 +10,7 @@ import { parseUsd } from "./prompts.ts";
  */
 
 export const INTENT_ACTIONS = [
-  "connect_wallet",
+  "generate_wallet",
   "grant_permission",
   "revoke",
   "swap",
@@ -89,8 +89,14 @@ function extractSubject(text: string): string | undefined {
 export function tableIntent(text: string): ParsedIntent | null {
   const t = text.toLowerCase().trim();
 
-  if (/\b(connect|link|set\s?up)\b.*\b(wallet|account)\b/.test(t) || /^\/?connect\b/.test(t)) {
-    return { action_type: "connect_wallet", source: "table" };
+  // CDP *creates* the account — there is no external wallet to connect. "connect"
+  // and friends stay matched anyway: it is what people type, and what earlier
+  // builds (and DEMO.md) told them to.
+  if (
+    /\b(generate|create|make|open|new|connect|link|set\s?up)\b.*\b(wallet|account)\b/.test(t) ||
+    /^\/?(generate|connect)\b/.test(t)
+  ) {
+    return { action_type: "generate_wallet", source: "table" };
   }
   if (/\b(grant|approve|authoriz\w*|set)\b.*\b(permission|allowance|spend|limit)\b/.test(t)) {
     return { action_type: "grant_permission", amount_usd: parseUsd(t), source: "table" };
@@ -153,7 +159,7 @@ export async function parseIntent(text: string): Promise<ParsedIntent> {
         content:
           "Classify the user's message into one Ward action. read_only = a question or chit-chat, " +
           "no money moves. Only pick swap / x402_data_purchase / acp_job / grant_permission / revoke / " +
-          "connect_wallet when the user is clearly asking for that action. Extract amount_usd, pair " +
+          "generate_wallet when the user is clearly asking for that action. Extract amount_usd, pair " +
           '(like "USDC/ETH"), token, endpoint when present.',
       },
       { role: "user", content: text },
