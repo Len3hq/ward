@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { CdpClient, parseUnits } from "@coinbase/cdp-sdk";
 import { wrapFetchWithPayment } from "x402-fetch";
 
@@ -18,7 +20,7 @@ import type {
  * Coinbase CDP wallet provider — the judged path.
  *
  * - Agent spender: one CDP Server Account (`ward-agent-spender`), shared.
- * - User wallet: a per-user CDP Smart Account (`ward-user-<accountKey>`) owned by a
+ * - User wallet: a per-user CDP Smart Account (`cdpAccountName("user", …)`) owned by a
  *   per-user CDP Server Account. Hackathon-scoped managed-MPC custody — non-custodial
  *   in spirit (revocable Spend Permission), not an audited production custody stack.
  * - Spend Permission: `{ token: USDC, allowance, period: 1 day, spender }` granted
@@ -37,6 +39,37 @@ import type {
 
 const USDC_DECIMALS = 6;
 const AGENT_SPENDER_NAME = "ward-agent-spender";
+
+/** CDP account names: letters, digits and hyphens only, 2-36 characters. */
+const CDP_NAME = /^[a-zA-Z0-9-]{2,36}$/;
+
+/**
+ * The CDP account name for one role of one account key.
+ *
+ * A CDP name may only contain letters, digits and hyphens and may be at most 36
+ * characters, which a Ward principal violates twice over: `ward_<26-char ULID>`
+ * carries an underscore, and `ward-owner-<key>` is 42 characters. Passing it
+ * straight through is a 400 from `getOrCreateAccount`, which is what "connect my
+ * wallet" was failing on.
+ *
+ * The smart-account ADDRESS is a function of this name, so what it returns for a
+ * given key can never change — the same trap `ward.wallet.account_key` exists to
+ * avoid. Hence the first branch: a legacy key (a bare Telegram id, which is what
+ * the identity migration pinned) already produces a legal name, and must keep
+ * producing exactly that one. Only keys that CDP would reject are rewritten, and
+ * the ULID alone identifies the principal — the `ward_` prefix carries nothing.
+ */
+export function cdpAccountName(role: "owner" | "user", accountKey: string): string {
+  const direct = `ward-${role}-${accountKey}`;
+  if (CDP_NAME.test(direct)) return direct;
+
+  const slug = accountKey.replace(/^ward_/, "").replace(/[^a-zA-Z0-9]/g, "");
+  const short = `ward-${role[0]}-${slug}`;
+  if (CDP_NAME.test(short)) return short;
+
+  // Backstop for an account key that is neither shape: still deterministic.
+  return `ward-${role[0]}-${createHash("sha256").update(accountKey).digest("hex").slice(0, 24)}`;
+}
 
 const TOKENS: Record<"base" | "base-sepolia", Record<string, Hex>> = {
   base: {
@@ -82,9 +115,11 @@ export class CdpWalletProvider implements WalletProvider {
   }
 
   async #userSmartAccount(accountKey: string) {
-    const owner = await this.#cdp.evm.getOrCreateAccount({ name: `ward-owner-${accountKey}` });
+    const owner = await this.#cdp.evm.getOrCreateAccount({
+      name: cdpAccountName("owner", accountKey),
+    });
     return this.#cdp.evm.getOrCreateSmartAccount({
-      name: `ward-user-${accountKey}`,
+      name: cdpAccountName("user", accountKey),
       owner,
       enableSpendPermissions: true,
     });

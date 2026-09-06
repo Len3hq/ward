@@ -1,6 +1,50 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
+import { cdpAccountName } from "../src/wallet/cdp.ts";
 import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
+
+/**
+ * Pure, always runs. `connect my wallet` failed in production with a CDP 400 —
+ * `ward-owner-ward_<26-char ULID>` is 42 characters and contains an underscore,
+ * where CDP allows 2-36 of `[a-zA-Z0-9-]`.
+ */
+describe("cdpAccountName", () => {
+  const CDP_NAME = /^[a-zA-Z0-9-]{2,36}$/;
+  const principal = "ward_01K5ZQ8ABCDEFGHJKMNPQRSTVW";
+
+  test("a Ward principal produces a name CDP accepts", () => {
+    expect(cdpAccountName("owner", principal)).toMatch(CDP_NAME);
+    expect(cdpAccountName("user", principal)).toMatch(CDP_NAME);
+  });
+
+  test("owner and user are different accounts", () => {
+    expect(cdpAccountName("owner", principal)).not.toBe(cdpAccountName("user", principal));
+  });
+
+  test("distinct principals never collide", () => {
+    const other = "ward_01K5ZQ8ABCDEFGHJKMNPQRSTVX";
+    expect(cdpAccountName("user", principal)).not.toBe(cdpAccountName("user", other));
+  });
+
+  test("the same key always yields the same name — the address depends on it", () => {
+    expect(cdpAccountName("user", principal)).toBe(cdpAccountName("user", principal));
+  });
+
+  /**
+   * The one that would strand funds: a migrated record pins `account_key` to the
+   * original Telegram id, which already fits, so its name must not be rewritten.
+   */
+  test("a legacy Telegram account key keeps the name it always had", () => {
+    expect(cdpAccountName("owner", "700100200")).toBe("ward-owner-700100200");
+    expect(cdpAccountName("user", "700100200")).toBe("ward-user-700100200");
+  });
+
+  test("an unexpected key shape still yields a legal, stable name", () => {
+    const weird = "some/other::key with spaces and a very long tail indeed 1234567890";
+    expect(cdpAccountName("user", weird)).toMatch(CDP_NAME);
+    expect(cdpAccountName("user", weird)).toBe(cdpAccountName("user", weird));
+  });
+});
 
 /**
  * Live check against a real CDP project. Opt-in: needs `CDP_API_KEY_ID`,
