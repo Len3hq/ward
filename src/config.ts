@@ -23,6 +23,13 @@ export interface CdpConfig {
   apiKeyId: string;
   apiKeySecret: string;
   walletSecret: string;
+  /**
+   * Optional CDP Paymaster URL. A smart-account user operation (granting or
+   * revoking a Spend Permission) is paid for by the smart account itself unless a
+   * paymaster sponsors it, and nothing sponsors by default on Base mainnet. Set
+   * this and the user never needs to hold ETH — only the USDC they mean to spend.
+   */
+  paymasterUrl: string | undefined;
 }
 
 export interface AcpConfig {
@@ -75,7 +82,9 @@ function cdpConfig(): CdpConfig | undefined {
   const apiKeyId = optional("CDP_API_KEY_ID");
   const apiKeySecret = optional("CDP_API_KEY_SECRET");
   const walletSecret = optional("CDP_WALLET_SECRET");
-  if (apiKeyId && apiKeySecret && walletSecret) return { apiKeyId, apiKeySecret, walletSecret };
+  if (apiKeyId && apiKeySecret && walletSecret) {
+    return { apiKeyId, apiKeySecret, walletSecret, paymasterUrl: optional("CDP_PAYMASTER_URL") };
+  }
   return undefined;
 }
 

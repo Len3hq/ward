@@ -89,6 +89,14 @@ export class CdpWalletProvider implements WalletProvider {
   readonly kind = "cdp" as const;
   #cdp: CdpClient;
   #network: "base" | "base-sepolia";
+  /**
+   * Gas sponsorship for the two smart-account user operations (grant / revoke).
+   * Undefined → the smart account pays its own gas and must hold ETH. The
+   * spender's own calls (`useSpendPermission`, `swap`, `transfer`) are plain
+   * EOA transactions the SDK gives no paymaster option for, so the agent spender
+   * always needs ETH regardless.
+   */
+  #paymasterUrl: string | undefined;
 
   constructor(config: CdpConfig, network: "base" | "base-sepolia") {
     installCdpProxy(); // route *.coinbase.com through CDP_PROXY_URL if set
@@ -98,6 +106,12 @@ export class CdpWalletProvider implements WalletProvider {
       walletSecret: config.walletSecret,
     });
     this.#network = network;
+    this.#paymasterUrl = config.paymasterUrl;
+  }
+
+  /** Spread into a user-operation call; empty when no paymaster is configured. */
+  get #sponsor(): { paymasterUrl?: string } {
+    return this.#paymasterUrl ? { paymasterUrl: this.#paymasterUrl } : {};
   }
 
   #token(symbol: string): Hex {
@@ -151,6 +165,7 @@ export class CdpWalletProvider implements WalletProvider {
         periodInDays: periodDays,
       },
       network: this.#network,
+      ...this.#sponsor,
     });
     const grantedTx = await this.#settle(smart.address as Hex, op);
     const state = await this.readSpendPermission(accountKey);
@@ -194,6 +209,7 @@ export class CdpWalletProvider implements WalletProvider {
       address: smart.address as Hex,
       permissionHash: state.permissionHash as Hex,
       network: this.#network,
+      ...this.#sponsor,
     });
     return { txHash: await this.#settle(smart.address as Hex, op) };
   }

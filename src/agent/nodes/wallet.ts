@@ -25,6 +25,26 @@ import type { WardStateType } from "../state.ts";
  * (or a record migrated from the Telegram-only build) must still resolve to the
  * same on-chain address, or the funds and the spend permission are stranded.
  */
+/**
+ * A CDP smart-account user operation pays its own gas unless `CDP_PAYMASTER_URL`
+ * sponsors it, so a freshly generated account fails its FIRST grant with an
+ * opaque 400 — `insufficient balance to perform useroperation: precheck failed`.
+ * Left alone the gateway renders that as "Something went wrong on my side",
+ * which sends the operator to the logs to learn they need a few cents of ETH.
+ */
+export function isGasShortfall(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /insufficient balance|precheck failed|prefund|didn't pay prefund/i.test(message);
+}
+
+function gasFundingHelp(smartAccount: string): string {
+  return [
+    `${smartAccount} holds no ETH, and nothing is sponsoring its gas.`,
+    "Either send it a small amount of ETH on Base (a few cents covers many operations),",
+    "or set CDP_PAYMASTER_URL so CDP sponsors it and you only ever hold USDC.",
+  ].join("\n");
+}
+
 export async function walletNode(state: WardStateType): Promise<Partial<WardStateType>> {
   const intent = state.parsedIntent;
   const record = await read(state.userId);
@@ -65,7 +85,19 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       return { messages: [new AIMessage('Generate a wallet first — say "generate my wallet".')] };
     }
     const allowance = intent.amount_usd ?? record.standing_caps.daily_limit_usd;
-    const permission = await provider.grantSpendPermission(wallet.account_key, allowance, 1);
+    let permission;
+    try {
+      permission = await provider.grantSpendPermission(wallet.account_key, allowance, 1);
+    } catch (error) {
+      if (!isGasShortfall(error)) throw error;
+      return {
+        messages: [
+          new AIMessage(
+            `I couldn't grant the permission — the transaction has no gas.\n${gasFundingHelp(wallet.smart_account)}\nNothing was granted, so I still can't spend anything.`,
+          ),
+        ],
+      };
+    }
     await writeWallet(state.userId, {
       ...wallet,
       spend_permission: {
@@ -99,12 +131,22 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
     const wallet = await readWallet(state.userId);
     let txLine = "";
     if (wallet?.spend_permission && wallet.spend_permission.status === "active") {
-      const { txHash } = await provider.revokeSpendPermission(wallet.account_key);
-      await writeWallet(state.userId, {
-        ...wallet,
-        spend_permission: { ...wallet.spend_permission, status: "revoked" },
-      });
-      txLine = `\nOn-chain revocation tx ${txHash}.`;
+      try {
+        const { txHash } = await provider.revokeSpendPermission(wallet.account_key);
+        await writeWallet(state.userId, {
+          ...wallet,
+          spend_permission: { ...wallet.spend_permission, status: "revoked" },
+        });
+        txLine = `\nOn-chain revocation tx ${txHash}.`;
+      } catch (error) {
+        if (!isGasShortfall(error)) throw error;
+        // Fail closed. The memory revocation below still stops every spend, and
+        // Ward is the only spender — but say plainly that the chain side did not
+        // land, rather than reporting a revocation that only half happened.
+        txLine =
+          `\n⚠️ The on-chain revocation did NOT land: ${gasFundingHelp(wallet.smart_account)}\n` +
+          "The permission is still live on-chain. I've paused every spend action in memory, so I won't use it.";
+      }
     }
     for (const action of ACTION_TYPES) {
       await appendRevocation(state.userId, { action_type: action, reason });

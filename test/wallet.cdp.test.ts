@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
+import { isGasShortfall } from "../src/agent/nodes/wallet.ts";
 import { cdpAccountName } from "../src/wallet/cdp.ts";
 import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
 
@@ -43,6 +44,33 @@ describe("cdpAccountName", () => {
     const weird = "some/other::key with spaces and a very long tail indeed 1234567890";
     expect(cdpAccountName("user", weird)).toMatch(CDP_NAME);
     expect(cdpAccountName("user", weird)).toBe(cdpAccountName("user", weird));
+  });
+});
+
+/**
+ * Only a gas shortfall gets the friendly "fund the account" reply; everything else
+ * must keep propagating, so a real bug is never disguised as a funding problem.
+ */
+describe("isGasShortfall", () => {
+  test("matches the CDP precheck failure a freshly generated account hits", () => {
+    const real = new Error(
+      "failed to send user operation: insufficient balance to perform useroperation: " +
+        "precheck failed: sender balance and deposit together is 0 but must be at least 4725796812000",
+    );
+    expect(isGasShortfall(real)).toBe(true);
+  });
+
+  test("does not swallow unrelated failures", () => {
+    expect(isGasShortfall(new Error("no active spend permission to revoke"))).toBe(false);
+    expect(isGasShortfall(new Error("unknown token FOO on base"))).toBe(false);
+    expect(isGasShortfall(new Error("request body has an error: doesn't match schema"))).toBe(
+      false,
+    );
+  });
+
+  test("survives a non-Error throw", () => {
+    expect(isGasShortfall("precheck failed")).toBe(true);
+    expect(isGasShortfall(undefined)).toBe(false);
   });
 });
 

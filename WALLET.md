@@ -52,6 +52,21 @@ needed; out of scope for the bot.
 Coinbase geoblocks some regions — see [`src/net.ts`](./src/net.ts) and the
 Troubleshooting section of the [README](./README.md).
 
+## Who pays for gas
+
+Two different mechanisms, and mixing them up costs a debugging session:
+
+| Call                                     | Sent by                                         | Gas paid by                                                  |
+| ---------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------ |
+| grant / revoke a Spend Permission        | the user's **smart account** (a user operation) | the smart account's own ETH — or `CDP_PAYMASTER_URL`, if set |
+| `useSpendPermission`, `swap`, `transfer` | the **agent spender** (an EOA)                  | the spender's own ETH, always                                |
+
+Nothing sponsors gas by default on Base mainnet, so a freshly generated smart
+account fails its first `grant` with a CDP 400 (`insufficient balance to perform
+useroperation: precheck failed`). Set `CDP_PAYMASTER_URL` and the user only ever
+needs USDC. The agent spender needs ETH either way — the SDK exposes no paymaster
+option for an EOA transaction.
+
 ## Chat flow
 
 ```
