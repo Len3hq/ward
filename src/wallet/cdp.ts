@@ -169,14 +169,18 @@ export class CdpWalletProvider implements WalletProvider {
     });
     const grantedTx = await this.#settle(smart.address as Hex, op);
     const state = await this.readSpendPermission(accountKey);
-    return (
-      state ?? {
-        status: "active",
-        allowanceUsd,
-        periodSeconds: Math.round(periodDays * 86_400),
-        grantedTx,
-      }
-    );
+    // `grantedTx` is spread over the live read, not just the fallback: the read
+    // succeeds in the normal case and carries no tx of its own, so returning it
+    // bare dropped the settlement hash and the chat lost its "tx 0x…" line —
+    // exactly the link you need to confirm the grant landed.
+    return state
+      ? { ...state, grantedTx }
+      : {
+          status: "active",
+          allowanceUsd,
+          periodSeconds: Math.round(periodDays * 86_400),
+          grantedTx,
+        };
   }
 
   async readSpendPermission(accountKey: string): Promise<SpendPermissionState | null> {
