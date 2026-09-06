@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { CdpClient, parseUnits } from "@coinbase/cdp-sdk";
+import { formatUnits } from "viem";
 import { wrapFetchWithPayment } from "x402-fetch";
 
 import type { CdpConfig } from "../config.ts";
@@ -8,6 +9,8 @@ import { installCdpProxy } from "../net.ts";
 import type {
   Hex,
   SpendPermissionState,
+  SendRequest,
+  SendResult,
   SwapRequest,
   SwapResult,
   UserWallet,
@@ -281,7 +284,10 @@ export class CdpWalletProvider implements WalletProvider {
    * is a WETH wrap/unwrap presented honestly as the swap primitive.
    */
   async swap(accountKey: string, request: SwapRequest): Promise<SwapResult> {
-    const spender = await this.#agentSpender();
+    const [spender, smart] = await Promise.all([
+      this.#agentSpender(),
+      this.#userSmartAccount(accountKey),
+    ]);
     const permission = await this.#rawPermission(accountKey);
     const fromAmount = parseUnits(String(request.amountUsd), USDC_DECIMALS);
 
@@ -293,6 +299,12 @@ export class CdpWalletProvider implements WalletProvider {
       });
     }
 
+    // Measure around the swap. `spender.swap()` returns a transaction hash and
+    // nothing about the output, so the delta in the spender's balance is the only
+    // way to know how much arrived — and it has to be known, because the proceeds
+    // belong to the user, not to the agent that executed for them.
+    const spenderAddress = spender.address as Hex;
+    const before = await this.#rawBalance(spenderAddress, request.buySymbol);
     const result = await spender.swap({
       network: this.#network,
       fromToken: this.#token(request.sellSymbol),
@@ -305,11 +317,60 @@ export class CdpWalletProvider implements WalletProvider {
       (result as { transactionHash?: string }).transactionHash ??
       (result as { userOpHash?: string }).userOpHash ??
       "0x";
-    return {
-      txHash,
-      sellUsd: request.amountUsd,
-      buyDisplay: `swapped into ${request.buySymbol.toUpperCase()}`,
-    };
+
+    const after = await this.#rawBalance(spenderAddress, request.buySymbol);
+    const received = after.amount > before.amount ? after.amount - before.amount : 0n;
+
+    let sweepTx: string | undefined;
+    let buyDisplay = `swapped into ${request.buySymbol.toUpperCase()}`;
+    if (received > 0n) {
+      const display = formatUnits(received, after.decimals);
+      buyDisplay = `${display} ${request.buySymbol.toUpperCase()}`;
+      // Only the delta moves, so the spender keeps the ETH it needs for gas — which
+      // matters most when the bought token IS native ETH.
+      const transfer = await spender.transfer({
+        to: smart.address as Hex,
+        amount: received,
+        token: this.#transferToken(request.buySymbol),
+        network: this.#network,
+      });
+      sweepTx = (transfer as { transactionHash?: string }).transactionHash;
+    }
+
+    return { txHash, sellUsd: request.amountUsd, buyDisplay, sweepTx };
+  }
+
+  /**
+   * Move USDC from the user's smart account to any address, within the Spend
+   * Permission: pull to the spender, then forward. Two transactions, and the pull is
+   * a hard error rather than a soft skip — sending Ward's own float because a
+   * permission was missing would be the worst possible failure here.
+   */
+  async sendUsdc(accountKey: string, request: SendRequest): Promise<SendResult> {
+    await this.fundAgentFromUser(accountKey, request.amountUsd);
+    const { txHash } = await this.transferUsdcFromSpender(request.to, request.amountUsd);
+    return { txHash, amountUsd: request.amountUsd };
+  }
+
+  /** Raw balance of one symbol, for measuring a swap's output. */
+  async #rawBalance(address: Hex, symbol: string): Promise<{ amount: bigint; decimals: number }> {
+    const wanted = this.#token(symbol).toLowerCase();
+    const upper = symbol.toUpperCase();
+    const { balances } = await this.#cdp.evm.listTokenBalances({ address, network: this.#network });
+    const match = balances.find(
+      (b) =>
+        b.token.contractAddress.toLowerCase() === wanted || b.token.symbol?.toUpperCase() === upper,
+    );
+    if (!match) return { amount: 0n, decimals: upper === "USDC" ? USDC_DECIMALS : 18 };
+    return { amount: BigInt(match.amount.amount), decimals: Number(match.amount.decimals) };
+  }
+
+  /** `transfer` takes a symbol for the two it knows, and a contract address otherwise. */
+  #transferToken(symbol: string): "eth" | "usdc" | Hex {
+    const upper = symbol.toUpperCase();
+    if (upper === "ETH") return "eth";
+    if (upper === "USDC") return "usdc";
+    return this.#token(symbol);
   }
 
   /**

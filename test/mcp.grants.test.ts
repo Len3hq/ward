@@ -89,7 +89,13 @@ describe("parsing", () => {
   test("accepts the short aliases people actually type", () => {
     expect(parseActionTypes("x402")).toEqual(["x402_data_purchase"]);
     expect(parseActionTypes("swap,acp")).toEqual(["swap", "acp_job"]);
-    expect(parseActionTypes("all")?.sort()).toEqual(["acp_job", "swap", "x402_data_purchase"]);
+    expect(parseActionTypes("send")).toEqual(["send"]);
+    expect(parseActionTypes("all")?.sort()).toEqual([
+      "acp_job",
+      "send",
+      "swap",
+      "x402_data_purchase",
+    ]);
   });
 
   test("refuses what it does not understand rather than guessing", () => {

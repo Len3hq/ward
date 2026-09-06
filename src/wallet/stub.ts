@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import type {
   Hex,
   SpendPermissionState,
+  SendRequest,
+  SendResult,
   SwapRequest,
   SwapResult,
   UserWallet,
@@ -114,10 +116,22 @@ export class StubWalletProvider implements WalletProvider {
     this.calls.push("swap");
     const price = APPROX_USD_PER_TOKEN[request.buySymbol.toUpperCase()] ?? 1;
     const received = request.amountUsd / price;
+    // The sweep is simulated too: a swap whose proceeds never reach the user is a
+    // real failure mode, so the stub must not quietly model the happy path only.
+    this.calls.push("sweepToUser");
     return {
       txHash: fakeHash(`swap-${accountKey}-${Date.now()}`),
       sellUsd: request.amountUsd,
       buyDisplay: `~${received.toPrecision(3)} ${request.buySymbol.toUpperCase()}`,
+      sweepTx: fakeHash(`sweep-${accountKey}-${Date.now()}`),
+    };
+  }
+
+  async sendUsdc(accountKey: string, request: SendRequest): Promise<SendResult> {
+    this.calls.push("sendUsdc");
+    return {
+      txHash: fakeHash(`send-${accountKey}-${request.to}-${Date.now()}`),
+      amountUsd: request.amountUsd,
     };
   }
 }

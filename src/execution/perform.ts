@@ -45,6 +45,8 @@ export interface SpendRequest {
   };
   /** swap only, e.g. "USDC/ETH". */
   pair?: string;
+  /** send only: the 0x address the USDC goes to. */
+  destination?: string;
   /** acp_job only. */
   acpSubject?: string;
   /**
@@ -150,11 +152,44 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         idempotency_key: request.idempotencyKey,
         via_token: viaToken,
       });
+      // Say plainly whether the proceeds actually reached the user. A swap whose
+      // output is still sitting in the agent spender is not a completed swap, and
+      // reporting it as one would be the most misleading thing Ward could say.
+      const landed = result.sweepTx
+        ? `Sent to your smart account: ${txUrl(result.sweepTx, network)}`
+        : "⚠️ The bought token could not be moved to your smart account — it is still " +
+          "held by the agent spender. Nothing further will happen automatically.";
       return {
         ok: true,
         txHash: result.txHash,
         amountUsd: result.sellUsd,
-        message: `Swapped $${result.sellUsd} ${sell.toUpperCase()} → ${buy.toUpperCase()} (${result.buyDisplay}). ${txUrl(result.txHash, network)}`,
+        message:
+          `Swapped $${result.sellUsd} ${sell.toUpperCase()} → ${buy.toUpperCase()} ` +
+          `(${result.buyDisplay}). ${txUrl(result.txHash, network)}\n${landed}`,
+      };
+    }
+
+    if (request.actionType === "send") {
+      const to = request.destination;
+      if (!to || !/^0x[a-fA-F0-9]{40}$/.test(to)) {
+        return { ok: false, message: "No valid destination address — nothing moved." };
+      }
+      const result = await provider.sendUsdc(accountKey, {
+        to: to as `0x${string}`,
+        amountUsd: request.amountUsd,
+      });
+      await appendSpend(userId, {
+        action_type: "send",
+        amount_usd: result.amountUsd,
+        tx_hash: result.txHash,
+        idempotency_key: request.idempotencyKey,
+        via_token: viaToken,
+      });
+      return {
+        ok: true,
+        txHash: result.txHash,
+        amountUsd: result.amountUsd,
+        message: `Sent $${result.amountUsd} USDC to ${to}. ${txUrl(result.txHash, network)}`,
       };
     }
 

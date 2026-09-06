@@ -22,6 +22,7 @@ export async function executeNode(state: WardStateType): Promise<Partial<WardSta
     idempotencyKey: confirmed.id,
     endpoint: confirmed.endpoint,
     pair: confirmed.pair,
+    destination: confirmed.destination,
     acpSubject: confirmed.acp?.subject,
   });
 

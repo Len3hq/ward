@@ -31,6 +31,8 @@ export interface ConfirmedIntent {
   action_type: ActionType;
   amount_usd: number;
   pair?: string;
+  /** send only: the checksum-agnostic 0x address the funds go to. */
+  destination?: string;
   endpoint?: { name: string; url: string; method: string; body?: unknown; cost_usd: number };
   acp?: { subject: string };
 }

@@ -50,6 +50,7 @@ export async function confirmNode(
   let endpoint: X402Endpoint | null = null;
   let resolvedCall: ResolvedX402Call | null = null;
   let acpSubject: string | undefined;
+  let destination: string | undefined;
   let acpCounterparty: string | undefined;
   let amountUsd: number;
 
@@ -69,6 +70,17 @@ export async function confirmNode(
     acpSubject = intent.token ?? intent.pair ?? "the token";
     acpCounterparty = await acpProvider().preferredCounterparty("token_risk");
     amountUsd = intent.amount_usd ?? loadConfig().acpBudgetUsd;
+  } else if (action === "send") {
+    destination = intent.token;
+    if (!destination || !/^0x[a-fA-F0-9]{40}$/.test(destination)) {
+      return {
+        messages: [new AIMessage("Which address? Give me a 0x address on Base.")],
+      };
+    }
+    amountUsd = intent.amount_usd ?? 0;
+    if (amountUsd <= 0) {
+      return { messages: [new AIMessage("How much? Give me a USD amount.")] };
+    }
   } else {
     amountUsd = intent.amount_usd ?? 0;
     if (amountUsd <= 0) {
@@ -85,6 +97,10 @@ export async function confirmNode(
     summary =
       `Hire ${acpCounterparty} (trust ${trust.toFixed(2)}${seen ? `, ${seen} prior job(s)` : ", unproven"}) ` +
       `to assess ${acpSubject} for ~$${amountUsd}`;
+  } else if (action === "send" && destination) {
+    // Name the destination in full, every time. An address is the one field a user
+    // cannot sanity-check from a summary, and it is the one that cannot be undone.
+    summary = `Send $${amountUsd} USDC to ${destination}`;
   } else {
     summary = describeIntent(intent);
   }
@@ -151,6 +167,7 @@ export async function confirmNode(
     action_type: action,
     amount_usd: amountUsd,
     pair: intent.pair,
+    destination,
     endpoint:
       endpoint && resolvedCall
         ? {

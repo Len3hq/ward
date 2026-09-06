@@ -51,6 +51,8 @@ const ALIASES: Record<string, ActionType> = {
   data: "x402_data_purchase",
   x402_data_purchase: "x402_data_purchase",
   swap: "swap",
+  send: "send",
+  transfer: "send",
   acp: "acp_job",
   acp_job: "acp_job",
 };

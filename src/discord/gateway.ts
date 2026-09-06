@@ -102,7 +102,8 @@ const HELP = [
   "/whoami — which accounts share your authorization",
   "/mcp — MCP tokens and what each is allowed to do",
   "",
-  "Otherwise just talk to me: onboarding, your limits, or a trade.",
+  "Otherwise just talk to me: onboarding, your limits, a swap, or",
+  '"send $10 to 0x…" to move USDC to any Base address.',
 ].join("\n");
 
 export function createDiscordGateway(token: string, graph: WardGraph): Client {

@@ -41,7 +41,11 @@ export type RiskLabel = z.infer<typeof riskLabelSchema>;
  * spend ledger and the revocation log: you revoke the same categories you spend
  * under.
  */
-export const ACTION_TYPES = ["swap", "x402_data_purchase", "acp_job"] as const;
+/**
+ * Every action that moves money. Widening this is a real change: it adds a row the
+ * daily cap sums, a path `revoke` must pause, and a type an MCP grant can name.
+ */
+export const ACTION_TYPES = ["swap", "send", "x402_data_purchase", "acp_job"] as const;
 export const actionTypeSchema = z.enum(ACTION_TYPES);
 export type ActionType = z.infer<typeof actionTypeSchema>;
 

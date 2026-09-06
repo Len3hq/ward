@@ -72,13 +72,46 @@ option for an EOA transaction.
 ```
 generate my wallet           → creates the smart account + spender, writes ward.wallet
 grant a $100 daily permission → on-chain Spend Permission, ward.wallet.spend_permission = active
-swap $40 usdc for eth        → confirmation cites "on-chain allowance $X remaining"
+swap $40 usdc for eth        → pull → swap → **sweep the proceeds to your smart account**
+send $10 to 0xAbC…            → pull → transfer USDC to any Base address
 revoke my permission         → on-chain revoke + pauses every spend action in memory
 pause swaps                   → memory-only revocation of one action type
 ```
 
 `generate_wallet` / `grant_permission` / `revoke` are deterministic (the `wallet`
 node), not LLM tool calls — they work without `OPENAI_API_KEY`.
+
+## Swap, in full
+
+```
+useSpendPermission(user's smart account → agent spender, $N USDC)
+spender.swap({ fromToken, toToken, fromAmount, slippageBps: 150 })
+spender.transfer(bought token → user's smart account)      ← the sweep
+```
+
+The third step is not optional. `spender.swap()` returns a transaction hash and
+nothing about the output, so the amount received is measured as the **delta in the
+spender's balance** around the swap, and only that delta is forwarded — which is what
+leaves the spender its own ETH for gas even when the bought token is native ETH.
+
+If the sweep does not happen, the reply says so instead of reporting a completed
+swap: the proceeds are still held by the agent spender, and a user who was told
+otherwise would have no reason to go looking.
+
+**Tokens are a fixed map** — `USDC`, `WETH`, `ETH`, `CBETH` on Base mainnet. Anything
+else fails with `unknown token X on base`. This is not a general DEX interface.
+
+## Send
+
+`send $10 to 0x…` moves USDC from the user's smart account to any Base address, in
+two steps: pull within the Spend Permission, then transfer from the spender. The pull
+is a hard error without an active permission — sending Ward's own float because a
+permission was missing would be the worst failure available here.
+
+`send` is a full `ActionType`, so it shares the daily cap with swaps, x402 purchases
+and ACP jobs, `revoke` pauses it like anything else, and an MCP grant can name it.
+The confirmation always prints the destination address in full: it is the one field a
+user cannot sanity-check from a summary, and the one that cannot be undone.
 
 ## Verify live
 

@@ -14,6 +14,7 @@ export const INTENT_ACTIONS = [
   "grant_permission",
   "revoke",
   "swap",
+  "send",
   "x402_data_purchase",
   "acp_job",
   "read_only",
@@ -23,6 +24,7 @@ export type IntentAction = (typeof INTENT_ACTIONS)[number];
 /** Actions that move money and therefore need the confirmation + gate. */
 export const SPEND_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
   "swap",
+  "send",
   "x402_data_purchase",
   "acp_job",
 ]);
@@ -73,6 +75,11 @@ function extractPair(text: string): string | undefined {
   return undefined;
 }
 
+/** A destination address, preserved in the case the user typed it. */
+export function extractAddress(text: string): string | undefined {
+  return text.match(/\b0x[a-fA-F0-9]{40}\b/)?.[0];
+}
+
 /** The token a data / assessment request is *about* — a ticker or 0x address. */
 function extractSubject(text: string): string | undefined {
   const keyed = text.match(
@@ -103,6 +110,17 @@ export function tableIntent(text: string): ParsedIntent | null {
   }
   if (/\b(revoke|pause|stop|disable|halt|freeze)\b/.test(t)) {
     return { action_type: "revoke", token: revokeScope(t), source: "table" };
+  }
+  // Before `swap`, and requiring a destination: "send $10 to 0x…" is unambiguous
+  // only because an address is present. Without one this falls through, and the user
+  // is asked for it rather than having an amount guessed at.
+  if (/\b(send|transfer|pay|withdraw)\b/.test(t) && /\b0x[a-fA-F0-9]{40}\b/.test(t)) {
+    return {
+      action_type: "send",
+      amount_usd: parseUsd(t),
+      token: extractAddress(text),
+      source: "table",
+    };
   }
   if (
     /\b(swap|trade|convert|exchange|rebalance)\b/.test(t) ||
@@ -159,7 +177,8 @@ export async function parseIntent(text: string): Promise<ParsedIntent> {
         content:
           "Classify the user's message into one Ward action. read_only = a question or chit-chat, " +
           "no money moves. Only pick swap / x402_data_purchase / acp_job / grant_permission / revoke / " +
-          "generate_wallet when the user is clearly asking for that action. Extract amount_usd, pair " +
+          "generate_wallet when the user is clearly asking for that action. send = moving USDC to " +
+          "an 0x address the user names; put that address in `token`. Extract amount_usd, pair " +
           '(like "USDC/ETH"), token, endpoint when present.',
       },
       { role: "user", content: text },
@@ -174,6 +193,8 @@ export function describeIntent(intent: ParsedIntent): string {
   switch (intent.action_type) {
     case "swap":
       return `Swap${intent.amount_usd ? ` $${intent.amount_usd}` : ""}${intent.pair ? ` ${intent.pair.replace("/", " → ")}` : ""}`;
+    case "send":
+      return `Send${intent.amount_usd ? ` $${intent.amount_usd}` : ""}${intent.token ? ` to ${intent.token}` : ""}`;
     case "x402_data_purchase":
       return `Buy premium data${intent.token ? ` on ${intent.token}` : ""}`;
     case "acp_job":

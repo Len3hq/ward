@@ -57,6 +57,13 @@ export interface WalletProvider {
   swap(accountKey: string, request: SwapRequest): Promise<SwapResult>;
 
   /**
+   * Move USDC from the user's smart account to an arbitrary address, within the
+   * Spend Permission. Distinct from `transferUsdcFromSpender`, which moves the
+   * *agent's* balance and is an internal plumbing step.
+   */
+  sendUsdc(accountKey: string, request: SendRequest): Promise<SendResult>;
+
+  /**
    * Pull `amountUsd` USDC from the user's smart account into the agent spender,
    * within their Spend Permission. ACP escrow is funded from the spender's own
    * balance, so this pull is what makes a job **the user's** spend rather than
@@ -102,6 +109,23 @@ export interface SwapResult {
   sellUsd: number;
   /** Human-readable received amount, e.g. "~0.0121 ETH". */
   buyDisplay: string;
+  /**
+   * The transfer that moved the bought token from the agent spender to the user's
+   * smart account. Absent when nothing could be swept — which is a failure worth
+   * saying out loud, since the user paid and the proceeds are then not theirs yet.
+   */
+  sweepTx?: string;
+}
+
+export interface SendRequest {
+  /** Checksum-agnostic 0x address. */
+  to: Hex;
+  amountUsd: number;
+}
+
+export interface SendResult {
+  txHash: string;
+  amountUsd: number;
 }
 
 let cached: WalletProvider | null = null;
