@@ -1,5 +1,7 @@
 import {
   ActionRowBuilder,
+  ApplicationCommandOptionType,
+  ApplicationCommandType,
   ButtonBuilder,
   ButtonStyle,
   Client,
@@ -7,6 +9,7 @@ import {
   GatewayIntentBits,
   MessageFlags,
   Partials,
+  type ChatInputApplicationCommandData,
   type Message,
   type SendableChannels,
 } from "discord.js";
@@ -15,10 +18,10 @@ import { randomUUID } from "node:crypto";
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
 import type { ChannelAdapter } from "../gateway/adapter.ts";
-import { registerChannel } from "../gateway/channels.ts";
+import { registerChannel, registerDmLink } from "../gateway/channels.ts";
 import { runTurn } from "../gateway/core.ts";
 import { linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
-import { resolveUser } from "../identity/index.ts";
+import { resolveExisting, resolveUser } from "../identity/index.ts";
 
 /**
  * Discord gateway. Same graph, same Sibyl Memory, same principal as Telegram — a
@@ -55,6 +58,33 @@ const DISCORD_LIMIT = 2000;
 const EDIT_THROTTLE_MS = 1200;
 const CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
 
+/**
+ * An unknown Discord account gets this instead of onboarding.
+ *
+ * `resolveUser` MINTS a principal on first contact, so simply talking here used to
+ * create a second Ward — and then `/link` refused the code, because moving a
+ * principal that already holds an authorization record is a silent ledger merge.
+ * The trap was invisible: the punishment arrived one step after the mistake.
+ *
+ * So an account we have never seen has to say which it is first. Nothing is minted
+ * until it does.
+ */
+export const OPT_IN = /\b(set me up|sign me up|onboard me|start fresh|new ward)\b/i;
+
+function firstContact(): string {
+  return [
+    `${BRAND.name} — ${BRAND.tagline}.`,
+    "",
+    "I don't know this Discord account yet. Two ways forward:",
+    "",
+    "**Already use Ward elsewhere?** Send `/link` there to get a code, then send " +
+      "`/link WARD-XXXX-XXXX` here. Your limits, spend history and wallet all come with you — " +
+      "one daily cap across both apps.",
+    "",
+    '**Starting fresh?** Say **"set me up"** and I\'ll onboard this account as a new Ward.',
+  ].join("\n");
+}
+
 interface ChatSession {
   seq: number;
 }
@@ -63,9 +93,12 @@ const HELP = [
   "/newsession — start a fresh conversation (your authorization in Sibyl Memory is unchanged)",
   "/defaultsession — go back to your default conversation",
   "",
-  "/link — get a code to reach this same Ward from another app",
+  "/link <channel> — one-click link to another app (telegram, discord)",
+  "/link wallet — verify a wallet you control, as a way back in if you lose this account",
+  "/link — get a code to type in by hand instead",
   "/link <code> — redeem a code minted somewhere else",
   "/unlink <channel> — detach an app from your Ward",
+  "/unlink wallet <address> — drop a verified wallet",
   "/whoami — which accounts share your authorization",
   "",
   "Otherwise just talk to me: onboarding, your limits, or a trade.",
@@ -103,6 +136,42 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
 
   client.once(Events.ClientReady, (ready) => {
     console.log(`Ward connected to Discord as ${ready.user.tag} (DM-only).`);
+    // The door to hand someone minting a code on Telegram.
+    registerDmLink("discord", `https://discord.com/users/${ready.user.id}`);
+    // Best effort, and deliberately so: registered commands are a convenience —
+    // Discord's client fights you when you type "/link" and it matches nothing.
+    // The text path below stays the guaranteed one, so a registration failure
+    // (missing `applications.commands` scope, a propagation delay) must not take
+    // the gateway down with it.
+    void ready.application.commands.set(SLASH_COMMANDS).catch((error: unknown) => {
+      console.error("discord slash-command registration failed (text commands still work):", error);
+    });
+  });
+
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.guildId !== null) {
+      await interaction
+        .reply({
+          content: "DM me — I won't discuss your limits or move funds in a shared channel.",
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => undefined);
+      return;
+    }
+    try {
+      await interaction.deferReply();
+      const reply = await runCommand(
+        session(interaction.channelId),
+        { channel: "discord", accountId: interaction.user.id },
+        interaction.commandName,
+        interaction.options.getString("code") ?? interaction.options.getString("channel") ?? "",
+      );
+      await interaction.editReply(reply.slice(0, DISCORD_LIMIT));
+    } catch (error) {
+      console.error("discord command failed:", error);
+      await interaction.editReply("Something went wrong on my side.").catch(() => undefined);
+    }
   });
 
   client.on(Events.MessageCreate, async (message) => {
@@ -132,6 +201,91 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
   return client;
 }
 
+/**
+ * One command implementation, two front doors: a typed `/link …` message and a
+ * registered slash command. Both return text rather than sending it, so the caller
+ * decides between `channel.send` and `interaction.editReply`.
+ *
+ * Commands are handled here, before anything reaches the graph — a link code is
+ * read from the command argument and nowhere else, so no model output or fetched
+ * content can ever reach `redeemLinkCode`. Same property as the Telegram gateway's
+ * Telegraf command registrations; keep it when adding a channel.
+ */
+async function runCommand(
+  s: ChatSession,
+  ctx: { channel: "discord"; accountId: string },
+  word: string,
+  argument: string,
+): Promise<string> {
+  switch (word.toLowerCase()) {
+    case "start":
+      return `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`;
+    case "help":
+      return HELP;
+    case "newsession":
+      s.seq += 1;
+      return "Fresh session started. Your authorization in Sibyl Memory is unchanged.";
+    case "defaultsession":
+      s.seq = 1;
+      return "Back to your default session.";
+    case "link":
+      return linkCommand(ctx, argument);
+    case "unlink":
+      return unlinkCommand(ctx, argument);
+    case "whoami":
+      return whoamiCommand(ctx);
+    default:
+      return `I don't know that command.\n\n${HELP}`;
+  }
+}
+
+/** Registered so Discord's client autocompletes them instead of matching nothing. */
+export const SLASH_COMMANDS: ChatInputApplicationCommandData[] = [
+  {
+    type: ApplicationCommandType.ChatInput,
+    name: "link",
+    description: "Reach this same Ward from another app — or redeem a code from one",
+    options: [
+      {
+        name: "code",
+        description:
+          "A channel to link (telegram), a code minted elsewhere, or 'mcp'. Omit to mint a code.",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+    ],
+  },
+  {
+    type: ApplicationCommandType.ChatInput,
+    name: "unlink",
+    description: "Detach an app from your Ward",
+    options: [
+      {
+        name: "channel",
+        description: "telegram, discord or mcp",
+        type: ApplicationCommandOptionType.String,
+        required: true,
+      },
+    ],
+  },
+  {
+    type: ApplicationCommandType.ChatInput,
+    name: "whoami",
+    description: "Which accounts share your authorization",
+  },
+  {
+    type: ApplicationCommandType.ChatInput,
+    name: "newsession",
+    description: "Start a fresh conversation (your limits are unchanged)",
+  },
+  {
+    type: ApplicationCommandType.ChatInput,
+    name: "defaultsession",
+    description: "Go back to your default conversation",
+  },
+  { type: ApplicationCommandType.ChatInput, name: "help", description: "What Ward can do" },
+];
+
 async function handleDirectMessage(
   graph: WardGraph,
   session: (channelId: string) => ChatSession,
@@ -150,41 +304,16 @@ async function handleDirectMessage(
    */
   if (text.startsWith("/")) {
     const [word = "", ...rest] = text.slice(1).split(/\s+/);
-    const argument = rest.join(" ");
-    const ctx = { channel: "discord" as const, accountId };
+    await channel.send(
+      await runCommand(s, { channel: "discord", accountId }, word, rest.join(" ")),
+    );
+    return;
+  }
 
-    switch (word.toLowerCase()) {
-      case "start":
-        await channel.send(
-          `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`,
-        );
-        return;
-      case "help":
-        await channel.send(HELP);
-        return;
-      case "newsession":
-        s.seq += 1;
-        await channel.send(
-          "Fresh session started. Your authorization in Sibyl Memory is unchanged.",
-        );
-        return;
-      case "defaultsession":
-        s.seq = 1;
-        await channel.send("Back to your default session.");
-        return;
-      case "link":
-        await channel.send(await linkCommand(ctx, argument));
-        return;
-      case "unlink":
-        await channel.send(await unlinkCommand(ctx, argument));
-        return;
-      case "whoami":
-        await channel.send(await whoamiCommand(ctx));
-        return;
-      default:
-        await channel.send(`I don't know that command.\n\n${HELP}`);
-        return;
-    }
+  // Never mint a principal for an account that has not said which it is. See OPT_IN.
+  if ((await resolveExisting("discord", accountId)) === null && !OPT_IN.test(text)) {
+    await channel.send(firstContact());
+    return;
   }
 
   let userId: string;

@@ -38,6 +38,9 @@ ENV NODE_ENV=production \
   SIBYL_MEMORY_MODE=sibyl-mcp \
   SIBYL_MEMORY_DB=/data/memory.db
 
-# No EXPOSE and no port: Ward is a long-polling worker (Telegram) plus a Discord
-# gateway socket. It never serves HTTP.
+# Ward is a long-polling worker (Telegram) plus a Discord gateway socket. It serves
+# HTTP only when Discord one-click linking is configured (Phase 15.2:
+# DISCORD_CLIENT_ID + DISCORD_CLIENT_SECRET + WARD_PUBLIC_URL), and then only the
+# OAuth2 callback — no API. Railway injects PORT and routes to it; nothing is
+# EXPOSEd here because the port is not fixed and the server is optional.
 CMD ["bun", "run", "src/index.ts"]

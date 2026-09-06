@@ -13,10 +13,17 @@ import {
   REDEEM_ATTEMPTS_PER_HOUR,
   formatCode,
   mintLinkCode,
+  mintLinkState,
   normalizeCode,
   redeemLinkCode,
+  redeemLinkState,
 } from "../src/identity/linking.ts";
-import { clearChannels, registerChannel } from "../src/gateway/channels.ts";
+import {
+  clearChannels,
+  registerChannel,
+  registerDmLink,
+  registerStartLink,
+} from "../src/gateway/channels.ts";
 
 /**
  * Phase 10 — the linking flow.
@@ -58,6 +65,105 @@ async function onboardedTelegramUser(daily = 100): Promise<string> {
   });
   return userId;
 }
+
+/**
+ * Phase 15.1. "Now go find me in the other app" was the step people stalled on, so
+ * a minted code ships with the door as well as the key — but only for channels that
+ * are actually running, so it is never a link to a bot that isn't there.
+ */
+/**
+ * Phase 15.3. Both directions are one click now, by completely different means —
+ * Discord through an OAuth2 round trip Ward serves, Telegram through a `?start=`
+ * deep link that needs no server. The command layer must not care which.
+ */
+describe("one-click linking", () => {
+  test("/link <channel> hands back that channel's link, not a code", async () => {
+    await onboardedTelegramUser();
+    registerStartLink("discord", (state) => `https://ward.example/link/discord/${state}`);
+
+    const reply = await linkCommand({ channel: "telegram", accountId: TG }, "discord");
+
+    expect(reply).toContain("https://ward.example/link/discord/");
+    expect(reply).not.toMatch(/WARD-[2-9A-HJ-NP-TV-Z]{4}/);
+  });
+
+  test("the Telegram deep link carries the state as a start payload", async () => {
+    const userId = await resolveUser("discord", "1234567890123456789");
+    await initialize(userId.userId, {
+      risk_label: "moderate",
+      per_action_limit_usd: 50,
+      daily_limit_usd: 100,
+    });
+    registerStartLink("telegram", (state) => `https://t.me/WardLen3bot?start=${state}`);
+
+    const reply = await linkCommand(
+      { channel: "discord", accountId: "1234567890123456789" },
+      "telegram",
+    );
+
+    const url = /https:\/\/t\.me\/WardLen3bot\?start=([A-Za-z0-9_-]+)/.exec(reply);
+    expect(url).not.toBeNull();
+    // Telegram caps a start payload at 64 characters.
+    expect(url![1]!.length).toBeLessThanOrEqual(64);
+  });
+
+  test("a channel with no one-click route falls back to a code rather than a dead link", async () => {
+    await onboardedTelegramUser();
+
+    const reply = await linkCommand({ channel: "telegram", accountId: TG }, "discord");
+
+    expect(reply).toContain("isn't configured");
+    expect(reply).toContain("/link");
+  });
+
+  test("a state minted on Discord links a Telegram account — the reverse direction", async () => {
+    const { userId } = await resolveUser("discord", "1234567890123456789");
+    await initialize(userId, {
+      risk_label: "moderate",
+      per_action_limit_usd: 50,
+      daily_limit_usd: 100,
+    });
+
+    const { state } = await mintLinkState(userId, "discord");
+    // What `t.me/<bot>?start=<state>` delivers to `bot.start` as a payload.
+    const result = await redeemLinkState(state, "telegram", TG);
+
+    expect(result).toMatchObject({ ok: true, mintedOn: "discord" });
+    expect(await resolveExisting("telegram", TG)).toBe(userId);
+  });
+
+  test("/link mcp still mints a token, not a one-click link", async () => {
+    await onboardedTelegramUser();
+    registerStartLink("discord", (state) => `https://ward.example/link/discord/${state}`);
+
+    const reply = await linkCommand({ channel: "telegram", accountId: TG }, "mcp");
+
+    expect(reply).toContain("WARD_USER_TOKEN=");
+  });
+});
+
+describe("the mint reply points at the other app", () => {
+  test("includes a running channel's DM link", async () => {
+    await onboardedTelegramUser();
+    registerDmLink("discord", "https://discord.com/users/1545878650518511640");
+
+    const reply = await linkCommand({ channel: "telegram", accountId: TG }, "");
+
+    expect(reply).toContain("https://discord.com/users/1545878650518511640");
+    expect(reply).toContain("Discord");
+    expect(reply).toMatch(/WARD-[2-9A-HJ-NP-TV-Z]{4}-[2-9A-HJ-NP-TV-Z]{4}/);
+  });
+
+  test("omits the channel it was minted on, and any channel that is not running", async () => {
+    await onboardedTelegramUser();
+    registerDmLink("telegram", "https://t.me/WardLen3bot");
+
+    const reply = await linkCommand({ channel: "telegram", accountId: TG }, "");
+
+    expect(reply).not.toContain("https://t.me/WardLen3bot");
+    expect(reply).not.toContain("discord.com");
+  });
+});
 
 describe("code shape", () => {
   test("is transcribable — no 0/O, 1/I/L or U", async () => {

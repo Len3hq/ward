@@ -4,6 +4,11 @@ import { backend } from "./backend.ts";
 import {
   accountIdSchema,
   accountIndexSchema,
+  evmAddressSchema,
+  ownerIndexSchema,
+  verifiedOwnerSchema,
+  type OwnerIndex,
+  type VerifiedOwner,
   acpJobInputSchema,
   channelSchema,
   initializeInputSchema,
@@ -62,6 +67,8 @@ const AUTHORIZATION = "ward.authorization";
 const WALLET = "ward.wallet";
 const IDENTITY = "ward.identity";
 const ACCOUNTS = "ward.accounts";
+const OWNER = "ward.owner";
+const OWNERS = "ward.owners";
 
 // --- helpers ---
 
@@ -439,6 +446,71 @@ export async function forgetIdentity(
   });
 }
 
+// --- verified wallet owners (Phase 14) ---
+
+/**
+ * Whose Ward is this address? `null` when nobody has proved control of it.
+ *
+ * The forward index is what makes wallet linking a recovery path: it resolves a
+ * principal from a signature alone, without the user reaching any chat account.
+ */
+export async function readOwner(address: string): Promise<VerifiedOwner | null> {
+  const key = evmAddressSchema.parse(address);
+  const raw = await backend().getEntity(OWNER, key);
+  if (raw === null || raw === undefined) return null;
+  return verifiedOwnerSchema.parse(raw);
+}
+
+/** Every address this principal has proved control of. */
+export async function readOwners(userId: string): Promise<OwnerIndex["owners"]> {
+  const raw = await backend().getEntity(OWNERS, normalizeUserId(userId));
+  if (raw === null || raw === undefined) return [];
+  return ownerIndexSchema.parse(raw).owners;
+}
+
+/**
+ * Record a proved address. Forward entry written **last**, for the same reason as
+ * `writeIdentity`: a crash leaves the address unresolved rather than resolving to a
+ * half-built record.
+ */
+export async function writeOwner(userId: string, address: string): Promise<VerifiedOwner> {
+  const id = normalizeUserId(userId);
+  const owner: VerifiedOwner = verifiedOwnerSchema.parse({
+    ward_user_id: id,
+    address,
+    verified_at: nowIso(),
+  });
+
+  return withLock(id, async () => {
+    const owners = await readOwners(id);
+    const index: OwnerIndex = ownerIndexSchema.parse({
+      ward_user_id: id,
+      owners: [
+        ...owners.filter((o) => o.address !== owner.address),
+        { address: owner.address, verified_at: owner.verified_at },
+      ],
+    });
+    await backend().putEntity(OWNERS, id, index);
+    await backend().putEntity(OWNER, owner.address, owner);
+    return owner;
+  });
+}
+
+/** Forget a proved address — "this wallet can no longer reach my Ward". */
+export async function forgetOwner(userId: string, address: string): Promise<void> {
+  const id = normalizeUserId(userId);
+  const key = evmAddressSchema.parse(address);
+  await withLock(id, async () => {
+    await backend().forgetEntity(OWNER, key, "owner revoked");
+    const owners = await readOwners(id);
+    const index: OwnerIndex = ownerIndexSchema.parse({
+      ward_user_id: id,
+      owners: owners.filter((o) => o.address !== key),
+    });
+    await backend().putEntity(OWNERS, id, index);
+  });
+}
+
 // --- link codes + rate limits (Sibyl Memory HOT state) ---
 
 /**
@@ -452,6 +524,12 @@ const linkCodeSchema = z.object({
   ward_user_id: wardUserIdSchema,
   /** Where it was minted — shown to the redeemer so a wrong-account link is obvious. */
   minted_on: channelSchema,
+  /**
+   * The account that minted it. A wallet signature (Phase 14) identifies a
+   * principal but not a chat account, so the account to attach has to come from
+   * here. Nullable, and defaulted, so codes written before Phase 14 still parse.
+   */
+  minted_by: z.string().nullable().default(null),
   minted_at: isoDatetimeString,
   expires_at: isoDatetimeString,
   /** Set on redemption. Present = burnt; a second attempt is refused, not ignored. */

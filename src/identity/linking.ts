@@ -1,4 +1,4 @@
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 
 import {
   appendJournalEvent,
@@ -10,6 +10,8 @@ import {
   writeLinkCode,
   writeRateWindow,
   type Channel,
+  type LinkCode,
+  type LinkMethod,
 } from "../../memory/index.ts";
 import { accountsFor, link, resolveExisting } from "./index.ts";
 
@@ -96,6 +98,24 @@ function hashCode(normalized: string): string {
   return createHash("sha256").update(`ward-link:${normalized}`).digest("hex");
 }
 
+/**
+ * The OAuth2 `state` (Phase 15.2) is the same object as a link code wearing
+ * different clothes: a nonce bound to one principal, single-use, same 5-minute TTL,
+ * same rate limit, redeemed through the same rebind/refuse rules. It is stored
+ * under its own hash namespace so a state can never be typed in as a code, or
+ * vice versa.
+ *
+ * Where it differs: nobody transcribes it, so it is 256 bits of URL-safe base64
+ * rather than eight readable characters — brute force is not a threat model here,
+ * and the browser carries it.
+ */
+const STATE_BYTES = 32;
+const STATE_SHAPE = /^[A-Za-z0-9_-]{16,}$/;
+
+function hashState(state: string): string {
+  return createHash("sha256").update(`ward-oauth:${state}`).digest("hex");
+}
+
 // --- rate limiting ---
 
 async function hitRateLimit(scope: string, limit: number, now: Date): Promise<boolean> {
@@ -141,6 +161,8 @@ export async function mintLinkCode(
   userId: string,
   mintedOn: Channel,
   now: Date = new Date(),
+  /** The account that asked. Phase 14 needs it: a signature names a principal, not a chat account. */
+  mintedBy: string | null = null,
 ): Promise<MintedCode> {
   if (await hitRateLimit(mintScope(userId), MINTS_PER_HOUR, now)) {
     throw new RateLimited(
@@ -153,6 +175,7 @@ export async function mintLinkCode(
   await writeLinkCode(hashCode(raw), {
     ward_user_id: userId,
     minted_on: mintedOn,
+    minted_by: mintedBy,
     minted_at: now.toISOString(),
     expires_at: expiresAt.toISOString(),
     used_at: null,
@@ -160,6 +183,45 @@ export async function mintLinkCode(
   });
 
   return { code: formatCode(raw), expiresAt };
+}
+
+export interface MintedState {
+  /** Goes in the OAuth2 URL. Never persisted — only its hash is. */
+  state: string;
+  expiresAt: Date;
+}
+
+/**
+ * Mint an OAuth2 `state` for `userId`. Same trust assumption as `mintLinkCode`: the
+ * caller has already established that the requester controls an account belonging
+ * to that principal, which is why this is only reached from an authenticated DM.
+ */
+export async function mintLinkState(
+  userId: string,
+  mintedOn: Channel,
+  now: Date = new Date(),
+  /** The account that asked. Phase 14 needs it: a signature names a principal, not a chat account. */
+  mintedBy: string | null = null,
+): Promise<MintedState> {
+  if (await hitRateLimit(mintScope(userId), MINTS_PER_HOUR, now)) {
+    throw new RateLimited(
+      `You've asked for ${MINTS_PER_HOUR} link codes in the last hour — try again later.`,
+    );
+  }
+
+  const state = randomBytes(STATE_BYTES).toString("base64url");
+  const expiresAt = new Date(now.getTime() + CODE_TTL_MS);
+  await writeLinkCode(hashState(state), {
+    ward_user_id: userId,
+    minted_on: mintedOn,
+    minted_by: mintedBy,
+    minted_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    used_at: null,
+    used_by: null,
+  });
+
+  return { state, expiresAt };
 }
 
 // --- redeem ---
@@ -197,45 +259,104 @@ export async function redeemLinkCode(
     };
   }
 
-  const hash = hashCode(normalized);
+  return redeemHashed(hashCode(normalized), "code", channel, accountId, now);
+}
+
+/**
+ * Redeem an OAuth2 `state` — the Phase 15.2 path, where the account id comes back
+ * verified from Discord instead of being typed by a human.
+ *
+ * Everything after the lookup is `redeemLinkCode`'s logic verbatim, deliberately:
+ * the rebind-or-refuse rule is the security-critical part, and a second copy of it
+ * is a second thing to get wrong.
+ */
+export async function redeemLinkState(
+  state: string,
+  channel: Channel,
+  accountId: string,
+  now: Date = new Date(),
+): Promise<RedeemResult> {
+  if (await hitRateLimit(redeemScope(channel, accountId), REDEEM_ATTEMPTS_PER_HOUR, now)) {
+    return {
+      ok: false,
+      reason: "rate_limited",
+      message: `Too many link attempts from this account. Try again in an hour.`,
+    };
+  }
+  if (!STATE_SHAPE.test(state)) {
+    return { ok: false, reason: "malformed", message: "That link is malformed." };
+  }
+  return redeemHashed(hashState(state), "link", channel, accountId, now);
+}
+
+/**
+ * Look at a state without spending it — Phase 14 has to verify a signature *before*
+ * burning, so a fumbled signing prompt doesn't cost the user their link. Returns
+ * `null` for anything not currently redeemable (unknown, burnt or expired), which is
+ * all the caller needs to know.
+ */
+export async function readLinkState(
+  state: string,
+  now: Date = new Date(),
+): Promise<LinkCode | null> {
+  if (!STATE_SHAPE.test(state)) return null;
+  const record = await readLinkCode(hashState(state));
+  if (record === null) return null;
+  if (record.used_at !== null) return null;
+  if (Date.parse(record.expires_at) <= now.getTime()) return null;
+  return record;
+}
+
+/** Spend a state. Idempotent by the `used_at` check every reader already makes. */
+export async function burnLinkState(
+  state: string,
+  usedBy: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const hash = hashState(state);
+  const record = await readLinkCode(hash);
+  if (record === null) return;
+  await writeLinkCode(hash, { ...record, used_at: now.toISOString(), used_by: usedBy });
+}
+
+async function redeemHashed(
+  hash: string,
+  kind: "code" | "link",
+  channel: Channel,
+  accountId: string,
+  now: Date,
+): Promise<RedeemResult> {
   const record = await readLinkCode(hash);
   if (record === null) {
-    return { ok: false, reason: "unknown", message: "I don't know that code." };
+    return {
+      ok: false,
+      reason: "unknown",
+      message: kind === "code" ? "I don't know that code." : "I don't know that link.",
+    };
   }
   if (record.used_at !== null) {
     return {
       ok: false,
       reason: "already_used",
-      message: "That code has already been used. Link codes work exactly once — mint a new one.",
+      message:
+        kind === "code"
+          ? "That code has already been used. Link codes work exactly once — mint a new one."
+          : "That link has already been used. Ask for a fresh one with /link discord.",
     };
   }
   if (Date.parse(record.expires_at) <= now.getTime()) {
     return {
       ok: false,
       reason: "expired",
-      message: "That code has expired. Mint a fresh one with /link and use it within 5 minutes.",
+      message:
+        kind === "code"
+          ? "That code has expired. Mint a fresh one with /link and use it within 5 minutes."
+          : "That link has expired. Ask for a fresh one with /link discord and use it within 5 minutes.",
     };
   }
 
-  const current = await resolveExisting(channel, accountId);
-  let rebound = false;
-  if (current !== null && current !== record.ward_user_id) {
-    const [existingAuth, existingWallet] = await Promise.all([
-      read(current).catch(() => null),
-      readWallet(current).catch(() => null),
-    ]);
-    if (existingAuth !== null || existingWallet !== null) {
-      return {
-        ok: false,
-        reason: "belongs_to_other_principal",
-        message:
-          "This account already has its own Ward authorization — with its own limits and " +
-          "spend history. I won't merge two records into one. Delete this account's " +
-          "authorization first if you meant to move it.",
-      };
-    }
-    rebound = true; // an empty shell principal; nothing to lose
-  }
+  const claimable = await canClaim(record.ward_user_id, channel, accountId);
+  if (!claimable.ok) return claimable;
 
   // Burn first. A crash after this point costs the user a code, which they can mint
   // again; burning after the link would leave a live code that already worked.
@@ -245,24 +366,80 @@ export async function redeemLinkCode(
     used_by: `${channel}:${accountId}`,
   });
 
+  await claimAccount(record.ward_user_id, channel, accountId, "link_code", claimable.rebound);
+
+  return {
+    ok: true,
+    userId: record.ward_user_id,
+    mintedOn: record.minted_on,
+    rebound: claimable.rebound,
+  };
+}
+
+/**
+ * May `targetUserId` take over `channel:accountId`?
+ *
+ * The interesting case is an account that already resolves to a *different*
+ * principal. Usually that principal is an empty shell — someone said "hi" on Discord
+ * before linking, which minted one — and rebinding it loses nothing. But once it has
+ * an authorization record or a wallet, rebinding would silently merge two spend
+ * ledgers and two revocation logs into one, so it is refused outright.
+ *
+ * Split out from the redeem path because Phase 14 reaches it by a completely
+ * different route — a wallet signature rather than a code — and this rule is the one
+ * thing that must not have two implementations.
+ */
+export async function canClaim(
+  targetUserId: string,
+  channel: Channel,
+  accountId: string,
+): Promise<{ ok: true; rebound: boolean } | { ok: false; reason: RedeemFailure; message: string }> {
+  const current = await resolveExisting(channel, accountId);
+  if (current === null || current === targetUserId) return { ok: true, rebound: false };
+
+  const [existingAuth, existingWallet] = await Promise.all([
+    read(current).catch(() => null),
+    readWallet(current).catch(() => null),
+  ]);
+  if (existingAuth !== null || existingWallet !== null) {
+    return {
+      ok: false,
+      reason: "belongs_to_other_principal",
+      message:
+        "This account already has its own Ward authorization — with its own limits and " +
+        "spend history. I won't merge two records into one. Delete this account's " +
+        "authorization first if you meant to move it.",
+    };
+  }
+  return { ok: true, rebound: true };
+}
+
+/** Perform a claim `canClaim` has already approved. */
+export async function claimAccount(
+  targetUserId: string,
+  channel: Channel,
+  accountId: string,
+  via: LinkMethod,
+  rebound: boolean,
+): Promise<void> {
   if (rebound) {
     // Detach the empty shell so `link` sees an unclaimed account. This uses the
     // store's `forgetIdentity` rather than `unlink`, which would refuse to remove a
     // principal's last account — here that refusal is exactly wrong, since the
     // principal being emptied has nothing worth keeping a route to.
-    await forgetIdentity(current!, channel, accountId);
-    await appendJournalEvent(
-      current!,
-      "identity_unlink",
-      `released ${channel}:${accountId} to ${record.ward_user_id} (empty principal)`,
-      { channel, account_id: accountId, released_to: record.ward_user_id },
-      channel,
-    );
+    const current = await resolveExisting(channel, accountId);
+    if (current !== null && current !== targetUserId) {
+      await forgetIdentity(current, channel, accountId);
+      await appendJournalEvent(
+        current,
+        "identity_unlink",
+        `released ${channel}:${accountId} to ${targetUserId} (empty principal)`,
+        { channel, account_id: accountId, released_to: targetUserId },
+        channel,
+      );
+    }
   }
-
-  await link(record.ward_user_id, channel, accountId, "link_code");
-
-  return { ok: true, userId: record.ward_user_id, mintedOn: record.minted_on, rebound };
+  await link(targetUserId, channel, accountId, via);
 }
 
 /** Every account attached to `userId` except the one that just acted. */

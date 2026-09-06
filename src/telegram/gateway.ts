@@ -5,8 +5,9 @@ import { BRAND } from "../config.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel } from "../gateway/channels.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
-import { linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
+import { announceLink, linkCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
+import { redeemLinkState } from "../identity/linking.ts";
 
 /**
  * Telegram gateway. Adapted from Len3's `gateways/telegram.ts` — Telegraf
@@ -77,11 +78,36 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     },
   });
 
-  bot.start((ctx) =>
-    ctx.reply(
-      `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`,
-    ),
-  );
+  /**
+   * `/start` — and, when it carries a payload, the Telegram half of one-click
+   * linking (Phase 15.3).
+   *
+   * A `t.me/<bot>?start=<state>` link delivers the state as a start payload, so
+   * Telegram does for free what Discord needs an OAuth2 round trip for: the user
+   * clicks once and never transcribes anything. The payload is a link `state` with
+   * every property a code has — single use, five minutes, rate limited — and, like
+   * a code, it arrives as a command argument and never from model output.
+   */
+  bot.start(async (ctx) => {
+    const payload = ctx.payload.trim();
+    if (payload.length === 0) {
+      await ctx.reply(
+        `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`,
+      );
+      return;
+    }
+
+    const accountId = String(ctx.from.id);
+    const result = await redeemLinkState(payload, "telegram", accountId);
+    if (!result.ok) {
+      await ctx.reply(result.message);
+      return;
+    }
+    await ctx.reply(
+      `${await announceLink(result, "telegram", accountId)}\n\n` +
+        `You can talk to me right here. Try: "what am I allowed to do?"`,
+    );
+  });
 
   bot.help((ctx) =>
     ctx.reply(
@@ -89,9 +115,12 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
         "/newsession — start a fresh conversation (your authorization in Sibyl Memory is unchanged)",
         "/defaultsession — go back to your default conversation",
         "",
-        "/link — get a code to reach this same Ward from another app",
+        "/link <channel> — one-click link to another app (telegram, discord)",
+        "/link wallet — verify a wallet you control, as a way back in if you lose this account",
+        "/link — get a code to type in by hand instead",
         "/link <code> — redeem a code minted somewhere else",
         "/unlink <channel> — detach an app from your Ward",
+        "/unlink wallet <address> — drop a verified wallet",
         "/whoami — which accounts share your authorization",
         "",
         "Otherwise just talk to me: onboarding, your limits, or a trade.",

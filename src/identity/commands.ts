@@ -1,14 +1,23 @@
-import { channelSchema, type Channel } from "../../memory/index.ts";
-import { notifyAccount } from "../gateway/channels.ts";
+import { CHANNELS, channelSchema, type Channel } from "../../memory/index.ts";
+import {
+  dmLink,
+  hasStartLink,
+  notifyAccount,
+  startLink,
+  type LinkTarget,
+} from "../gateway/channels.ts";
 import { issueToken, revokeAllTokens, tokenCount } from "../mcp/token.ts";
 import { accountsFor, resolveUser, unlink } from "./index.ts";
+import { ownersFor, revokeOwner } from "./wallet.ts";
 import {
   CODE_TTL_MS,
   consumeMintAllowance,
   mintLinkCode,
+  mintLinkState,
   otherAccounts,
   RateLimited,
   redeemLinkCode,
+  type RedeemResult,
 } from "./linking.ts";
 
 /**
@@ -31,6 +40,14 @@ export interface CommandContext {
 
 const MINUTES = Math.round(CODE_TTL_MS / 60000);
 
+/** How each channel is named to a human. */
+const TITLE: Record<LinkTarget, string> = {
+  telegram: "Telegram",
+  discord: "Discord",
+  mcp: "your MCP client",
+  wallet: "your wallet",
+};
+
 /**
  * `/link` — no argument mints a code for another chat app; `mcp` mints a bearer
  * token for an MCP client; anything else is treated as a code to redeem.
@@ -42,7 +59,51 @@ const MINUTES = Math.round(CODE_TTL_MS / 60000);
 export async function linkCommand(ctx: CommandContext, argument: string): Promise<string> {
   const arg = argument.trim();
   if (arg.toLowerCase() === "mcp") return mintMcpToken(ctx);
+  // A channel name, not a code: codes are eight characters from an alphabet with no
+  // lowercase, so `/link discord` and `/link WARD-ABCD-EFGH` can never be confused.
+  if (arg.toLowerCase() === "wallet") return mintOneClick(ctx, "wallet");
+  const target = channelSchema.safeParse(arg.toLowerCase());
+  if (target.success && target.data !== ctx.channel && target.data !== "mcp") {
+    return mintOneClick(ctx, target.data);
+  }
   return arg.length > 0 ? redeem(ctx, arg) : mint(ctx);
+}
+
+/**
+ * `/link <channel>` — the one-click path (Phase 15.2 for Discord, 15.3 for
+ * Telegram). The target channel carries the state for the user, so nothing is
+ * transcribed and no bot has to be found by hand.
+ *
+ * How it carries it is the channel's business, not this function's: Discord does an
+ * OAuth2 round trip through Ward's callback, Telegram uses a `?start=` deep link and
+ * no server at all. Both register a builder; an unregistered channel simply has no
+ * one-click route here and falls back to a code.
+ */
+async function mintOneClick(ctx: CommandContext, target: LinkTarget): Promise<string> {
+  if (!hasStartLink(target)) {
+    return (
+      `One-click ${TITLE[target]} linking isn't configured on this deployment. ` +
+      'Use "/link" for a code instead.'
+    );
+  }
+
+  const { userId } = await resolveUser(ctx.channel, ctx.accountId);
+  try {
+    const { state } = await mintLinkState(userId, ctx.channel, new Date(), ctx.accountId);
+    return [
+      target === "wallet"
+        ? "Verify a wallet you control — it becomes a way back into this Ward if you ever lose this chat account:"
+        : `Connect ${TITLE[target]} in one click:`,
+      "",
+      startLink(target, state)!,
+      "",
+      `Open it and I'll pick up from there — same limits, same spend history, same wallet. ` +
+        `It works once, within ${MINUTES} minutes.`,
+    ].join("\n");
+  } catch (error) {
+    if (error instanceof RateLimited) return error.message;
+    throw error;
+  }
 }
 
 /**
@@ -82,13 +143,30 @@ async function mint(ctx: CommandContext): Promise<string> {
   const { userId } = await resolveUser(ctx.channel, ctx.accountId);
   try {
     const { code } = await mintLinkCode(userId, ctx.channel);
+    // "Now go find me in the other app" was the step people stalled on, so hand
+    // over the door as well as the key. Only channels that are actually running
+    // register a link, so this stays empty rather than wrong.
+    const oneClick = CHANNELS.filter((c) => c !== ctx.channel && c !== "mcp" && hasStartLink(c));
+    const doors = CHANNELS.filter((c) => c !== ctx.channel)
+      .map((c) => [c, dmLink(c)] as const)
+      .filter((entry): entry is readonly [Channel, string] => entry[1] !== undefined)
+      .map(([c, url]) => `Open ${TITLE[c]} and message me: ${url}`);
+
     return [
       `Your link code is ${code}`,
       "",
-      `Send "/link ${code}" from the other app within ${MINUTES} minutes and it will reach ` +
+      ...(doors.length > 0 ? [...doors, ""] : []),
+      `Send "/link ${code}" there within ${MINUTES} minutes and it will reach ` +
         `this same Ward — same limits, same spend history, same wallet.`,
       "",
       "It works once. Don't paste it anywhere but the app you're linking.",
+      ...(oneClick.length > 0
+        ? [
+            `\nOr skip the typing entirely: ${oneClick
+              .map((c) => `"/link ${c}"`)
+              .join(" or ")} gives you a one-click link.`,
+          ]
+        : []),
     ].join("\n");
   } catch (error) {
     if (error instanceof RateLimited) return error.message;
@@ -99,13 +177,26 @@ async function mint(ctx: CommandContext): Promise<string> {
 async function redeem(ctx: CommandContext, code: string): Promise<string> {
   const result = await redeemLinkCode(code, ctx.channel, ctx.accountId);
   if (!result.ok) return result.message;
+  return announceLink(result, ctx.channel, ctx.accountId);
+}
 
-  // The phishing backstop: tell every other account this just happened.
-  const others = await otherAccounts(result.userId, ctx.channel, ctx.accountId);
+/**
+ * The phishing backstop, and the sentence the newly linked account reads.
+ *
+ * Exported because the OAuth2 callback (Phase 15.2) links a Discord account without
+ * any chat command being typed — and an account linked through a browser needs the
+ * announcement *more*, not less, since the user never saw a code.
+ */
+export async function announceLink(
+  result: Extract<RedeemResult, { ok: true }>,
+  channel: Channel,
+  accountId: string,
+): Promise<string> {
+  const others = await otherAccounts(result.userId, channel, accountId);
   const announcement =
-    `A ${ctx.channel} account (${ctx.accountId}) was just linked to your Ward. ` +
+    `A ${channel} account (${accountId}) was just linked to your Ward. ` +
     `It can now see your limits and spend history, and act within them.\n\n` +
-    `If that wasn't you, send "/unlink ${ctx.channel}" right now.`;
+    `If that wasn't you, send "/unlink ${channel}" right now.`;
 
   const unreached: string[] = [];
   for (const account of others) {
@@ -114,7 +205,7 @@ async function redeem(ctx: CommandContext, code: string): Promise<string> {
   }
 
   return [
-    `Linked. This ${ctx.channel} account now reaches the Ward you set up on ${result.mintedOn}.`,
+    `Linked. This ${channel} account now reaches the Ward you set up on ${result.mintedOn}.`,
     result.rebound
       ? "(This account had an empty Ward with no authorization on it — nothing was lost.)"
       : "",
@@ -130,6 +221,22 @@ async function redeem(ctx: CommandContext, code: string): Promise<string> {
 export async function unlinkCommand(ctx: CommandContext, argument: string): Promise<string> {
   const { userId } = await resolveUser(ctx.channel, ctx.accountId);
   const accounts = await accountsFor(userId);
+
+  // `/unlink wallet <address>` — drop a recovery credential, not a channel.
+  const wallet = /^wallet\s+(\S+)$/i.exec(argument.trim());
+  if (wallet) {
+    const removed = await revokeOwner(userId, wallet[1]!, ctx.channel);
+    return removed
+      ? `Removed wallet ${wallet[1]!.toLowerCase()}. It can no longer reach this Ward.\n\n` +
+          "Your authorization in Sibyl Memory is unchanged."
+      : "That wallet isn't verified for this Ward.";
+  }
+  if (argument.trim().toLowerCase() === "wallet") {
+    const wallets = await ownersFor(userId);
+    return wallets.length === 0
+      ? "You have no verified wallets."
+      : `Which one? Say "/unlink wallet <address>". You have:\n${wallets.map((w) => `· ${w}`).join("\n")}`;
+  }
 
   const target = channelSchema.safeParse(argument.trim().toLowerCase());
   if (!target.success) {
@@ -184,11 +291,22 @@ export async function whoamiCommand(ctx: CommandContext): Promise<string> {
       return `· ${a.channel}:${a.account_id} (${a.linked_via.replace(/_/g, " ")})${here}`;
     });
 
+  // Verified wallets are listed apart from accounts on purpose: they are not a way
+  // to *talk* to Ward, they are a way back to it (Phase 14).
+  const wallets = await ownersFor(userId);
+
   return [
     `You are ${userId}.`,
     "",
     accounts.length > 1 ? "Linked accounts:" : "Linked account:",
     ...lines,
+    ...(wallets.length > 0
+      ? [
+          "",
+          "Verified wallets (recovery only — they cannot spend):",
+          ...wallets.map((w) => `· ${w}`),
+        ]
+      : []),
     "",
     "All of them share one authorization record — one set of limits, one daily cap, " +
       "one spend history. Add another with /link.",

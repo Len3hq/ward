@@ -111,26 +111,29 @@ ward: That's $70, over your $50 per-action limit. Lower the amount, or raise the
 Only if Discord is configured. This is the strongest single demonstration that
 **memory, not the chat surface, is the authorization substrate.**
 
-On Telegram, mint a link code:
+On Telegram, ask for the Discord link:
 
 ```
-you:  /link
-ward: Your link code is WARD-4K7M-2XQP
+you:  /link discord
+ward: Connect Discord in one click:
 
-      Send "/link WARD-4K7M-2XQP" from the other app within 5 minutes and it will
-      reach this same Ward — same limits, same spend history, same wallet.
+      https://<your-domain>/link/discord/kQ8w…
+
+      Open it and I'll pick up from there — same limits, same spend history, same
+      wallet. It works once, within 5 minutes.
 ```
 
-Switch to Discord — a _different app, different account, no shared login_ — and redeem:
-
-```
-you:  /link WARD-4K7M-2XQP
-ward: Linked. This discord account now reaches the Ward you set up on telegram.
-      I've told your other linked accounts, so you'd know if this wasn't you.
-```
+Tap it on camera. Discord's authorize screen appears, you approve, and the page says
+**Linked** — then cut to Discord, where the DM is _already waiting_. A different app,
+a different account, no shared login, and nothing typed.
 
 Cut back to Telegram for one second: the announcement is already there. Say
-_it tells the original account, so a stolen code can't be used quietly._
+_it tells the original account, so a stolen link can't be used quietly._
+
+> If one-click linking isn't configured on the machine you're demoing from
+> (`DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `WARD_PUBLIC_URL`), fall back to
+> `/link` for a code and redeem it with `/link WARD-4K7M-2XQP` in the Discord DM.
+> Same result, one more step on camera.
 
 Now, still on Discord, ask for more than what Beat 5 left:
 

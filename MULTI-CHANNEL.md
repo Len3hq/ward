@@ -477,25 +477,216 @@ Secret sweep re-run after adding the bearer-token system: clean.
 **Result:** 202 pass / 8 skip / 0 fail on `fs`, 206 / 4 / 0 against live
 `sibyl-memory-mcp`.
 
-### Phase 14 — Deferred: wallet-signature linking
+### Phase 14 — Wallet-signature linking — **DONE** (spec corrected)
 
-Replace (or add alongside) the code with a signed nonce from the smart account in
-`ward.wallet`. Strongest binding available, because it binds identity to the thing that
-holds the funds rather than to a chat account. Blocked on the browser sign-in page that
-Phase 4 already deferred.
+**The spec as written was not sound, and building it verbatim would have shipped
+security theatre.** It said: sign a nonce with the smart account in `ward.wallet`.
+But that smart account and its owner are both **CDP-managed** — Ward can produce a
+valid signature from that address at any time, for anybody. A signature from it
+proves nothing about the human in front of the browser.
+
+So what is proved instead is control of an address the **user** holds, in their own
+wallet, which is a real credential precisely because Ward cannot produce it. The
+address is an identity, never a source of funds: Ward's money stays in the CDP smart
+account and still moves only inside the Spend Permission.
+
+**Why it is worth having.** A link code can only be minted from a chat account you
+still control. Lose the Telegram account and there is no route back — the
+authorization record is intact and unreachable. `ward.owner/<address>` resolves a
+principal from a signature alone, so a verified wallet is a _recovery_ path. That is
+the whole phase; everything else is consequence.
+
+- **`/link wallet`** mints a state and returns a page URL. The page connects a
+  wallet, signs `challenge(state)`, and POSTs `{address, signature}` back. Verified
+  with viem's `verifyMessage` — EOA / EIP-191. Contract wallets (EIP-1271) would
+  need an RPC round trip and are not covered.
+- **The state is inside the signed message**, so a signature cannot be replayed
+  against a different link.
+- **A failed signature does not burn the state.** A fumbled wallet prompt should cost
+  nothing, so the state is read, the signature checked, and only then spent.
+- **Trust on first use, with a ceiling worth stating.** The first address a principal
+  proves is enrolled, on the strength of the DM the state was minted in — the same
+  assumption the link code rests on. After that a signature must match an address
+  already on file, so a stranger cannot quietly become a second owner. This is
+  exactly as strong as the DM it was set up from and no stronger: it does not upgrade
+  a compromised chat account into a secure one.
+- **Recovery goes through the same merge rule.** `canClaim` / `claimAccount` were
+  split out of the code path for this: an empty shell principal is rebound, a funded
+  one is refused. Two ways in, one rule.
+- **Every account on the record is told**, because a recovery credential enrolled
+  silently is precisely the attack. `/unlink wallet <address>` drops one; `/whoami`
+  lists them separately from accounts, since a wallet is a way _back to_ Ward and not
+  a way to talk to it.
+
+Storage mirrors identity exactly — forward `ward.owner/<address>` → principal,
+reverse `ward.owners/<userId>`, forward written last — because neither backend can
+list or query, and because a half-written owner should leave an address unresolved
+rather than resolving to a half-built record.
+
+Tests use real keys and real signatures (`test/identity.wallet.test.ts`): stubbing
+`verifyMessage` would be testing nothing. They cover enrollment, a wrong challenge, a
+mismatched key, garbage input, the second-wallet refusal, both recovery outcomes, the
+single-use and expiry rules, the no-burn-on-failure rule, and revocation.
+
+**Unproven until it meets a real wallet:** the browser half. `window.ethereum` and
+`personal_sign` are exercised by no test here — only what the server does with what
+they produce.
+
+### Phase 15.1 — Frictionless Discord onboarding — **DONE**
+
+Phases 9-13 made the _authorization_ cross channels correctly. They did not make
+**arriving** on a second channel pleasant: joining from Discord was five steps, one of
+which was an invisible trap.
+
+The comparison that prompted this was Len3, which links Discord in one click —
+`web/components/dashboard/ChatAppLinking.tsx` builds an OAuth2 URL with
+`scope=identify applications.commands` and `integration_type=1` (user install, so
+there is no server to invite a bot to), and `discord_gateway.py::_send_welcome_dm`
+then has the bot open the DM itself. That needs an HTTP surface Ward does not have;
+Phase 15.2 is where it would come from. 15.1 is everything that does **not** need one.
+
+**The trap, and why it deserved a phase.** `resolveUser` mints a principal on first
+contact. So a Discord account that simply said "hi" became a _second_ Ward — and the
+punishment arrived one step later, when `/link` refused its code, because moving a
+principal that already holds an authorization record is a silent ledger merge
+(Phase 10's rule, and the right one). The mistake and the error were in different
+places, which is what made it invisible.
+
+- **Nothing is minted until the account says which it is.** An unknown Discord
+  account gets a first-contact prompt offering the two real options — link an
+  existing Ward, or `set me up` for a new one — and `resolveExisting` (not
+  `resolveUser`) is what decides. The opt-in phrase is matched by `OPT_IN`, so
+  ordinary conversation cannot start an accidental second Ward. Stateless: any
+  non-opt-in message from an unknown account gets the prompt again.
+- **Registered slash commands.** `SLASH_COMMANDS` is set on `ClientReady`, so
+  Discord's client autocompletes `/link` instead of matching nothing and fighting
+  the user. Registration is **best-effort and must stay that way** — the typed-text
+  path is the guaranteed one, and a missing `applications.commands` scope or a
+  propagation delay must not take the gateway down. Both front doors run through one
+  `runCommand`, so a link code is still read from a command argument and nowhere
+  else.
+- **This keeps Ward off the privileged Message Content intent.** Len3 requires it;
+  Ward does not, because interactions are not message content and Discord exempts
+  DMs. Do not trade that away for convenience.
+- **A minted code now ships with the door as well as the key.** `registerDmLink`
+  records where each running gateway can be reached — Discord from `ClientReady`,
+  Telegram from the `getMe` that `src/index.ts` already pays for — and `/link` lists
+  every channel _except_ the one it was minted on. Only running channels register,
+  so the reply is never a link to a bot that isn't there.
+
+Five steps become three, and the trap is gone. Tests: first-contact opt-in matching
+and the slash-command payload in `test/discord.gateway.test.ts`; the deep-link reply
+(and its omissions) in `test/identity.linking.test.ts`.
+
+### Phase 15.2 — OAuth2 identify + user install — **DONE**
+
+The rest of the Len3 mechanism. Discord returns the account id itself, so nothing is
+transcribed, and `integration_type=1` installs the app to the **user** — there is no
+server to invite a bot to, and it is what makes the welcome DM deliverable.
+
+**`/link discord` on Telegram** hands back one URL. Open it, authorize, and Ward DMs
+you on Discord already knowing your caps.
+
+**The `state` is a link code wearing different clothes.** This was the design call
+worth making carefully: an OAuth state is a nonce bound to one principal, single-use,
+short-lived — which is precisely `linking.ts`. So `mintLinkState` / `redeemLinkState`
+reuse the same storage, the same 5-minute TTL, the same mint and redeem rate limits,
+and — critically — the same `redeemHashed` core, so the rebind-or-refuse rule that
+protects two funded principals from being merged has exactly one implementation.
+What differs is only what a human does with it: nobody transcribes a state, so it is
+256 bits of URL-safe base64 rather than eight readable characters. Separate hash
+namespaces (`ward-link:` vs `ward-oauth:`) mean a state can never be typed in as a
+code, or the reverse — asserted by test.
+
+**What the HTTP surface is not.** `src/http/server.ts` has three routes: a redirect,
+a callback, and `/healthz`. There is no read route and no write route. The only state
+it can change is "this Discord account belongs to that principal", and only on
+presentation of a state Ward minted, inside an authenticated DM, less than five
+minutes earlier. It starts **only** when `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`
+and `WARD_PUBLIC_URL` are all set; without them Ward serves no HTTP at all and the
+code flow is the only route.
+
+Three rules the callback follows, each for a reason:
+
+- **Render, never redirect onward.** A 302 would leak the state in a `Referer`, and
+  the state is the credential until it is burnt.
+- **Announce anyway.** An account linked in a browser needs the phishing backstop
+  _more_ than one that typed a code, not less — the same `announceLink` runs, so
+  every other account still hears about it and `/unlink discord` is still one message
+  away.
+- **`no-store` on every response**, so a shared browser cannot show the next person a
+  page naming someone's Ward.
+
+**Operator setup:** Developer Portal → OAuth2 → register redirect
+`<WARD_PUBLIC_URL>/link/discord/callback`; generate a Railway domain; set the three
+variables. `PORT` is injected by Railway.
+
+**Still unproven, and it is the one thing that matters:** whether the bot can open a
+DM to someone who user-installed the app but shares no guild. Len3 ships
+`_send_welcome_dm` immediately after OAuth so it works there, but Len3's bot may also
+share a guild with the user. If it turns out not to work, the link itself is still
+correct and complete — only the welcome DM is lost, and the user opens the DM
+themselves as in 15.1. Nothing else in the phase depends on it.
+
+**This unblocks Phase 14.** Wallet-signature linking was deferred for want of a
+browser page. There is now a server to hang one on.
+
+Two claims that changed with this phase, stated rather than glossed: the README's
+"no backend" becomes _one process, no database, one public callback_, and an OAuth
+client secret joins the threat model.
+
+### Phase 15.3 — Symmetry: one click in both directions — **DONE**
+
+15.2 made _arriving on Discord_ one click. Arriving on **Telegram** was still a code,
+which left the flow lopsided: a user who starts on Discord — the one most likely to
+be new — got the worse half.
+
+**Telegram needs no OAuth and no server.** A `t.me/<bot>?start=<state>` deep link
+delivers the state to `bot.start` as a payload, so the whole 15.2 round trip
+collapses into a URL. The payload is a link `state` with every property a code has —
+single use, five minutes, rate limited — and, like a code, it arrives as a command
+argument and never from model output, so the injection rule from Phase 10 still
+holds. Telegram caps a start payload at 64 characters; a 32-byte state is 43 in
+base64url, which is asserted by test rather than assumed.
+
+**The command layer no longer knows how any of it works.** `registerStartLink`
+takes a builder per channel, registered by whatever actually knows the URL — the
+Telegram username after `getMe`, the Discord one when the callback server starts. So
+`/link <channel>` is one code path for both, `mintDiscordLink` is gone, and an
+unregistered channel falls back to a code instead of offering a link that goes
+nowhere. Adding WhatsApp later means registering a builder, not editing `linkCommand`.
+
+The asymmetry that remains is real and worth stating: Discord's route needs an OAuth
+app, a client secret and a public URL, while Telegram's needs nothing at all. That is
+a fact about the two platforms, not a gap in Ward.
+
+Both `/help` texts and the Discord slash-command description now lead with
+`/link <channel>` and offer the code as the fallback, which is the right order — the
+code path is what you use when one-click isn't configured, not the default.
+
+`DEMO.md` Beat 5b is rewritten around the tap: authorize, the page says **Linked**,
+and cutting to Discord the DM is already waiting. It keeps the code flow as a
+documented fallback for a machine where OAuth isn't configured, so the beat can
+always be shot.
 
 ---
 
 ## 6. Risks
 
-| Risk                                                                                                                                  | Mitigation                                                                                                                                                                 |
-| ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Discord snowflakes pass the `^\d+$` telegram-id regex and alias onto a real record                                                    | Opaque non-numeric `WardUserId`; channel-prefixed `ward.identity` names; regex tightened in Phase 9                                                                        |
-| Migration is not idempotent → duplicate principals or a half-copied record                                                            | Migration writes the link entity **last**; re-running finds it and no-ops; journal every move                                                                              |
-| Social-engineered link code                                                                                                           | Short TTL + single use + rate limit + **origin-channel notification** so the real owner always sees it                                                                     |
-| Prompt injection links an attacker's account                                                                                          | Link codes parsed only as slash-command arguments, before the guard, never from LLM or fetched content                                                                     |
-| A pending confirmation is answered on the wrong channel, or lost on restart                                                           | Confirmations are channel-local by design; persist the pending intent so a restart doesn't strand it                                                                       |
-| Discord buttons clicked by a bystander                                                                                                | DM-only, plus explicit `interaction.user.id` check against the raising principal                                                                                           |
-| A leaked MCP token moves money                                                                                                        | MCP cannot confirm — every spend bounces to a human channel                                                                                                                |
-| 176 `tgId` references across 27 files make Phase 9 a large mechanical diff                                                            | Phase 9 ships alone, rename-only, with the existing suite as the regression proof — **done**, 117→137 tests, none lost                                                     |
-| Rekeying identity changes the derived CDP account name, so a migrated user's smart-account address moves and their funds are stranded | `ward.wallet.account_key` is pinned at connect and preserved verbatim by migration; the provider takes an `accountKey`, never a principal — **found and fixed in Phase 9** |
+| Risk                                                                                                                                  | Mitigation                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Discord snowflakes pass the `^\d+$` telegram-id regex and alias onto a real record                                                    | Opaque non-numeric `WardUserId`; channel-prefixed `ward.identity` names; regex tightened in Phase 9                                                                               |
+| Migration is not idempotent → duplicate principals or a half-copied record                                                            | Migration writes the link entity **last**; re-running finds it and no-ops; journal every move                                                                                     |
+| Social-engineered link code                                                                                                           | Short TTL + single use + rate limit + **origin-channel notification** so the real owner always sees it                                                                            |
+| Prompt injection links an attacker's account                                                                                          | Link codes parsed only as slash-command arguments, before the guard, never from LLM or fetched content                                                                            |
+| A pending confirmation is answered on the wrong channel, or lost on restart                                                           | Confirmations are channel-local by design; persist the pending intent so a restart doesn't strand it                                                                              |
+| Discord buttons clicked by a bystander                                                                                                | DM-only, plus explicit `interaction.user.id` check against the raising principal                                                                                                  |
+| An unknown Discord account is minted a second principal just by talking, then refused its link code                                   | Phase 15.1: nothing is minted until the account opts in; `resolveExisting` decides, not `resolveUser`                                                                             |
+| Slash-command registration fails and takes the gateway with it                                                                        | Registration is best-effort and caught; the typed-text path is the guaranteed one                                                                                                 |
+| The OAuth callback becomes a way in                                                                                                   | Three routes, none of which read or write anything but one link; state is single-use, 5-minute, rate-limited, hash-stored; the server does not start unless explicitly configured |
+| A stolen one-click URL links an attacker's Discord                                                                                    | Same backstop as a stolen code — `announceLink` still fires on every other account, and a state burns on first use                                                                |
+| A verified wallet becomes a way to spend                                                                                              | It is an identity credential only — no code path reads `ward.owner` when deciding a spend; money still moves solely within the Spend Permission and the memory caps               |
+| A wallet is enrolled on someone's Ward without their knowledge                                                                        | Enrollment only from a state minted in an authenticated DM, only when the principal has no owner yet, and every linked account is notified                                        |
+| A leaked MCP token moves money                                                                                                        | MCP cannot confirm — every spend bounces to a human channel                                                                                                                       |
+| 176 `tgId` references across 27 files make Phase 9 a large mechanical diff                                                            | Phase 9 ships alone, rename-only, with the existing suite as the regression proof — **done**, 117→137 tests, none lost                                                            |
+| Rekeying identity changes the derived CDP account name, so a migrated user's smart-account address moves and their funds are stranded | `ward.wallet.account_key` is pinned at connect and preserved verbatim by migration; the provider takes an `accountKey`, never a principal — **found and fixed in Phase 9**        |

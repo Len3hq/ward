@@ -2,7 +2,9 @@ import { resetBackend } from "../memory/index.ts";
 import { buildGraph } from "./agent/graph.ts";
 import { loadConfig } from "./config.ts";
 import { createDiscordGateway } from "./discord/gateway.ts";
+import { registerDmLink, registerStartLink } from "./gateway/channels.ts";
 import { startProposalWatcher } from "./gateway/proposals.ts";
+import { startLinkServer } from "./http/server.ts";
 import { installCdpProxy } from "./net.ts";
 import { createGateway } from "./telegram/gateway.ts";
 
@@ -28,6 +30,13 @@ async function main(): Promise<void> {
     console.log(
       `Ward connected to Telegram as @${me.username} (${config.nodeEnv}, model ${model}).`,
     );
+    // The door to hand someone minting a link code on another channel. `getMe`
+    // has already been paid for above, so the username costs nothing extra.
+    registerDmLink("telegram", `https://t.me/${me.username}`);
+    // One-click linking INTO Telegram (Phase 15.3). A start payload does what
+    // Discord needs a whole OAuth2 round trip for, with no server involved — so
+    // this direction is available whenever Telegram is, with nothing to configure.
+    registerStartLink("telegram", (state) => `https://t.me/${me.username}?start=${state}`);
     // `bot.launch()` never resolves while polling, so its rejection is the only
     // signal that polling died — and unhandled it takes the process down.
     //
@@ -50,6 +59,19 @@ async function main(): Promise<void> {
     const client = createDiscordGateway(config.discordBotToken, graph);
     await client.login(config.discordBotToken);
     shutdown.push(() => void client.destroy());
+  }
+
+  // The linking server (Phases 14 and 15.2). A public URL alone is enough for
+  // wallet-signature linking; Discord's one-click route needs an OAuth app too.
+  // Without a public URL Ward serves no HTTP at all and codes are the only route.
+  if (config.publicUrl) {
+    const publicUrl = config.publicUrl;
+    const link = startLinkServer({ publicUrl, discordOAuth: config.discordOAuth }, config.httpPort);
+    registerStartLink("wallet", (state) => `${publicUrl}/link/wallet/${state}`);
+    if (config.discordOAuth) {
+      registerStartLink("discord", (state) => `${publicUrl}/link/discord/${state}`);
+    }
+    shutdown.push(() => link.stop());
   }
 
   // Proposals made over MCP are queued in Sibyl Memory by that separate process;

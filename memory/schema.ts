@@ -68,7 +68,13 @@ export const ACCOUNT_ID_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 export const accountIdSchema = z.string().regex(ACCOUNT_ID_RE, "invalid channel account id");
 
 /** How a channel account came to be attached to its principal. */
-export const LINK_METHODS = ["first_contact", "link_code", "migration", "mcp_token"] as const;
+export const LINK_METHODS = [
+  "first_contact",
+  "link_code",
+  "migration",
+  "mcp_token",
+  "wallet_signature",
+] as const;
 export const linkMethodSchema = z.enum(LINK_METHODS);
 export type LinkMethod = z.infer<typeof linkMethodSchema>;
 
@@ -85,6 +91,38 @@ export const wardIdentitySchema = z.object({
   linked_via: linkMethodSchema,
 });
 export type WardIdentity = z.infer<typeof wardIdentitySchema>;
+
+/**
+ * A checksummed-lowercase EVM address. Lowercased on the way in so the same wallet
+ * is one owner however the user's tooling cased it.
+ */
+export const EVM_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+export const evmAddressSchema = z
+  .string()
+  .transform((v) => v.toLowerCase())
+  .pipe(z.string().regex(EVM_ADDRESS_RE, "expected an 0x EVM address"));
+
+/**
+ * A wallet address whose control the user has proved by signature (Phase 14).
+ *
+ * Forward index, `ward.owner` / `<address>` → principal, mirroring `ward.identity`.
+ * This is what makes wallet linking a *recovery* path and not just another way to
+ * link: it answers "whose Ward is this address?" without the user reaching any chat
+ * account they may have lost.
+ */
+export const verifiedOwnerSchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  address: evmAddressSchema,
+  verified_at: isoDatetime,
+});
+export type VerifiedOwner = z.infer<typeof verifiedOwnerSchema>;
+
+/** The reverse index, `ward.owners` / `<ward_user_id>` — same reason as `ward.accounts`. */
+export const ownerIndexSchema = z.object({
+  ward_user_id: wardUserIdSchema,
+  owners: z.array(verifiedOwnerSchema.omit({ ward_user_id: true })).default([]),
+});
+export type OwnerIndex = z.infer<typeof ownerIndexSchema>;
 
 export const linkedAccountSchema = wardIdentitySchema.omit({ ward_user_id: true });
 export type LinkedAccount = z.infer<typeof linkedAccountSchema>;
@@ -227,6 +265,8 @@ export const JOURNAL_EVENT_KINDS = [
   "identity_link",
   "identity_unlink",
   "identity_migrate",
+  "owner_verified",
+  "owner_revoked",
   "proposal",
 ] as const;
 export const journalEventKindSchema = z.enum(JOURNAL_EVENT_KINDS);

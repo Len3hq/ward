@@ -32,6 +32,16 @@ export interface CdpConfig {
   paymasterUrl: string | undefined;
 }
 
+/**
+ * Discord OAuth2 (Phase 15.2). Present → `/link discord` hands back a one-click
+ * URL and Ward serves the callback; absent → the code flow is the only route, which
+ * is exactly how Phase 15.1 left it.
+ */
+export interface DiscordOAuthConfig {
+  clientId: string;
+  clientSecret: string;
+}
+
 export interface AcpConfig {
   /** The registered agent wallet's EVM address — escrow draws on THIS address. */
   walletAddress: string;
@@ -58,6 +68,16 @@ export interface Config {
   cdpProxyUrl: string | undefined;
   /** CDP credentials — present → the real wallet provider, absent → the stub. */
   cdp: CdpConfig | undefined;
+  /**
+   * Public base URL of this deployment, e.g. `https://ward.up.railway.app`. Present
+   * → the linking server runs. Wallet-signature linking (Phase 14) needs only this;
+   * Discord one-click (Phase 15.2) needs `discordOAuth` as well.
+   */
+  publicUrl: string | undefined;
+  /** Discord one-click linking — the OAuth2 app. */
+  discordOAuth: DiscordOAuthConfig | undefined;
+  /** Port for the linking callback server. Railway injects `PORT`. */
+  httpPort: number;
   /** Spend-permission network: base-sepolia (default) or base. */
   baseNetwork: "base" | "base-sepolia";
   /** ACP counterparty market: "stub" (default, simulated) or "virtuals" (real, go/no-go). */
@@ -85,6 +105,13 @@ function cdpConfig(): CdpConfig | undefined {
   if (apiKeyId && apiKeySecret && walletSecret) {
     return { apiKeyId, apiKeySecret, walletSecret, paymasterUrl: optional("CDP_PAYMASTER_URL") };
   }
+  return undefined;
+}
+
+function discordOAuthConfig(): DiscordOAuthConfig | undefined {
+  const clientId = optional("DISCORD_CLIENT_ID");
+  const clientSecret = optional("DISCORD_CLIENT_SECRET");
+  if (clientId && clientSecret) return { clientId, clientSecret };
   return undefined;
 }
 
@@ -116,6 +143,11 @@ export function loadConfig(): Config {
       agent: optional("WARD_AGENT_MODEL") ?? "gpt-4o-mini",
       guard: optional("WARD_GUARD_MODEL") ?? "gpt-4o-mini",
     },
+    // Trailing slashes make the OAuth redirect_uri mismatch Discord's registered
+    // one, which fails with an unhelpful "invalid redirect_uri" — strip once, here.
+    publicUrl: optional("WARD_PUBLIC_URL")?.replace(/\/+$/, ""),
+    discordOAuth: discordOAuthConfig(),
+    httpPort: Number(optional("PORT") ?? "8080") || 8080,
     cdpProxyUrl: optional("CDP_PROXY_URL"),
     cdp: cdpConfig(),
     baseNetwork: optional("BASE_NETWORK") === "base" ? "base" : "base-sepolia",

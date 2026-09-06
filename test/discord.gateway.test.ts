@@ -1,7 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { GatewayIntentBits, Partials, type Client, type SendableChannels } from "discord.js";
+import {
+  ApplicationCommandType,
+  GatewayIntentBits,
+  Partials,
+  type Client,
+  type SendableChannels,
+} from "discord.js";
 
-import { createDiscordGateway, discordAdapter } from "../src/discord/gateway.ts";
+import {
+  OPT_IN,
+  SLASH_COMMANDS,
+  createDiscordGateway,
+  discordAdapter,
+} from "../src/discord/gateway.ts";
 import { buildGraph } from "../src/agent/graph.ts";
 
 /**
@@ -32,6 +43,52 @@ describe("client configuration", () => {
     // Requesting a privileged intent the app isn't approved for fails login outright.
     // DM-only doesn't need it: Discord exempts DMs from the Message Content intent.
     expect(intents.has(GatewayIntentBits.MessageContent)).toBe(false);
+  });
+});
+
+/**
+ * Phase 15.1. `resolveUser` mints a principal on first contact, so an unknown
+ * Discord account that simply talked used to become a SECOND Ward — and `/link`
+ * then refused its code, because moving a principal that already holds an
+ * authorization record is a silent ledger merge. Nothing may be minted until the
+ * account says which it is.
+ */
+describe("first contact", () => {
+  test("ordinary conversation from an unknown account does not opt in", () => {
+    for (const text of ["hi", "hello", "what can you do?", "swap $20 usdc for eth", "moderate"]) {
+      expect(OPT_IN.test(text)).toBe(false);
+    }
+  });
+
+  test("the phrase the prompt tells them to use does opt in", () => {
+    for (const text of ["set me up", "Set me up", "ok set me up please", "sign me up"]) {
+      expect(OPT_IN.test(text)).toBe(true);
+    }
+  });
+});
+
+/**
+ * A malformed command payload fails silently — Discord rejects the registration and
+ * the only symptom is autocomplete that never appears.
+ */
+describe("slash commands", () => {
+  test("registers the identity commands", () => {
+    const names = SLASH_COMMANDS.map((c) => c.name);
+    expect(names).toContain("link");
+    expect(names).toContain("unlink");
+    expect(names).toContain("whoami");
+  });
+
+  test("every command is a chat-input command with a description", () => {
+    for (const command of SLASH_COMMANDS) {
+      expect(command).toHaveProperty("type", ApplicationCommandType.ChatInput);
+      expect(command.description.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("/link takes an optional code, so it can both mint and redeem", () => {
+    const link = SLASH_COMMANDS.find((c) => c.name === "link");
+    expect(link?.options?.[0]).toMatchObject({ name: "code", required: false });
   });
 });
 
