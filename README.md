@@ -104,6 +104,10 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
   default: an MCP client can ask for a spend but not approve one, because it holds
   a token rather than being a person. See
   [`MULTI-CHANNEL.md`](./MULTI-CHANNEL.md).
+- **Landing page** — [`public/index.html`](./public/index.html), served at `/` by the
+  same linking server ([`src/http/server.ts`](./src/http/server.ts)) whenever
+  `WARD_PUBLIC_URL` is set. A self-contained bundle: fonts and React are embedded, so
+  it fetches nothing at runtime and there is no second service to deploy.
 
 Build history and every design decision: [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
@@ -125,7 +129,7 @@ real `sibyl-mcp` backend under `SIBYL_MEMORY_MCP_TEST=1`
 [`scripts/demo-deletion.sh`](./scripts/demo-deletion.sh) does it live on Telegram.
 
 ```sh
-bun test          # 101 pass on the fs backend
+bun test          # 316 pass on the fs backend
 ```
 
 ## Partner stacks (Base ×1.15, Virtuals ×1.25)

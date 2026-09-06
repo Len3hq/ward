@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import type { DiscordOAuthConfig } from "../config.ts";
 import { notifyAccount } from "../gateway/channels.ts";
 import { announceLink } from "../identity/commands.ts";
@@ -9,8 +11,10 @@ import { handleMcpRequest } from "../mcp/http.ts";
 /**
  * The linking callback server — the one thing in Ward that serves HTTP.
  *
- * It exists for two flows, both in `MULTI-CHANNEL.md`:
+ * It serves the landing page, and the linking flows in `MULTI-CHANNEL.md`:
  *
+ * - **The landing page** — `GET /`, a static bundle in `public/index.html`. It is the
+ *   only route with no user data in it and the only one that is safe to cache.
  * - **The MCP surface (Phase 16.1)** — the same five read-and-propose tools the
  *   stdio server exposes, for a client that cannot spawn a local process. It adds no
  *   authority: there is still no tool that executes. Needs only `WARD_PUBLIC_URL`.
@@ -60,6 +64,16 @@ const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
 const DISCORD_TOKEN = "https://discord.com/api/oauth2/token";
 const DISCORD_ME = "https://discord.com/api/users/@me";
 
+/**
+ * The landing page. A self-contained bundle — fonts, React and every asset are
+ * embedded — so it loads nothing from a CDN and nothing about it can change under
+ * the deploy. Served from disk rather than compiled in, so it can be replaced
+ * without touching this file; gzipped once on first request because a third of
+ * 350 kB is worth not sending twice.
+ */
+const LANDING = fileURLToPath(new URL("../../public/index.html", import.meta.url));
+let landingGzip: Uint8Array | undefined;
+
 /** Where Discord sends the browser back. Must match the portal entry exactly. */
 export function redirectUri(config: LinkServerConfig): string {
   return `${config.publicUrl}/link/discord/callback`;
@@ -91,6 +105,13 @@ export function startLinkServer(config: LinkServerConfig, port: number): LinkSer
       const url = new URL(request.url);
 
       if (url.pathname === "/healthz") return text("ok");
+
+      if (
+        (request.method === "GET" || request.method === "HEAD") &&
+        (url.pathname === "/" || url.pathname === "/index.html")
+      ) {
+        return landing(request);
+      }
 
       // The MCP surface (Phase 16.1). Read-and-propose only, exactly as over stdio —
       // no tool here executes anything. It owns `/mcp` and returns null otherwise.
@@ -243,6 +264,28 @@ async function handleWallet(state: string, request: Request): Promise<Response> 
       ? "Wallet verified. It can now reach this Ward even if you lose this chat account."
       : "Wallet verified, and this account now reaches that Ward.",
   });
+}
+
+async function landing(request: Request): Promise<Response> {
+  const file = Bun.file(LANDING);
+  if (!(await file.exists())) {
+    return page("Ward", "The landing page isn't part of this deployment.", 404);
+  }
+
+  // Unlike every other response here, this one names no principal and carries no
+  // link state, so `no-store` would only cost the visitor 350 kB on every reload.
+  const headers: Record<string, string> = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "public, max-age=300",
+    vary: "accept-encoding",
+  };
+
+  if (!request.headers.get("accept-encoding")?.includes("gzip")) {
+    return new Response(file, { headers });
+  }
+
+  landingGzip ??= Bun.gzipSync(new Uint8Array(await file.arrayBuffer()));
+  return new Response(landingGzip, { headers: { ...headers, "content-encoding": "gzip" } });
 }
 
 function json(body: unknown, status = 200): Response {

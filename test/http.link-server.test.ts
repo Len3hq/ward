@@ -156,7 +156,7 @@ describe("the server", () => {
       expect(redirect.headers.get("location")).toContain("discord.com/oauth2/authorize");
 
       // No API surface: nothing here reads or writes anything but one link.
-      expect((await fetch(`${base}/`)).status).toBe(404);
+      expect((await fetch(`${base}/nothing-here`)).status).toBe(404);
       expect((await fetch(`${base}/link/discord/callback`)).status).toBe(200); // renders "not linked"
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
     } finally {
@@ -210,5 +210,35 @@ describe("the phishing backstop still fires", () => {
 
     expect(told).toHaveLength(1);
     expect(told[0]).toContain("/unlink discord");
+  });
+});
+
+describe("the landing page", () => {
+  test("is served at the root, and is the only cacheable route", async () => {
+    const server = startLinkServer(OAUTH, 0);
+    try {
+      const base = `http://localhost:${server.port}`;
+
+      const response = await fetch(`${base}/`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      // It names no principal and carries no link state, so unlike every other
+      // page here it is safe to cache.
+      expect(response.headers.get("cache-control")).toContain("max-age");
+
+      const body = await response.text();
+      // The CTA has to reach the real bot, not t.me's front page.
+      expect(body).toContain("https://t.me/WardLen3bot");
+      // The bundle is self-contained: no CDN fetch at runtime.
+      expect(body).toContain('type="__bundler/manifest"');
+
+      // Gzip is negotiated, not forced.
+      const plain = await fetch(`${base}/index.html`, {
+        headers: { "accept-encoding": "identity" },
+      });
+      expect(plain.status).toBe(200);
+    } finally {
+      server.stop();
+    }
   });
 });
