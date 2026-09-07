@@ -61,6 +61,13 @@ describe("log lines", () => {
     expect(line).toContain('text="Swap 0.0001 eth to usdc"');
   });
 
+  test("do not round money away — a $0.001 spend is not $0.0", () => {
+    const [line] = captured(() => log("spend.ok", { amount_usd: 0.001, ms: 837.14 }));
+    expect(line).toContain("amount_usd=0.001");
+    // Durations still read at one decimal.
+    expect(line).toContain("ms=837.1");
+  });
+
   test("skip absent fields rather than printing undefined", () => {
     const [line] = captured(() => log("cmd", { command: "/link", args: undefined }));
     expect(line).not.toContain("undefined");

@@ -108,8 +108,16 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
+/**
+ * Money, rounded at USDC's own precision — six decimals, not two.
+ *
+ * `spentToday` feeds the daily cap. Rounding it to cents made every sub-cent spend
+ * invisible to the gate: a hundred $0.001 x402 purchases summed to $0.10 and
+ * reported $0.10, but each individual total rounded from $0.001 to $0.00, so the
+ * first purchases never registered against the cap at all.
+ */
+function roundUsd(value: number): number {
+  return Math.round(value * 1e6) / 1e6;
 }
 
 const locks = new Map<string, Promise<unknown>>();
@@ -340,7 +348,7 @@ export async function spentToday(userId: string, now: Date = new Date()): Promis
     return t >= dayStart && t < dayEnd ? sum + entry.amount_usd : sum;
   }, 0);
 
-  return round2(total);
+  return roundUsd(total);
 }
 
 // --- wallet ---

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Context, Telegraf, type Telegram } from "telegraf";
 
 import type { WardGraph } from "../agent/graph.ts";
@@ -67,8 +69,26 @@ export const HANDLER_TIMEOUT_MS = CONFIRM_TIMEOUT_MS + 60_000;
 
 interface ChatSession {
   seq: number;
-  /** Set while a confirmation is open; the next yes/no resolves it. */
-  pending?: { prompt: string; resolve: (answer: boolean | null) => void };
+  /**
+   * Set while a confirmation is open. Answered by tapping a button (the normal
+   * path) or by typing yes/no, whichever comes first.
+   */
+  pending?: {
+    prompt: string;
+    /** Nonce in the buttons' `callback_data`, so a stale tap cannot answer a new question. */
+    nonce: string;
+    /** The prompt message, so its buttons can be cleared once it is answered. */
+    messageId?: number;
+    resolve: (answer: boolean | null) => void;
+  };
+  /**
+   * Turns for this chat, one after another.
+   *
+   * Nothing awaits this: the whole point is that the Telegram handler returns
+   * immediately (see the note on `bot.on("text")`), while two messages from the same
+   * chat still never run through the graph concurrently.
+   */
+  queue: Promise<void>;
 }
 
 export function createGateway(token: string, graph: WardGraph): Telegraf {
@@ -90,7 +110,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
   const session = (chatId: number): ChatSession => {
     let s = sessions.get(chatId);
     if (!s) {
-      s = { seq: 1 };
+      s = { seq: 1, queue: Promise.resolve() };
       sessions.set(chatId, s);
     }
     return s;
@@ -259,43 +279,105 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       text: preview(text),
     });
 
-    // A confirmation is open: this message is the answer, not a new turn.
+    // A confirmation is open: this message is the answer, not a new turn. Typed
+    // yes/no still works alongside the buttons — people type it.
     if (s.pending) {
       const answer = readAnswer(text);
       if (answer === null) {
         log("confirm.unclear", { channel: "telegram", account: String(ctx.from.id) });
-        await ctx.reply(`Please answer yes or no.\n\n${s.pending.prompt}`);
+        await ctx.reply(`Please answer yes or no, or use the buttons.\n\n${s.pending.prompt}`);
         return;
       }
       log("confirm.resolved", {
         channel: "telegram",
         account: String(ctx.from.id),
         answer: answer ? "yes" : "no",
+        via: "text",
       });
-      const { resolve } = s.pending;
-      s.pending = undefined;
-      resolve(answer);
+      await settleConfirmation(ctx.telegram, chatId, s, answer);
       return;
     }
 
     const accountId = String(ctx.from.id);
-    let userId: string;
-    try {
-      ({ userId } = await resolveUser("telegram", accountId));
-    } catch (error) {
-      logError("identity.failed", error, { channel: "telegram", account: accountId });
-      await ctx.reply("I couldn't work out who you are just now. Try again in a moment.");
+
+    /**
+     * The turn is NOT awaited here, and that is the whole fix for "Telegram hangs".
+     *
+     * Telegraf's polling loop is `for await (const updates of this) await
+     * Promise.all(updates.map(handleUpdate))` — it does not fetch the next batch
+     * until every handler in the current one has resolved. A turn parked on a
+     * confirmation therefore froze the ENTIRE bot: the user's "Yes" was never
+     * fetched from Telegram, the confirmation timed out after ten minutes, and only
+     * then did the queued messages arrive — all at once, to a Ward that had stopped
+     * waiting. The logs show it exactly: `confirm.answer answer=none ms=600160`,
+     * then three `msg.in` lines in the same millisecond.
+     *
+     * So the handler returns immediately and the turn runs behind it, serialised per
+     * chat so two messages still cannot interleave in the graph.
+     */
+    s.queue = s.queue.then(async () => {
+      let userId: string;
+      try {
+        ({ userId } = await resolveUser("telegram", accountId));
+      } catch (error) {
+        logError("identity.failed", error, { channel: "telegram", account: accountId });
+        await ctx.reply("I couldn't work out who you are just now. Try again in a moment.");
+        return;
+      }
+
+      await runTurn({
+        graph,
+        adapter: telegramAdapter(ctx.telegram, chatId, s),
+        threadId: threadId(chatId, s.seq),
+        userId,
+        accountId,
+        text,
+      });
+    });
+    // A failed turn must not poison the chat's queue for every later message.
+    s.queue = s.queue.catch((error: unknown) => {
+      logError("turn.failed", error, { channel: "telegram", account: accountId });
+    });
+  });
+
+  /**
+   * The button half of a confirmation (`callback_query`).
+   *
+   * A tap is just another update, so this only works because the text handler above
+   * no longer blocks the polling loop — buttons alone would have queued behind the
+   * parked turn exactly as the typed "Yes" did.
+   */
+  bot.on("callback_query", async (ctx) => {
+    const data =
+      "data" in ctx.callbackQuery && typeof ctx.callbackQuery.data === "string"
+        ? ctx.callbackQuery.data
+        : "";
+    const chat = ctx.callbackQuery.message?.chat;
+    if (!chat) return;
+    const s = session(chat.id);
+
+    const match = /^ward:([^:]+):(yes|no)$/.exec(data);
+    // A tap on a question that has already been answered, or on one from a previous
+    // process. Say so rather than leaving the client spinning.
+    if (!match || !s.pending || s.pending.nonce !== match[1]) {
+      await ctx.answerCbQuery("That confirmation is no longer open.").catch(() => undefined);
+      return;
+    }
+    // In a DM the chat id IS the user id; anyone else tapping is not who was asked.
+    if (String(ctx.from.id) !== String(chat.id)) {
+      await ctx.answerCbQuery("That isn't your confirmation.").catch(() => undefined);
       return;
     }
 
-    await runTurn({
-      graph,
-      adapter: telegramAdapter(ctx.telegram, chatId, s),
-      threadId: threadId(chatId, s.seq),
-      userId,
-      accountId,
-      text,
+    const approved = match[2] === "yes";
+    log("confirm.resolved", {
+      channel: "telegram",
+      account: String(ctx.from.id),
+      answer: approved ? "yes" : "no",
+      via: "button",
     });
+    await ctx.answerCbQuery(approved ? "Approved" : "Cancelled").catch(() => undefined);
+    await settleConfirmation(ctx.telegram, chat.id, s, approved);
   });
 
   return bot;
@@ -304,6 +386,30 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 function cancelPending(s: ChatSession): void {
   s.pending?.resolve(null);
   s.pending = undefined;
+}
+
+/**
+ * Hand the answer to the waiting turn, and retract the buttons so the decision
+ * cannot be replayed — the same property Discord gets from clearing its components.
+ */
+async function settleConfirmation(
+  telegram: Telegram,
+  chatId: number,
+  s: ChatSession,
+  answer: boolean,
+): Promise<void> {
+  const pending = s.pending;
+  if (!pending) return;
+  s.pending = undefined;
+
+  if (pending.messageId !== undefined) {
+    await telegram
+      .editMessageReplyMarkup(chatId, pending.messageId, undefined, {
+        inline_keyboard: [],
+      })
+      .catch(() => undefined);
+  }
+  pending.resolve(answer);
 }
 
 /**
@@ -345,15 +451,30 @@ function telegramAdapter(telegram: Telegram, chatId: number, s: ChatSession): Ch
     },
 
     /**
-     * Telegram has no button here: the answer is the next message the user types,
-     * matched against the yes/no patterns by the text handler above. That handler
-     * holds the resolver, so this turn simply awaits it.
+     * Two buttons, and a typed yes/no as a fallback.
+     *
+     * The buttons are what people reach for — Discord had them and Telegram did not,
+     * which is half of why answering on Telegram felt broken. The other half was the
+     * polling loop, fixed in the text handler above; without that fix a tap would
+     * have queued behind the very turn it was meant to answer.
      */
     async askConfirm(text) {
-      await telegram.sendMessage(chatId, render(text), {
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
-      });
+      const nonce = randomUUID().slice(0, 8);
+      const sent = await telegram
+        .sendMessage(chatId, render(text), {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "✅ Approve", callback_data: `ward:${nonce}:yes` },
+                { text: "✖️ Cancel", callback_data: `ward:${nonce}:no` },
+              ],
+            ],
+          },
+        })
+        // A markup failure must not lose the question — the typed answer still works.
+        .catch(() => telegram.sendMessage(chatId, text.slice(0, TELEGRAM_LIMIT)));
 
       return new Promise<boolean | null>((resolve) => {
         const settle = (answer: boolean | null): void => {
@@ -362,10 +483,15 @@ function telegramAdapter(telegram: Telegram, chatId: number, s: ChatSession): Ch
         };
         const timer = setTimeout(() => {
           // Only clear the slot if it is still ours — a newer question may own it.
-          if (s.pending?.resolve === settle) s.pending = undefined;
+          if (s.pending?.resolve === settle) {
+            s.pending = undefined;
+            void telegram
+              .editMessageReplyMarkup(chatId, sent.message_id, undefined, { inline_keyboard: [] })
+              .catch(() => undefined);
+          }
           resolve(null);
         }, CONFIRM_TIMEOUT_MS);
-        s.pending = { prompt: text, resolve: settle };
+        s.pending = { prompt: text, nonce, messageId: sent.message_id, resolve: settle };
       });
     },
   };

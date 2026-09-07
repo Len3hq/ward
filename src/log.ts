@@ -58,7 +58,13 @@ function line(event: string, fields: LogFields): string {
 }
 
 function format(value: unknown): string {
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  if (typeof value === "number") {
+    if (Number.isInteger(value)) return String(value);
+    // Durations read better at one decimal (`ms=837.1`). Money must not: a $0.001
+    // spend logged as `amount_usd=0.0` is the same precision bug that made the
+    // payment cap round to zero, and it would hide every sub-cent purchase.
+    return String(Number(Math.abs(value) >= 1 ? value.toFixed(1) : value.toFixed(8)));
+  }
   if (typeof value === "boolean") return String(value);
   const text = String(value);
   const clipped = text.length > MAX_VALUE_CHARS ? `${text.slice(0, MAX_VALUE_CHARS)}…` : text;

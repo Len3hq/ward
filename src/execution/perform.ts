@@ -8,6 +8,7 @@ import {
   type ActionType,
 } from "../../memory/index.ts";
 import { loadConfig } from "../config.ts";
+import { log, logError } from "../log.ts";
 import { walletProvider } from "../wallet/index.ts";
 import { runAcpJob } from "./acp.ts";
 import { txUrl } from "./explorer.ts";
@@ -67,6 +68,16 @@ export type SpendOutcome =
 
 export async function performSpend(request: SpendRequest): Promise<SpendOutcome> {
   const { userId } = request;
+  const started = performance.now();
+  log("spend.start", {
+    user: userId,
+    action: request.actionType,
+    amount_usd: request.amountUsd,
+    endpoint: request.endpoint?.name,
+    pair: request.pair,
+    destination: request.destination,
+    via_token: request.viaToken ?? undefined,
+  });
 
   const record = await read(userId);
   if (record === null) return { ok: false, message: "Your authorization is gone — I won't act." };
@@ -101,10 +112,11 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     const live = await walletProvider()
       .readSpendPermission(accountKey)
       .catch((error: unknown) => {
-        console.error(
-          `on-chain spend permission unreadable for ${userId}, using the remembered allowance:`,
-          error,
-        );
+        logError("spend.permission_unreadable", error, {
+          user: userId,
+          action: request.actionType,
+          note: "using the remembered allowance",
+        });
         return null;
       });
     if (live?.status === "revoked") {
@@ -131,9 +143,13 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     // between — a revocation landing mid-flight, or another surface spending the same
     // cap. `warn`, not `error`: this is the gate working, and `error` should keep
     // meaning something went wrong.
-    console.warn(
-      `spend blocked at execution: ${request.actionType} $${request.amountUsd} for ${userId} — ${gate.reason}`,
-    );
+    log("spend.blocked", {
+      user: userId,
+      action: request.actionType,
+      amount_usd: request.amountUsd,
+      reason: gate.reason,
+      via_token: request.viaToken ?? undefined,
+    });
     return { ok: false, message: `Blocked at execution — ${gate.reason} Nothing moved.` };
   }
 
@@ -149,7 +165,7 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         method: endpoint.method,
         body: endpoint.body,
         expectedUsd: endpoint.cost_usd,
-        maxUsd: round2(endpoint.cost_usd * 1.5),
+        maxUsd: capUsd(endpoint.cost_usd),
       });
       await appendSpend(userId, {
         action_type: "x402_data_purchase",
@@ -159,6 +175,14 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         via_token: viaToken,
       });
       await appendX402(userId, { url: endpoint.url, ok: true, amount_usd: result.amountUsd });
+      log("spend.ok", {
+        user: userId,
+        action: "x402_data_purchase",
+        endpoint: endpoint.name,
+        amount_usd: result.amountUsd,
+        tx: result.txHash,
+        ms: performance.now() - started,
+      });
       return {
         ok: true,
         txHash: result.txHash,
@@ -193,6 +217,15 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         ? `Sent to your smart account: ${txUrl(result.sweepTx, network)}`
         : "⚠️ The bought token could not be moved to your smart account — it is still " +
           "held by the agent spender. Nothing further will happen automatically.";
+      log("spend.ok", {
+        user: userId,
+        action: "swap",
+        pair: `${sell}/${buy}`,
+        amount_usd: result.sellUsd,
+        tx: result.txHash,
+        swept: result.sweepTx !== undefined,
+        ms: performance.now() - started,
+      });
       return {
         ok: true,
         txHash: result.txHash,
@@ -218,6 +251,14 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         tx_hash: result.txHash,
         idempotency_key: request.idempotencyKey,
         via_token: viaToken,
+      });
+      log("spend.ok", {
+        user: userId,
+        action: "send",
+        destination: to,
+        amount_usd: result.amountUsd,
+        tx: result.txHash,
+        ms: performance.now() - started,
       });
       return {
         ok: true,
@@ -250,14 +291,18 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     // chat and nothing else, so a spend that failed on chain — no gas on the spender,
     // no route for a dust-sized swap — left the only copy of the reason in the user's
     // Telegram thread, and the logs showed a completely healthy process.
-    console.error(
-      `spend failed: ${request.actionType} $${request.amountUsd} for ${userId}` +
-        `${request.pair ? ` (${request.pair})` : ""}${request.viaToken ? " via MCP token" : ""}:`,
-      error,
-    );
+    logError("spend.failed", error, {
+      user: userId,
+      action: request.actionType,
+      amount_usd: request.amountUsd,
+      pair: request.pair,
+      endpoint: request.endpoint?.name,
+      via_token: request.viaToken ?? undefined,
+      ms: performance.now() - started,
+    });
     if (request.endpoint) {
       await appendX402(userId, { url: request.endpoint.url, ok: false, amount_usd: 0 }).catch(
-        (writeError: unknown) => console.error("x402 failure not recorded in memory:", writeError),
+        (writeError: unknown) => logError("x402.write_failed", writeError, { user: userId }),
       );
     }
     const message = error instanceof Error ? error.message : String(error);
@@ -265,8 +310,18 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
   }
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
+/**
+ * The hard ceiling on what an endpoint may charge: 1.5× the catalogue price.
+ *
+ * Rounded UP, at USDC's six decimals — not to cents, which is what broke every
+ * purchase. Real x402 endpoints charge tenths of a cent: the two Heurist ones cost
+ * $0.001, and `Math.round(0.0015 * 100) / 100` is **$0**. So the cap handed to the
+ * payment was zero, and the spend refused itself with "the endpoint asks $0.001
+ * USDC, over the $0 cap you approved" — while the user had $12 of allowance sitting
+ * unused. Money below a cent is normal here; cent-precision arithmetic is not.
+ */
+function capUsd(costUsd: number): number {
+  return Math.ceil(costUsd * 1.5 * 1e6) / 1e6;
 }
 
 function preview(data: unknown): string {

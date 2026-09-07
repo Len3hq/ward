@@ -223,11 +223,14 @@ describe("a failed spend reaches the server log", () => {
     };
     console.error = record;
     console.warn = record;
+    const realLog = console.log;
+    console.log = record;
     return {
       lines,
       restore: () => {
         console.error = realError;
         console.warn = realWarn;
+        console.log = realLog;
       },
     };
   }
@@ -257,8 +260,10 @@ describe("a failed spend reaches the server log", () => {
 
     expect(outcome.ok).toBe(false);
     const logged = capture.lines.join("\n");
-    expect(logged).toContain("spend failed");
-    expect(logged).toContain("swap $0.1");
+    // One searchable line, same facts — see `src/log.ts`.
+    expect(logged).toContain("event=spend.failed");
+    expect(logged).toContain("action=swap");
+    expect(logged).toContain("amount_usd=0.1");
     expect(logged).toContain(userId);
     expect(logged).toContain("no route for 0.1 USDC");
   });
@@ -280,6 +285,9 @@ describe("a failed spend reaches the server log", () => {
     }
 
     expect(outcome.ok).toBe(false);
-    expect(capture.lines.join("\n")).toContain("spend blocked at execution");
+    const logged = capture.lines.join("\n");
+    expect(logged).toContain("event=spend.blocked");
+    expect(logged).toContain("amount_usd=500");
+    expect(logged).toContain("per-action limit");
   });
 });
