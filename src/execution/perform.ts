@@ -345,12 +345,20 @@ function capUsd(costUsd: number): number {
  * about that particular payload is buried in the punctuation: the user paid for a
  * list that came back empty, which is worth a sentence.
  */
-function preview(data: unknown): string {
+export function preview(data: unknown): string {
   if (typeof data === "string") {
     const text = data.trim();
     return text.length === 0 ? EMPTY_PAYLOAD : clip(text);
   }
   if (isEmptyPayload(data)) return EMPTY_PAYLOAD;
+
+  // A table of rows is the common answer — every Nansen endpoint returns
+  // `{ data: [...], pagination: {...} }` — and pretty-printed JSON is the worst way
+  // to read one. Twenty rows of twenty-three fields clipped at 1200 characters showed
+  // the user two rows of punctuation and then a "…". Render it as rows when it is
+  // rows; fall back to JSON only for shapes this cannot recognise.
+  const rows = tabularRows(data);
+  if (rows) return renderRows(rows);
 
   const json = ["```json", clip(JSON.stringify(data, null, 2)), "```"].join("\n");
   const empty = emptyFields(data);
@@ -358,11 +366,100 @@ function preview(data: unknown): string {
   return `${json}\n(${empty.map((f) => `\`${f}\``).join(", ")} came back empty.)`;
 }
 
+/** The list of records inside whatever envelope the endpoint wrapped it in. */
+function tabularRows(data: unknown): Record<string, unknown>[] | null {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v);
+  const looksLikeRows = (v: unknown): v is Record<string, unknown>[] =>
+    Array.isArray(v) && v.length > 0 && v.every(isRecord);
+
+  if (looksLikeRows(data)) return data;
+  if (!isRecord(data)) return null;
+  for (const key of ["data", "results", "items", "rows"]) {
+    if (looksLikeRows(data[key])) return data[key];
+  }
+  return null;
+}
+
+/** `0x4200…0006` — an address the user can recognise without 42 characters of it. */
+function shortenAddress(value: string): string {
+  return /^0x[a-fA-F0-9]{40}$/.test(value) ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
+}
+
+/**
+ * One field, as a person would write it. USD gets a dollar sign and a magnitude
+ * suffix, percentages a `%`, addresses a middle ellipsis — the raw values are
+ * `1234567.8912` and `0.0342`, which say much less at a glance.
+ */
+function formatValue(key: string, value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (Array.isArray(value)) return value.length === 0 ? null : value.slice(0, 3).join(", ");
+  if (typeof value === "object") return null;
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "string") return shortenAddress(value);
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+
+  const n: number = value;
+  const magnitude = (v: number): string => {
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (abs >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    if (abs >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+    return abs >= 1 ? String(Number(v.toFixed(2))) : String(Number(v.toPrecision(4)));
+  };
+
+  // Units come from the NAME, never the value. Deciding by magnitude — "small enough
+  // to be a ratio" — rendered `balance_change_24h` as `-12.0K` in one row and `0.00%`
+  // in the next, so the same column carried two different units down the page.
+  // A share and a change are both percentages, but only one of them has a direction:
+  // "+8.12%" of the supply reads as a gain when it is simply how much they hold.
+  if (/^price_change$|_change_pct$/.test(key)) {
+    return `${n > 0 ? "+" : ""}${(n * 100).toFixed(2)}%`;
+  }
+  if (/percentage|_pct|percent/.test(key)) return `${(n * 100).toFixed(2)}%`;
+  // Counts and durations are integers. `token age days 412.00` is a decimal point
+  // pretending to a precision that does not exist.
+  if (/_days$|_hours$|^nof_|_count$|^rank$/.test(key)) return String(Math.round(n));
+  // Dollars only where the name says dollars. `token_amount` is a quantity of tokens,
+  // and `$12.50M` of a memecoin is a different claim from 12.5M of it.
+  if (/_usd$|^price$|market_cap|liquidity|volume|fdv|flow/.test(key)) {
+    return `${n < 0 ? "-" : ""}$${magnitude(Math.abs(n))}`;
+  }
+  return magnitude(n);
+}
+
+/** Field names that identify the row, so they lead it. */
+const LABEL_FIELDS = /symbol|_label$|^name$|^chain$|address/;
+
+function renderRows(rows: Record<string, unknown>[]): string {
+  const shown = rows.slice(0, MAX_PREVIEW_ROWS);
+  const lines = shown.map((row, index) => {
+    const entries = Object.entries(row)
+      .map(([key, value]) => [key, formatValue(key, value)] as const)
+      .filter((pair): pair is readonly [string, string] => pair[1] !== null);
+
+    const labels = entries.filter(([key]) => LABEL_FIELDS.test(key));
+    const rest = entries.filter(([key]) => !LABEL_FIELDS.test(key)).slice(0, MAX_FIELDS_PER_ROW);
+    const head = labels.map(([, v]) => v).join(" · ") || `row ${index + 1}`;
+    const body = rest.map(([key, v]) => `${key.replace(/_/g, " ")} ${v}`).join(" · ");
+    return body ? `${index + 1}. ${head}\n   ${body}` : `${index + 1}. ${head}`;
+  });
+
+  const more = rows.length > shown.length ? `\n\n…and ${rows.length - shown.length} more.` : "";
+  return clip(
+    `${rows.length} result${rows.length === 1 ? "" : "s"}:\n\n${lines.join("\n")}${more}`,
+  );
+}
+
 const EMPTY_PAYLOAD =
   "The endpoint answered with no data for that request — the payment settled, but " +
   "there is nothing to show. Worth trying a different endpoint, or the same one later.";
 
 const MAX_PREVIEW_CHARS = 1200;
+/** Rows a chat message can carry before it stops being readable. */
+const MAX_PREVIEW_ROWS = 5;
+/** Columns per row. Nansen returns up to 23; nobody reads 23 on a phone. */
+const MAX_FIELDS_PER_ROW = 5;
 /** Enough to name what was missing without listing a whole schema back at the user. */
 const MAX_EMPTY_FIELDS = 4;
 
