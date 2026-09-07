@@ -23,6 +23,7 @@ import { markCopyable } from "../gateway/format.ts";
 import { runTurn } from "../gateway/core.ts";
 import { linkCommand, mcpCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveExisting, resolveUser } from "../identity/index.ts";
+import { log, logError, preview } from "../log.ts";
 
 /**
  * Discord gateway. Same graph, same Sibyl Memory, same principal as Telegram — a
@@ -163,6 +164,11 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
       return;
     }
     try {
+      log("cmd", {
+        channel: "discord",
+        account: interaction.user.id,
+        command: `/${interaction.commandName}`,
+      });
       await interaction.deferReply();
       const reply = await runCommand(
         session(interaction.channelId),
@@ -175,7 +181,7 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
       );
       await interaction.editReply(reply.slice(0, DISCORD_LIMIT));
     } catch (error) {
-      console.error("discord command failed:", error);
+      logError("cmd.failed", error, { channel: "discord", account: interaction.user.id });
       await interaction.editReply("Something went wrong on my side.").catch(() => undefined);
     }
   });
@@ -199,7 +205,10 @@ export function createDiscordGateway(token: string, graph: WardGraph): Client {
     try {
       await handleDirectMessage(graph, session, message, text);
     } catch (error) {
-      console.error("discord turn failed:", error);
+      logError("discord.turn.failed", error, {
+        channel: "discord",
+        account: message.author.id,
+      });
       await message.channel.send("Something went wrong on my side.").catch(() => undefined);
     }
   });
@@ -312,11 +321,28 @@ async function handleDirectMessage(
    */
   if (text.startsWith("/")) {
     const [word = "", ...rest] = text.slice(1).split(/\s+/);
+    // The argument may be a link code: counted, never printed.
+    log("cmd", {
+      channel: "discord",
+      account: accountId,
+      command: `/${word}`,
+      args: rest.length > 0,
+    });
     await channel.send(
       await runCommand(s, { channel: "discord", accountId }, word, rest.join(" ")),
     );
     return;
   }
+
+  log("msg.in", {
+    channel: "discord",
+    account: accountId,
+    username: message.author.username,
+    chat: message.channelId,
+    session: s.seq,
+    chars: text.length,
+    text: preview(text),
+  });
 
   // Never mint a principal for an account that has not said which it is. See OPT_IN.
   if ((await resolveExisting("discord", accountId)) === null && !OPT_IN.test(text)) {
@@ -328,7 +354,7 @@ async function handleDirectMessage(
   try {
     ({ userId } = await resolveUser("discord", accountId));
   } catch (error) {
-    console.error("identity resolution failed:", error);
+    logError("identity.failed", error, { channel: "discord", account: accountId });
     await channel.send("I couldn't work out who you are just now. Try again in a moment.");
     return;
   }

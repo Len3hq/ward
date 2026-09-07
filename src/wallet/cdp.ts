@@ -44,6 +44,42 @@ import type {
 const USDC_DECIMALS = 6;
 const AGENT_SPENDER_NAME = "ward-agent-spender";
 
+/** Waiting for a block is not the same as waiting for an answer — see `#settle`. */
+const SETTLEMENT_BUDGET = 4;
+
+/**
+ * Run `work` with a deadline, and name what timed out.
+ *
+ * The CDP SDK sets no deadline of its own: when the service is unreachable it
+ * retries internally, and one `getOrCreateAccount` was measured taking 241 seconds
+ * before it gave up — a Telegram turn parked behind it for four minutes with nothing
+ * in the chat to show for it. Bounded, the same failure is a clear sentence in
+ * fifteen seconds.
+ */
+export async function withDeadline<T>(
+  label: string,
+  timeoutMs: number,
+  work: () => Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(`CDP ${label} did not answer within ${Math.round(timeoutMs / 1000)}s`),
+            ),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** CDP account names: letters, digits and hyphens only, 2-36 characters. */
 const CDP_NAME = /^[a-zA-Z0-9-]{2,36}$/;
 
@@ -102,6 +138,8 @@ export class CdpWalletProvider implements WalletProvider {
    * always needs ETH regardless.
    */
   #paymasterUrl: string | undefined;
+  /** See `CdpConfig.timeoutMs` — the budget for calls that submit nothing. */
+  #timeoutMs: number;
 
   constructor(config: CdpConfig, network: "base" | "base-sepolia") {
     installCdpProxy(); // route *.coinbase.com through CDP_PROXY_URL if set
@@ -112,6 +150,22 @@ export class CdpWalletProvider implements WalletProvider {
     });
     this.#network = network;
     this.#paymasterUrl = config.paymasterUrl;
+    this.#timeoutMs = config.timeoutMs;
+  }
+
+  /**
+   * A deadline for CDP calls that have not submitted a transaction.
+   *
+   * Only those. A timeout on a submitted transaction cannot tell "never sent" from
+   * "sent and mined", and Ward must never report that nothing moved when something
+   * might have — so `createSpendPermission`, `swap`, `transfer` and
+   * `useSpendPermission` are deliberately left unbounded. Account lookups, permission
+   * reads and balance reads are pure, retryable, and are where a hung CDP actually
+   * parks a turn: every write path awaits an account lookup before it sends anything,
+   * so bounding those fails fast BEFORE any money moves.
+   */
+  async #bounded<T>(label: string, work: () => Promise<T>, timeoutMs?: number): Promise<T> {
+    return withDeadline(label, timeoutMs ?? this.#timeoutMs, work);
   }
 
   /** Spread into a user-operation call; empty when no paymaster is configured. */
@@ -130,18 +184,22 @@ export class CdpWalletProvider implements WalletProvider {
   }
 
   async #agentSpender() {
-    return this.#cdp.evm.getOrCreateAccount({ name: AGENT_SPENDER_NAME });
+    return this.#bounded("account lookup", () =>
+      this.#cdp.evm.getOrCreateAccount({ name: AGENT_SPENDER_NAME }),
+    );
   }
 
   async #userSmartAccount(accountKey: string) {
-    const owner = await this.#cdp.evm.getOrCreateAccount({
-      name: cdpAccountName("owner", accountKey),
-    });
-    return this.#cdp.evm.getOrCreateSmartAccount({
-      name: cdpAccountName("user", accountKey),
-      owner,
-      enableSpendPermissions: true,
-    });
+    const owner = await this.#bounded("account lookup", () =>
+      this.#cdp.evm.getOrCreateAccount({ name: cdpAccountName("owner", accountKey) }),
+    );
+    return this.#bounded("smart-account lookup", () =>
+      this.#cdp.evm.getOrCreateSmartAccount({
+        name: cdpAccountName("user", accountKey),
+        owner,
+        enableSpendPermissions: true,
+      }),
+    );
   }
 
   async connect(accountKey: string): Promise<UserWallet> {
@@ -193,9 +251,9 @@ export class CdpWalletProvider implements WalletProvider {
       this.#userSmartAccount(accountKey),
       this.#agentSpender(),
     ]);
-    const { spendPermissions } = await this.#cdp.evm.listSpendPermissions({
-      address: smart.address as Hex,
-    });
+    const { spendPermissions } = await this.#bounded("permission read", () =>
+      this.#cdp.evm.listSpendPermissions({ address: smart.address as Hex }),
+    );
     const mine = spendPermissions
       .filter((p) => p.permission.spender.toLowerCase() === String(spender.address).toLowerCase())
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -234,7 +292,9 @@ export class CdpWalletProvider implements WalletProvider {
    * which also covers a chain where the contract address differs.
    */
   async balances(address: Hex): Promise<TokenBalances> {
-    const { balances } = await this.#cdp.evm.listTokenBalances({ address, network: this.#network });
+    const { balances } = await this.#bounded("balance read", () =>
+      this.#cdp.evm.listTokenBalances({ address, network: this.#network }),
+    );
     const held = (symbol: "USDC" | "ETH"): number => {
       const contract = this.#token(symbol).toLowerCase();
       const match = balances.find(
@@ -383,7 +443,9 @@ export class CdpWalletProvider implements WalletProvider {
   async #rawBalance(address: Hex, symbol: string): Promise<{ amount: bigint; decimals: number }> {
     const wanted = this.#token(symbol).toLowerCase();
     const upper = symbol.toUpperCase();
-    const { balances } = await this.#cdp.evm.listTokenBalances({ address, network: this.#network });
+    const { balances } = await this.#bounded("balance read", () =>
+      this.#cdp.evm.listTokenBalances({ address, network: this.#network }),
+    );
     const match = balances.find(
       (b) =>
         b.token.contractAddress.toLowerCase() === wanted || b.token.symbol?.toUpperCase() === upper,
@@ -445,9 +507,9 @@ export class CdpWalletProvider implements WalletProvider {
       this.#userSmartAccount(accountKey),
       this.#agentSpender(),
     ]);
-    const { spendPermissions } = await this.#cdp.evm.listSpendPermissions({
-      address: smart.address as Hex,
-    });
+    const { spendPermissions } = await this.#bounded("permission read", () =>
+      this.#cdp.evm.listSpendPermissions({ address: smart.address as Hex }),
+    );
     const match = spendPermissions
       .filter(
         (p) =>
@@ -464,10 +526,18 @@ export class CdpWalletProvider implements WalletProvider {
   ): Promise<string> {
     if (op.transactionHash) return op.transactionHash;
     try {
-      const done = await this.#cdp.evm.waitForUserOperation({
-        smartAccountAddress,
-        userOpHash: op.userOpHash as Hex,
-      });
+      // Bounded generously: this waits for a block, and a slow chain is not an error.
+      // Timing out here is safe in a way it is not elsewhere — the catch below falls
+      // back to the userOp hash, so the operation is still reported, never denied.
+      const done = await this.#bounded(
+        "settlement",
+        () =>
+          this.#cdp.evm.waitForUserOperation({
+            smartAccountAddress,
+            userOpHash: op.userOpHash as Hex,
+          }),
+        this.#timeoutMs * SETTLEMENT_BUDGET,
+      );
       return (done as { transactionHash?: string }).transactionHash ?? op.userOpHash;
     } catch {
       return op.userOpHash;

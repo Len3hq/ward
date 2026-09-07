@@ -30,6 +30,16 @@ export interface CdpConfig {
    * this and the user never needs to hold ETH — only the USDC they mean to spend.
    */
   paymasterUrl: string | undefined;
+  /**
+   * How long any CDP call that has NOT submitted a transaction may take before Ward
+   * gives up on it, in ms (`CDP_TIMEOUT_MS`, default 15s).
+   *
+   * The SDK has no deadline of its own. When CDP is unreachable it retries
+   * internally and a single `getOrCreateAccount` was measured taking **241 seconds**
+   * before throwing "Unable to connect to CDP service" — with the user's turn parked
+   * behind it the whole time, and nothing in the chat but silence.
+   */
+  timeoutMs: number;
 }
 
 /**
@@ -103,7 +113,13 @@ function cdpConfig(): CdpConfig | undefined {
   const apiKeySecret = optional("CDP_API_KEY_SECRET");
   const walletSecret = optional("CDP_WALLET_SECRET");
   if (apiKeyId && apiKeySecret && walletSecret) {
-    return { apiKeyId, apiKeySecret, walletSecret, paymasterUrl: optional("CDP_PAYMASTER_URL") };
+    return {
+      apiKeyId,
+      apiKeySecret,
+      walletSecret,
+      paymasterUrl: optional("CDP_PAYMASTER_URL"),
+      timeoutMs: Number(optional("CDP_TIMEOUT_MS") ?? "15000") || 15_000,
+    };
   }
   return undefined;
 }

@@ -8,6 +8,7 @@ import {
 } from "../../memory/index.ts";
 import type { WardGraph } from "../agent/graph.ts";
 import { accountsFor } from "../identity/index.ts";
+import { log, logError, preview } from "../log.ts";
 import { adapterFor, registeredChannels } from "./channels.ts";
 import { runTurn } from "./core.ts";
 
@@ -68,7 +69,7 @@ export function startProposalWatcher(graph: WardGraph, pollMs = POLL_MS): Propos
     try {
       await drain();
     } catch (error) {
-      console.error("proposal delivery failed:", error);
+      logError("proposal.failed", error);
     }
   };
 
@@ -90,7 +91,12 @@ async function deliver(graph: WardGraph, proposal: Proposal): Promise<Channel | 
   // The gate, again, at delivery time: an authorization deleted between proposing
   // and now means there is nothing to confirm.
   if ((await read(proposal.ward_user_id)) === null) {
-    console.error(`proposal ${proposal.id}: no authorization record, dropping`);
+    // The gate working, not a failure — logged as an event, without a stack.
+    log("proposal.dropped", {
+      proposal: proposal.id,
+      user: proposal.ward_user_id,
+      reason: "no authorization record",
+    });
     return null;
   }
 
@@ -101,6 +107,14 @@ async function deliver(graph: WardGraph, proposal: Proposal): Promise<Channel | 
 
   const adapter = await adapterFor(target.channel, target.account_id);
   if (!adapter) return null;
+
+  log("proposal.deliver", {
+    proposal: proposal.id,
+    user: proposal.ward_user_id,
+    channel: target.channel,
+    account: target.account_id,
+    text: preview(proposal.request),
+  });
 
   await adapter.send(
     `An MCP client asked me to do this on your behalf:\n\n> ${proposal.request}\n\n` +

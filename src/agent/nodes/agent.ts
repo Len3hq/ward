@@ -3,6 +3,7 @@ import { ChatOpenAI } from "@langchain/openai";
 
 import { read, readConversation, readWallet, spentToday } from "../../../memory/index.ts";
 import { loadConfig } from "../../config.ts";
+import { log } from "../../log.ts";
 import { sanitizeUrls, wrapUserInput } from "../guardrails.ts";
 import { describeIntent } from "../intent.ts";
 import { BASE_SYSTEM, buildAuthorizationContext } from "../prompts.ts";
@@ -67,10 +68,18 @@ export async function agentNode(state: WardStateType): Promise<Partial<WardState
     maxTokens: 1024,
   }).bindTools(boundTools(userId));
 
+  const started = performance.now();
   const response = await model.invoke([
     new SystemMessage(system),
     ...wrapHumanTurns(state.messages),
   ]);
+  log("model.call", {
+    user: state.userId,
+    model: config.models.agent,
+    ms: performance.now() - started,
+    turns: state.messages.length,
+    tool_calls: response.tool_calls?.length ?? 0,
+  });
 
   if (typeof response.content === "string") {
     response.content = sanitizeUrls(response.content);

@@ -459,8 +459,16 @@ describe("injection", () => {
     // The gateway registers /link, /unlink and /whoami as Telegraf commands, and its
     // text handler drops anything starting with "/" before reaching the graph. This
     // asserts the second half — the guard that keeps a stray "/link ..." out.
+    //
+    // Matched as a shape rather than one exact line: the branch now logs the command
+    // word (never its argument, which may be a link code) before returning, and the
+    // property being guarded is that it RETURNS, not how it is written.
     const gateway = await Bun.file("src/telegram/gateway.ts").text();
-    expect(gateway).toContain('if (text.startsWith("/")) return;');
+    const guard =
+      /if \(text\.startsWith\("\/"\)\)\s*(?:return;|\{(?:[^{}]|\{[^{}]*\})*return;(?:[^{}]|\{[^{}]*\})*\})/;
+    expect(gateway).toMatch(guard);
+    // …and it comes before the turn is ever started.
+    expect(gateway.search(guard)).toBeLessThan(gateway.indexOf("await runTurn("));
     expect(gateway).toMatch(/bot\.command\("link", identity\(linkCommand\)\)/);
   });
 });

@@ -205,6 +205,38 @@ waitlist or usage to cite; this section is honest and modest by design.
   `curl -x "$CDP_PROXY_URL" https://api.cdp.coinbase.com/`. `@coinbase/cdp-sdk` has
   no per-client fetch option, so the global `fetch` patch in `src/net.ts` is the
   only hook. On Railway (non-blocked region) leave `CDP_PROXY_URL` unset.
+- **A turn hangs for minutes**: the CDP SDK has no deadline of its own — an
+  unreachable CDP retried internally for 241 seconds in production before throwing.
+  Calls that submit no transaction (account, permission and balance reads) are now
+  bounded by `CDP_TIMEOUT_MS` (default 15s) and fail with `CDP <what> did not answer
+within 15s`; look for that line before suspecting the model.
+- **Telegram goes quiet after a while**: check for `TimeoutError: Promise timed out
+after 90000 milliseconds` — that is Telegraf's `handlerTimeout` killing a handler
+  parked on a confirmation, which used to end long-polling and exit the process. The
+  gateway sets it from `CONFIRM_TIMEOUT_MS`; if a confirmation window is ever made
+  longer than that, the two must move together.
+
+## Reading the logs
+
+Ward writes one `key=value` line per event, so a Railway log shows who is talking to
+it and where a slow turn went:
+
+```
+… ward event=msg.in     channel=telegram account=706456243 chat=706456243 chars=21 text="swap $20 usdc for eth"
+… ward event=turn.start channel=telegram account=706456243 thread=telegram:706456243:1 chars=21 …
+… ward event=intent     action=swap source=table ms=0.6
+… ward event=model.call model=gpt-4o-mini ms=1294.6 turns=1 tool_calls=0
+… ward event=confirm.ask channel=telegram text="Swap $20 USDC → ETH. $0.00 of your $100 daily cap used …"
+… ward event=confirm.answer answer=yes ms=8214.0
+… ward event=turn.done  channel=telegram ms=11602.3 chars=134 …
+```
+
+`source` on the `intent` line says what a turn's classification cost: `table` (rules,
+free), `smalltalk` (nothing money-shaped, model call skipped), `llm` (one round trip),
+`fallback` (that call failed — the reason is logged next to it). `model.call` and
+`turn.done` carry the milliseconds, which is how to tell a slow model from a slow
+chain read. Slash-command arguments are never printed — a link code is a secret — and
+`WARD_LOG_TEXT=0` drops message text entirely, keeping the lengths.
 
 ## Attribution
 

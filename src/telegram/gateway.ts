@@ -15,6 +15,7 @@ import {
   whoamiCommand,
 } from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
+import { log, logError, preview } from "../log.ts";
 import { redeemLinkState } from "../identity/linking.ts";
 
 /**
@@ -80,7 +81,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
    * failed turn would take every other conversation down with it.
    */
   bot.catch(async (error, ctx) => {
-    console.error("telegram update failed:", error);
+    logError("telegram.update.failed", error, { account: String(ctx.from?.id ?? "?") });
     await ctx
       .reply("Something went wrong on my side. Try again in a moment.")
       .catch(() => undefined);
@@ -126,6 +127,12 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
    */
   bot.start(async (ctx) => {
     const payload = ctx.payload.trim();
+    log("cmd", {
+      channel: "telegram",
+      account: String(ctx.from.id),
+      command: "/start",
+      args: payload.length > 0,
+    });
     if (payload.length === 0) {
       await ctx.reply(
         `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`,
@@ -168,6 +175,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 
   bot.command("newsession", (ctx) => {
     const s = session(ctx.chat.id);
+    log("cmd", { channel: "telegram", account: String(ctx.from.id), command: "/newsession" });
     s.seq += 1;
     cancelPending(s);
     return ctx.reply("Fresh session started. Your authorization in Sibyl Memory is unchanged.");
@@ -175,6 +183,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 
   bot.command("defaultsession", (ctx) => {
     const s = session(ctx.chat.id);
+    log("cmd", { channel: "telegram", account: String(ctx.from.id), command: "/defaultsession" });
     s.seq = 1;
     cancelPending(s);
     return ctx.reply("Back to your default session.");
@@ -190,6 +199,13 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
   ) => {
     return async (ctx: Context & { message: { text: string } }) => {
       const argument = ctx.message.text.replace(/^\/\S+\s*/, "");
+      // The argument can be a link code, so it is counted, never printed.
+      log("cmd", {
+        channel: "telegram",
+        account: String(ctx.from?.id ?? ""),
+        command: ctx.message.text.split(/\s+/)[0],
+        args: argument.length > 0,
+      });
       try {
         const reply = await handler(
           { channel: "telegram", accountId: String(ctx.from?.id ?? "") },
@@ -197,7 +213,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
         );
         await ctx.reply(reply, { link_preview_options: { is_disabled: true } });
       } catch (error) {
-        console.error("identity command failed:", error);
+        logError("cmd.failed", error, { channel: "telegram", account: String(ctx.from?.id ?? "") });
         await ctx.reply("That didn't work. Try again in a moment.");
       }
     };
@@ -213,18 +229,49 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 
   bot.on("text", async (ctx) => {
     const text = ctx.message.text;
-    if (text.startsWith("/")) return;
-
     const chatId = ctx.chat.id;
     const s = session(chatId);
+
+    // An unregistered command still reaches this handler, and its argument may be a
+    // link code — counted, never printed, exactly as the registered commands do it.
+    if (text.startsWith("/")) {
+      const [word = "", ...rest] = text.split(/\s+/);
+      log("cmd", {
+        channel: "telegram",
+        account: String(ctx.from.id),
+        command: word,
+        args: rest.length > 0,
+        handled: false,
+      });
+      return;
+    }
+
+    // Every inbound message, before anything else can fail. A deployment serving
+    // people has to look different in the log from one sitting idle.
+    log("msg.in", {
+      channel: "telegram",
+      account: String(ctx.from.id),
+      username: ctx.from.username,
+      chat: chatId,
+      session: s.seq,
+      chars: text.length,
+      pending_confirm: s.pending !== undefined,
+      text: preview(text),
+    });
 
     // A confirmation is open: this message is the answer, not a new turn.
     if (s.pending) {
       const answer = readAnswer(text);
       if (answer === null) {
+        log("confirm.unclear", { channel: "telegram", account: String(ctx.from.id) });
         await ctx.reply(`Please answer yes or no.\n\n${s.pending.prompt}`);
         return;
       }
+      log("confirm.resolved", {
+        channel: "telegram",
+        account: String(ctx.from.id),
+        answer: answer ? "yes" : "no",
+      });
       const { resolve } = s.pending;
       s.pending = undefined;
       resolve(answer);
@@ -236,7 +283,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     try {
       ({ userId } = await resolveUser("telegram", accountId));
     } catch (error) {
-      console.error("identity resolution failed:", error);
+      logError("identity.failed", error, { channel: "telegram", account: accountId });
       await ctx.reply("I couldn't work out who you are just now. Try again in a moment.");
       return;
     }

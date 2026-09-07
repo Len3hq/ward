@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { loadConfig } from "../config.ts";
+import { logError } from "../log.ts";
 import { parseUsd } from "./prompts.ts";
 
 /**
@@ -39,7 +40,12 @@ export interface ParsedIntent {
   token?: string;
   /** x402 endpoint hint. */
   endpoint?: string;
-  source: "table" | "llm" | "fallback";
+  /**
+   * How this was decided — the field to read in a `event=intent` log line.
+   * `table` deterministic rules · `smalltalk` nothing money-shaped, no model call
+   * · `llm` one `gpt-4o-mini` round trip · `fallback` that call failed.
+   */
+  source: "table" | "smalltalk" | "llm" | "fallback";
 }
 
 const BASE_TOKENS = [
@@ -217,18 +223,74 @@ function executableIntent(text: string, t: string): ParsedIntent | null {
   return null;
 }
 
-const llmIntentSchema = z.object({
+/**
+ * Every field required, every optional one nullable — and no `.positive()`.
+ *
+ * OpenAI's structured outputs are strict: the JSON schema must list EVERY property in
+ * `required`, and it rejects validation keywords like `exclusiveMinimum`. The obvious
+ * spelling — `.optional()` on the fields that are usually absent — produced a schema
+ * OpenAI refused outright:
+ *
+ *   400 Invalid schema for response_format 'parse_intent': 'required' is required to
+ *   be supplied and to be an array including every key in properties. Missing 'amount_usd'
+ *
+ * Every call. And `parseIntent` catches that and returns `read_only`, so the failure
+ * was invisible twice over: the LLM half of intent parsing had never once worked, and
+ * every message the table missed paid ~1s for a round trip that could only fail. The
+ * `source=fallback` line in the logs is what finally showed it.
+ *
+ * The range check moves into `toParsedIntent` below, where it belongs anyway.
+ */
+export const llmIntentSchema = z.object({
   action_type: z.enum(INTENT_ACTIONS),
-  amount_usd: z.number().positive().optional(),
-  pair: z.string().optional(),
-  token: z.string().optional(),
-  endpoint: z.string().optional(),
+  amount_usd: z.number().nullable(),
+  pair: z.string().nullable(),
+  token: z.string().nullable(),
+  endpoint: z.string().nullable(),
 });
+
+type LlmIntent = z.infer<typeof llmIntentSchema>;
+
+/** Nulls out, and an amount only when it is one. */
+function toParsedIntent(parsed: LlmIntent): ParsedIntent {
+  const amountUsd =
+    parsed.amount_usd !== null && Number.isFinite(parsed.amount_usd) && parsed.amount_usd > 0
+      ? parsed.amount_usd
+      : undefined;
+  return {
+    action_type: parsed.action_type,
+    amount_usd: amountUsd,
+    pair: parsed.pair ?? undefined,
+    token: parsed.token ?? undefined,
+    endpoint: parsed.endpoint ?? undefined,
+    source: "llm",
+  };
+}
+
+/**
+ * Text that cannot be an action request, because it contains nothing an action is
+ * made of: no amount, no address, no token, and none of the verbs Ward acts on.
+ *
+ * This exists for latency. Everything the table misses costs a `gpt-4o-mini` round
+ * trip that runs BEFORE the agent's own model call, so "hey" or "thanks" used to
+ * take two sequential model calls to answer — the single biggest avoidable delay in
+ * a Telegram reply. Deliberately conservative: one money-ish word anywhere, or any
+ * digit, and the LLM parse still runs.
+ */
+const MONEY_SIGNAL =
+  /[\d$]|\b0x|\b(swap|trade|convert|exchange|rebalance|buy|sell|send|transfer|pay|withdraw|deposit|fund|hire|acp|x402|revoke|pause|resume|stop|grant|approve|permission|allowance|wallet|account|balance|holdings|portfolio|limit|cap|spend|spent|usdc|usdt|dai|eth|weth|cbeth|wbtc|aero|degen|token|coin|price|risk|rug|scam|whale|holder|data|endpoint|address|gas|onchain|on-chain|amount|worth|dollars?|usd|money|funds?|move|ether|crypto|bucks?)\b/i;
+
+export function isSmallTalk(text: string): boolean {
+  return !MONEY_SIGNAL.test(text);
+}
 
 /** Full parse: table first, then one `gpt-4o-mini` structured call, then `read_only`. */
 export async function parseIntent(text: string): Promise<ParsedIntent> {
   const fromTable = tableIntent(text);
   if (fromTable) return fromTable;
+
+  // Nothing to classify — skip the model round trip entirely.
+  if (isSmallTalk(text)) return { action_type: "read_only", source: "smalltalk" };
 
   const config = loadConfig();
   if (!config.openaiApiKey) return { action_type: "read_only", source: "fallback" };
@@ -260,8 +322,11 @@ export async function parseIntent(text: string): Promise<ParsedIntent> {
       },
       { role: "user", content: text },
     ]);
-    return { ...parsed, source: "llm" };
-  } catch {
+    return toParsedIntent(parsed);
+  } catch (error) {
+    // Fail safe — an unparseable message is a question, never an action. But say so:
+    // this branch silently swallowed a 400 on every single call for weeks.
+    logError("intent.llm.failed", error, { chars: text.length });
     return { action_type: "read_only", source: "fallback" };
   }
 }

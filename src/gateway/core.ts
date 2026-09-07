@@ -4,6 +4,7 @@ import { Command } from "@langchain/langgraph";
 
 import type { WardGraph } from "../agent/graph.ts";
 import { maybeSummarize } from "../agent/summary.ts";
+import { log, logError, preview } from "../log.ts";
 import type { ChannelAdapter } from "./adapter.ts";
 
 /**
@@ -20,6 +21,16 @@ import type { ChannelAdapter } from "./adapter.ts";
 /** A confirmation loop that never settles is a bug; this bounds it. */
 const MAX_CONFIRMATIONS = 4;
 
+/**
+ * How often the "typing…" indicator is refreshed while a turn is working.
+ *
+ * Telegram's lasts about five seconds and Discord's about ten, so sending it once
+ * at the start — which is all Ward used to do — leaves the chat looking idle for
+ * most of a turn that takes a few seconds. Two model round trips and a chain read
+ * is a normal turn, and silence during it reads as "the bot is broken".
+ */
+const TYPING_INTERVAL_MS = 4_000;
+
 export interface TurnInput {
   graph: WardGraph;
   adapter: ChannelAdapter;
@@ -35,8 +46,14 @@ export interface TurnInput {
 export async function runTurn(input: TurnInput): Promise<void> {
   const { graph, adapter, threadId, userId, accountId, text } = input;
   const config = { configurable: { thread_id: threadId } };
+  const started = performance.now();
+  const context = { channel: adapter.channel, account: accountId, user: userId, thread: threadId };
 
-  await adapter.typing();
+  log("turn.start", { ...context, chars: text.length, text: preview(text) });
+
+  // Fire-and-forget: a Telegram API round trip must not sit in front of the graph.
+  const typing = new TypingIndicator(adapter);
+  typing.start();
 
   const session = new OutboundMessage(adapter);
   let next: Parameters<WardGraph["stream"]>[0] = {
@@ -48,31 +65,84 @@ export async function runTurn(input: TurnInput): Promise<void> {
 
   try {
     for (let round = 0; round < MAX_CONFIRMATIONS; round++) {
+      const graphStarted = performance.now();
       const result = await streamOnce(graph, config, next, session);
+      log("turn.graph", { ...context, round, ms: performance.now() - graphStarted });
 
       if (result.interruptText === undefined) {
-        await session.finish(result.finalText || "(no response)");
+        const reply = result.finalText || "(no response)";
+        await session.finish(reply);
+        log("turn.done", {
+          ...context,
+          ms: performance.now() - started,
+          chars: reply.length,
+          text: preview(reply),
+        });
         break;
       }
 
-      // The turn pauses here — possibly for minutes — while the user decides.
+      // The turn pauses here — possibly for minutes — while the user decides. The
+      // typing indicator has to stop, or Ward appears to type for ten minutes.
+      typing.stop();
+      log("confirm.ask", { ...context, text: preview(result.interruptText) });
+      const waited = performance.now();
       const approved = await adapter.askConfirm(result.interruptText);
+      log("confirm.answer", {
+        ...context,
+        answer: approved === null ? "none" : approved ? "yes" : "no",
+        ms: performance.now() - waited,
+      });
+
       if (approved === null) {
         // Unanswered is not approved. Nothing moves, and we say so rather than
         // leaving a silent pending action the user might assume went through.
         await session.finish("I didn't get an answer, so I didn't do anything.");
+        log("turn.done", { ...context, ms: performance.now() - started, answer: "none" });
         break;
       }
+      typing.start();
       session.reset();
       next = new Command({ resume: { approved } });
     }
   } catch (error) {
-    console.error("graph run failed:", error);
+    logError("turn.failed", error, { ...context, ms: performance.now() - started });
     await adapter.send("Something went wrong on my side. Try again in a moment.", "rendered");
     return;
+  } finally {
+    typing.stop();
   }
 
   await refreshSummary(graph, config, userId);
+}
+
+/**
+ * Keeps "typing…" alive for as long as the turn is actually working, and — just as
+ * importantly — stops it while a confirmation is open, because a chat that types
+ * for ten minutes is worse than one that says nothing.
+ */
+export class TypingIndicator {
+  #adapter: ChannelAdapter;
+  #intervalMs: number;
+  #timer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(adapter: ChannelAdapter, intervalMs = TYPING_INTERVAL_MS) {
+    this.#adapter = adapter;
+    this.#intervalMs = intervalMs;
+  }
+
+  start(): void {
+    if (this.#timer) return;
+    void this.#adapter.typing();
+    this.#timer = setInterval(() => void this.#adapter.typing(), this.#intervalMs);
+    // Never hold the process open on a typing indicator.
+    this.#timer.unref?.();
+  }
+
+  stop(): void {
+    if (!this.#timer) return;
+    clearInterval(this.#timer);
+    this.#timer = undefined;
+  }
 }
 
 interface StreamResult {
@@ -174,7 +244,7 @@ async function refreshSummary(
     const messages = (snapshot.values as { messages?: BaseMessage[] }).messages ?? [];
     await maybeSummarize(userId, messages);
   } catch (error) {
-    console.error("summary refresh failed:", error);
+    logError("summary.failed", error, { user: userId });
   }
 }
 
