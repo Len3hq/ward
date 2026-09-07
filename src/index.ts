@@ -40,6 +40,13 @@ async function main(): Promise<void> {
     // `bot.launch()` never resolves while polling, so its rejection is the only
     // signal that polling died — and unhandled it takes the process down.
     //
+    // It has to mean ONLY that. It used to mean more: Telegraf rethrows whatever a
+    // handler throws, including its own 90-second `handlerTimeout`, which every open
+    // confirmation tripped — so a user thinking about a swap for two minutes exited
+    // the process here and Railway restarted the container underneath them. The
+    // gateway now sets a timeout longer than the confirmation window and installs
+    // `bot.catch`, so a single bad update can no longer reach this line.
+    //
     // On SIGTERM that happens EVERY time: aborting the in-flight `getUpdates`
     // makes Telegraf run `redactToken`, which assigns to `error.message` — a
     // readonly property under Bun. The resulting "Attempted to assign to readonly

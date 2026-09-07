@@ -22,8 +22,9 @@ import {
   type ResolvedX402Call,
   type X402Endpoint,
 } from "../../execution/catalog.ts";
+import { resolveSwapPair } from "../../execution/swap.ts";
 import { walletProvider } from "../../wallet/index.ts";
-import { describeIntent } from "../intent.ts";
+import { describeIntent, tokenDenominatedAmount } from "../intent.ts";
 import type { ConfirmedIntent, WardStateType } from "../state.ts";
 
 /**
@@ -53,6 +54,8 @@ export async function confirmNode(
   let destination: string | undefined;
   let acpCounterparty: string | undefined;
   let amountUsd: number;
+  /** The normalised `SELL/BUY` for a swap — what `execute` is handed, not the raw parse. */
+  let swapPair: string | undefined;
 
   if (action === "x402_data_purchase") {
     endpoint = await searchCatalog(`${query} ${intent.token ?? ""}`);
@@ -82,6 +85,34 @@ export async function confirmNode(
       return { messages: [new AIMessage("How much? Give me a USD amount.")] };
     }
   } else {
+    // A swap has to be one Ward is authorized to make before its price is discussed:
+    // the permission is a USDC allowance, so USDC is the only sellable side.
+    if (action === "swap") {
+      const resolved = resolveSwapPair(intent.pair);
+      if (!resolved.ok) return { messages: [new AIMessage(resolved.message)] };
+      swapPair = `${resolved.pair.sell}/${resolved.pair.buy}`;
+    }
+
+    // "0.0001 eth" is not $0.0001, and every cap here is in dollars. Read from the
+    // user's own words rather than the parsed amount, so an LLM parse that dropped
+    // the unit is caught too.
+    const denominated = tokenDenominatedAmount(query);
+    if (denominated) {
+      return {
+        messages: [
+          new AIMessage(
+            [
+              `I size every action in USD — your $${record.standing_caps.per_action_limit_usd} per-action limit and`,
+              `$${record.standing_caps.daily_limit_usd} daily cap are both in dollars, so I can't check`,
+              `${denominated.amount} ${denominated.symbol} against them. Nothing was done.`,
+              "",
+              `Give me the dollar amount instead — for example "swap $10 USDC into ${denominated.symbol}".`,
+            ].join("\n"),
+          ),
+        ],
+      };
+    }
+
     amountUsd = intent.amount_usd ?? 0;
     if (amountUsd <= 0) {
       return { messages: [new AIMessage("How much? Give me a USD amount.")] };
@@ -102,7 +133,7 @@ export async function confirmNode(
     // cannot sanity-check from a summary, and it is the one that cannot be undone.
     summary = `Send $${amountUsd} USDC to ${destination}`;
   } else {
-    summary = describeIntent(intent);
+    summary = describeIntent(swapPair ? { ...intent, pair: swapPair } : intent);
   }
 
   // --- gate (for the confirmation copy; execute re-checks on fresh reads) ---
@@ -111,6 +142,34 @@ export async function confirmNode(
   const permission = wallet?.spend_permission ?? null;
   // Addressed by the wallet's pinned key, never the principal — see `nodes/wallet.ts`.
   const accountKey = wallet?.account_key ?? state.userId;
+
+  const provider = walletProvider();
+  if (provider.requiresSpendPermission) {
+    // Without a permission there is nothing to spend FROM. Saying so here, before a
+    // confirmation, is the difference between a clear next step and a "yes" that
+    // fails on chain — or worse, one that spends the shared spender's own float.
+    if (wallet === null) {
+      return {
+        messages: [
+          new AIMessage(
+            "You don't have a wallet yet, so there's nothing to spend from. Say \"generate my wallet\", " +
+              "then grant a spend permission, and I can act.",
+          ),
+        ],
+      };
+    }
+    if (permission === null) {
+      return {
+        messages: [
+          new AIMessage(
+            "You haven't granted an on-chain spend permission yet, so I have no authority to move " +
+              `your USDC — nothing was done. Say "grant a $${record.standing_caps.daily_limit_usd} daily permission" ` +
+              "and I'll set it up, then ask me again.",
+          ),
+        ],
+      };
+    }
+  }
 
   if (permission && permission.status !== "active") {
     return {
@@ -124,9 +183,7 @@ export async function confirmNode(
 
   let onchainAllowanceUsd: number | null = null;
   if (permission) {
-    const live = await walletProvider()
-      .readSpendPermission(accountKey)
-      .catch(() => null);
+    const live = await provider.readSpendPermission(accountKey).catch(() => null);
     if (live?.status === "revoked") {
       return {
         messages: [
@@ -166,7 +223,7 @@ export async function confirmNode(
     id: intentId(state, config),
     action_type: action,
     amount_usd: amountUsd,
-    pair: intent.pair,
+    pair: swapPair ?? intent.pair,
     destination,
     endpoint:
       endpoint && resolvedCall

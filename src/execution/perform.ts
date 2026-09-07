@@ -12,6 +12,7 @@ import { walletProvider } from "../wallet/index.ts";
 import { runAcpJob } from "./acp.ts";
 import { txUrl } from "./explorer.ts";
 import { evaluateGate } from "./gate.ts";
+import { resolveSwapPair } from "./swap.ts";
 
 /**
  * One spend, from wherever it was authorized.
@@ -78,6 +79,17 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
   // stub provider tolerates and the CDP provider rejects.
   const accountKey = wallet?.account_key ?? userId;
 
+  // The same precondition `nodes/confirm.ts` states before asking, re-checked here
+  // because MCP execution reaches this function without passing through that node.
+  if (walletProvider().requiresSpendPermission && (wallet === null || permission === null)) {
+    return {
+      ok: false,
+      message:
+        "No on-chain spend permission, so I have no authority to move your USDC — nothing moved. " +
+        'Say "generate my wallet" if you have none, then grant a spend permission.',
+    };
+  }
+
   let onchainAllowanceUsd: number | null = null;
   if (permission) {
     if (permission.status !== "active") {
@@ -139,7 +151,12 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     }
 
     if (request.actionType === "swap") {
-      const [sell = "USDC", buy = "ETH"] = (request.pair ?? "USDC/ETH").split("/");
+      // No defaulting: a pair that cannot be honoured is refused, never guessed at.
+      // `"ETH"` alone used to become sell ETH → buy ETH, and selling anything but
+      // USDC is outside what the Spend Permission authorizes at all.
+      const resolved = resolveSwapPair(request.pair);
+      if (!resolved.ok) return { ok: false, message: resolved.message };
+      const { sell, buy } = resolved.pair;
       const result = await provider.swap(accountKey, {
         sellSymbol: sell,
         buySymbol: buy,

@@ -16,7 +16,7 @@ import type { ParsedIntent } from "./intent.ts";
  * shared — see `MULTI-CHANNEL.md`.
  */
 
-export type Route = "onboarding" | "agent" | "refuse" | "confirm" | "wallet";
+export type Route = "onboarding" | "agent" | "refuse" | "confirm" | "wallet" | "stale_confirm";
 
 /** Answers collected turn-by-turn during onboarding, before `store.initialize`. */
 export interface OnboardingDraft {

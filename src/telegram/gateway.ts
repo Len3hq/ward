@@ -3,6 +3,7 @@ import { Context, Telegraf, type Telegram } from "telegraf";
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
+import { readAnswer } from "../gateway/answers.ts";
 import { registerChannel } from "../gateway/channels.ts";
 import { markCopyable } from "../gateway/format.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
@@ -42,11 +43,26 @@ import { redeemLinkState } from "../identity/linking.ts";
 const EDIT_THROTTLE_MS = 900;
 const TELEGRAM_LIMIT = 4096;
 /** How long a typed confirmation stays open before the turn gives up on it. */
-const CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
+export const CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
 
-const YES =
-  /^\s*(y|yes|yeah|yep|yup|confirm|confirmed|ok|okay|do it|go|send it|sure|approve[d]?)\s*!?\s*$/i;
-const NO = /^\s*(n|no|nope|nah|cancel|stop|don'?t|abort|reject|deny)\s*!?\s*$/i;
+/**
+ * How long Telegraf lets one update's handler run — and the single most damaging
+ * default in this file if it is left alone.
+ *
+ * A turn holding a confirmation is PARKED inside its handler until the user answers,
+ * which is minutes, not seconds. Telegraf's default is 90 seconds, after which
+ * `p-timeout` rejects the handler, Telegraf's default error handler rethrows, the
+ * rejection surfaces out of `bot.launch()` — and `index.ts`, correctly reading that
+ * as "polling died", exits the process. Every confirmation left open for 90 seconds
+ * therefore killed Ward and took the in-memory session and graph checkpoint with it,
+ * so the user's "yes" arrived at a process that had never asked them anything.
+ * (Observed in production: `TimeoutError: Promise timed out after 90000 ms` on the
+ * swap update, then an immediate restart.)
+ *
+ * Derived from the confirmation window on purpose, so the two cannot drift apart
+ * again — but still finite, so a genuinely stuck handler is eventually collected.
+ */
+export const HANDLER_TIMEOUT_MS = CONFIRM_TIMEOUT_MS + 60_000;
 
 interface ChatSession {
   seq: number;
@@ -55,8 +71,20 @@ interface ChatSession {
 }
 
 export function createGateway(token: string, graph: WardGraph): Telegraf {
-  const bot = new Telegraf(token);
+  const bot = new Telegraf(token, { handlerTimeout: HANDLER_TIMEOUT_MS });
   const sessions = new Map<number, ChatSession>();
+
+  /**
+   * One bad update must never stop the bot. Telegraf's default handler rethrows,
+   * which ends long-polling and (by `index.ts`'s reading) the process — so a single
+   * failed turn would take every other conversation down with it.
+   */
+  bot.catch(async (error, ctx) => {
+    console.error("telegram update failed:", error);
+    await ctx
+      .reply("Something went wrong on my side. Try again in a moment.")
+      .catch(() => undefined);
+  });
 
   const session = (chatId: number): ChatSession => {
     let s = sessions.get(chatId);
@@ -192,7 +220,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
 
     // A confirmation is open: this message is the answer, not a new turn.
     if (s.pending) {
-      const answer = YES.test(text) ? true : NO.test(text) ? false : null;
+      const answer = readAnswer(text);
       if (answer === null) {
         await ctx.reply(`Please answer yes or no.\n\n${s.pending.prompt}`);
         return;

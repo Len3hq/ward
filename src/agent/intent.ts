@@ -76,6 +76,32 @@ function extractPair(text: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Tokens whose amounts are NOT dollars. Every cap in Ward is in USD, so "0.0001 eth"
+ * is not a quantity it can gate — and reading it as $0.0001, which is what happened,
+ * confirms an action a thousand times smaller than the user asked for.
+ *
+ * Stablecoins are deliberately absent: "25 USDC" is $25 to within the precision
+ * anyone cares about here, and treating it as unquantifiable would reject the most
+ * common phrasing there is.
+ */
+const PRICED_TOKENS = ["eth", "weth", "cbeth", "wbtc", "aero", "degen"];
+const TOKEN_AMOUNT_RE = new RegExp(
+  String.raw`(?<![$\d.])(\d+(?:\.\d+)?)\s*(${PRICED_TOKENS.join("|")})\b`,
+  "i",
+);
+
+/** An amount the user expressed in a token rather than in dollars, if there is one. */
+export function tokenDenominatedAmount(
+  text: string,
+): { amount: number; symbol: string } | undefined {
+  const match = text.match(TOKEN_AMOUNT_RE);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  return { amount, symbol: match[2]!.toUpperCase() };
+}
+
 /** A destination address, preserved in the case the user typed it. */
 export function extractAddress(text: string): string | undefined {
   return text.match(/\b0x[a-fA-F0-9]{40}\b/)?.[0];

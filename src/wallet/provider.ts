@@ -47,6 +47,15 @@ export interface SpendPermissionState {
 
 export interface WalletProvider {
   readonly kind: "cdp" | "stub";
+  /**
+   * Whether an ACTIVE on-chain Spend Permission is the precondition for spending.
+   *
+   * True on the real path: without a permission there is no authority to pull the
+   * user's USDC, and a spend attempted anyway would move the shared agent spender's
+   * own float instead — Ward's money, spent on a user who authorized nothing. False
+   * for the stub, whose whole point is a no-key demo with memory caps only.
+   */
+  readonly requiresSpendPermission: boolean;
   network(): "base" | "base-sepolia";
   /** Create/fetch the user's smart account and the shared agent spender. Idempotent. */
   connect(accountKey: string): Promise<UserWallet>;

@@ -10,6 +10,7 @@ import { intentNode } from "./nodes/intent.ts";
 import { onboardingNode } from "./nodes/onboarding.ts";
 import { refuseNode } from "./nodes/refuse.ts";
 import { routerNode } from "./nodes/router.ts";
+import { staleConfirmNode } from "./nodes/stale-confirm.ts";
 import { walletNode } from "./nodes/wallet.ts";
 import { WardState, type WardStateType } from "./state.ts";
 import { APPROVAL_REQUIRED, toolNodeFor } from "./tools.ts";
@@ -17,7 +18,7 @@ import { APPROVAL_REQUIRED, toolNodeFor } from "./tools.ts";
 /**
  * The Ward graph. Topology from Len3's `agent/src/graph/`:
  *
- *   guard → intent → router → (onboarding | agent | refuse | confirm)
+ *   guard → intent → router → (onboarding | agent | refuse | confirm | stale_confirm)
  *   confirm → [interrupt: yes/no]
  *   agent ⇄ tools
  *   agent → approval → tools     (when an approval-required tool call is pending)
@@ -34,9 +35,7 @@ function afterGuard(state: WardStateType): "refuse" | "intent" {
   return state.route === "refuse" ? "refuse" : "intent";
 }
 
-function afterRouter(
-  state: WardStateType,
-): "onboarding" | "agent" | "refuse" | "confirm" | "wallet" {
+function afterRouter(state: WardStateType): NonNullable<WardStateType["route"]> {
   return state.route ?? "agent";
 }
 
@@ -67,6 +66,7 @@ export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
     .addNode("confirm", confirmNode)
     .addNode("execute", executeNode)
     .addNode("wallet", walletNode)
+    .addNode("stale_confirm", staleConfirmNode)
     .addNode("approval", approvalNode)
     .addNode("tools", toolsNode)
     .addEdge(START, "guard")
@@ -78,12 +78,14 @@ export function buildGraph(checkpointer: MemorySaver = new MemorySaver()) {
       refuse: "refuse",
       confirm: "confirm",
       wallet: "wallet",
+      stale_confirm: "stale_confirm",
     })
     .addEdge("onboarding", END)
     .addEdge("refuse", END)
     .addConditionalEdges("confirm", afterConfirm, { execute: "execute", [END]: END })
     .addEdge("execute", END)
     .addEdge("wallet", END)
+    .addEdge("stale_confirm", END)
     .addConditionalEdges("agent", afterAgent, {
       approval: "approval",
       tools: "tools",

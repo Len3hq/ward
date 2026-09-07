@@ -32,6 +32,8 @@ const APPROX_USD_PER_TOKEN: Record<string, number> = {
  */
 export class StubWalletProvider implements WalletProvider {
   readonly kind = "stub" as const;
+  /** No chain, no permission needed — the memory caps are the whole gate here. */
+  readonly requiresSpendPermission = false;
   #network: "base" | "base-sepolia";
   #permissions = new Map<string, SpendPermissionState>();
 

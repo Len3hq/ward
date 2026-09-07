@@ -91,6 +91,7 @@ const TOKENS: Record<"base" | "base-sepolia", Record<string, Hex>> = {
 
 export class CdpWalletProvider implements WalletProvider {
   readonly kind = "cdp" as const;
+  readonly requiresSpendPermission = true;
   #cdp: CdpClient;
   #network: "base" | "base-sepolia";
   /**
@@ -257,14 +258,12 @@ export class CdpWalletProvider implements WalletProvider {
    */
   async payX402(accountKey: string, request: X402Request): Promise<X402Result> {
     const spender = await this.#agentSpender();
-    const permission = await this.#rawPermission(accountKey);
-    if (permission) {
-      await spender.useSpendPermission({
-        spendPermission: permission,
-        value: parseUnits(String(request.maxUsd), USDC_DECIMALS),
-        network: this.#network,
-      });
-    }
+    const permission = await this.#requirePermission(accountKey);
+    await spender.useSpendPermission({
+      spendPermission: permission,
+      value: parseUnits(String(request.maxUsd), USDC_DECIMALS),
+      network: this.#network,
+    });
 
     const maxValue = parseUnits(String(request.maxUsd), USDC_DECIMALS);
     const pay = wrapFetchWithPayment(
@@ -303,16 +302,13 @@ export class CdpWalletProvider implements WalletProvider {
       this.#agentSpender(),
       this.#userSmartAccount(accountKey),
     ]);
-    const permission = await this.#rawPermission(accountKey);
+    const permission = await this.#requirePermission(accountKey);
     const fromAmount = parseUnits(String(request.amountUsd), USDC_DECIMALS);
-
-    if (permission) {
-      await spender.useSpendPermission({
-        spendPermission: permission,
-        value: fromAmount,
-        network: this.#network,
-      });
-    }
+    await spender.useSpendPermission({
+      spendPermission: permission,
+      value: fromAmount,
+      network: this.#network,
+    });
 
     // Measure around the swap. `spender.swap()` returns a transaction hash and
     // nothing about the output, so the delta in the spender's balance is the only
@@ -367,6 +363,22 @@ export class CdpWalletProvider implements WalletProvider {
     return { txHash, amountUsd: request.amountUsd };
   }
 
+  /**
+   * The permission every spend pulls against, or a refusal.
+   *
+   * `swap` and `payX402` used to treat a missing permission as "skip the pull and
+   * carry on", which spends the SHARED agent spender's own USDC — Ward's float, on
+   * behalf of a user who granted nothing, with the proceeds swept to them. Fail
+   * closed instead, the way `fundAgentFromUser` always did.
+   */
+  async #requirePermission(accountKey: string) {
+    const permission = await this.#rawPermission(accountKey);
+    if (!permission) {
+      throw new Error("no active Spend Permission — grant one before Ward can spend your USDC");
+    }
+    return permission;
+  }
+
   /** Raw balance of one symbol, for measuring a swap's output. */
   async #rawBalance(address: Hex, symbol: string): Promise<{ amount: bigint; decimals: number }> {
     const wanted = this.#token(symbol).toLowerCase();
@@ -400,12 +412,7 @@ export class CdpWalletProvider implements WalletProvider {
    */
   async fundAgentFromUser(accountKey: string, amountUsd: number): Promise<{ pulledUsd: number }> {
     const spender = await this.#agentSpender();
-    const permission = await this.#rawPermission(accountKey);
-    if (!permission) {
-      throw new Error(
-        "no active Spend Permission — grant one before Ward can spend your USDC on an ACP job",
-      );
-    }
+    const permission = await this.#requirePermission(accountKey);
     await spender.useSpendPermission({
       spendPermission: permission,
       value: parseUnits(String(amountUsd), USDC_DECIMALS),

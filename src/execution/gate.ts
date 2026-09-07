@@ -47,6 +47,13 @@ function autoApproveUsd(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 0;
 }
 
+/**
+ * Below this, the action is not worth broadcasting: USDC carries six decimals, and a
+ * dust swap costs more in gas than it moves — "$0.0001" reached a confirmation
+ * prompt and would have gone on chain as 100 units of USDC.
+ */
+export const MIN_SPEND_USD = 0.01;
+
 export function evaluateGate(input: GateInput): GateResult {
   const { record, actionType, amountUsd, spentTodayUsd, revoked, onchainAllowanceUsd } = input;
   const caps = record.standing_caps;
@@ -55,6 +62,10 @@ export function evaluateGate(input: GateInput): GateResult {
     return deny(
       `${actionType.replace(/_/g, " ")} is paused (revocation_log). Lift the pause first.`,
     );
+  }
+
+  if (amountUsd < MIN_SPEND_USD) {
+    return deny(`$${amountUsd} is below the $${MIN_SPEND_USD} minimum I can move on Base.`);
   }
 
   if (amountUsd > caps.per_action_limit_usd) {
