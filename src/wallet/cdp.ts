@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 
 import { CdpClient, parseUnits } from "@coinbase/cdp-sdk";
-import { formatUnits } from "viem";
+import { createPublicClient, formatUnits, http } from "viem";
 import { toAccount } from "viem/accounts";
+import { base, baseSepolia } from "viem/chains";
 import { wrapFetchWithPayment } from "x402-fetch";
 
 import type { CdpConfig } from "../config.ts";
@@ -58,6 +59,13 @@ const SETTLEMENT_BUDGET = 4;
 const X402_REQUEST_TIMEOUT_MS = 60_000;
 /** A quote is a 402 challenge, not a computation — it should be quick. */
 const X402_QUOTE_TIMEOUT_MS = 20_000;
+/**
+ * How long to wait for a USDC pull to be mined before the money is used.
+ *
+ * Base blocks are ~2s; this is generous because the alternative — paying against a
+ * spender that is still empty — is a 402 and a refund round trip.
+ */
+const PULL_CONFIRM_TIMEOUT_MS = 45_000;
 /** Sub-cent tolerance when comparing balances, in USD. */
 const USDC_EPSILON = 1e-9;
 
@@ -439,15 +447,8 @@ export class CdpWalletProvider implements WalletProvider {
     }
 
     const spender = await this.#agentSpender();
-    // Measured BEFORE the pull, so a failure can tell "the payment never settled"
-    // from "it settled and the endpoint broke afterwards" — see `#returnIfUnspent`.
-    const held = await this.#spenderUsdc();
-    const permission = await this.#requirePermission(accountKey);
-    await spender.useSpendPermission({
-      spendPermission: permission,
-      value: parseUnits(String(priceUsd), USDC_DECIMALS),
-      network: this.#network,
-    });
+    // Pulled AND confirmed before the endpoint is asked to be paid — see `#pullUsdc`.
+    const { heldBefore: held } = await this.#pullUsdc(accountKey, priceUsd);
 
     const pay = wrapFetchWithPayment(
       fetch,
@@ -487,6 +488,65 @@ export class CdpWalletProvider implements WalletProvider {
       // the USDC that actually left the user's wallet.
       amountUsd: decoded.amountUsd ?? priceUsd,
     };
+  }
+
+  /**
+   * Pull `amountUsd` from the user's smart account into the spender, and **wait for
+   * it to land**.
+   *
+   * The wait is the whole point. `useSpendPermission` returns as soon as the
+   * transaction is SUBMITTED, and the code went straight on to make the paid
+   * request — so the endpoint's facilitator tried to settle `transferWithAuthorization`
+   * against a spender that was still empty, and answered `402`. It is a race, which
+   * is why it looked intermittent: purchases that happened to take a few seconds
+   * longer landed the pull in time and worked.
+   *
+   * Production, on a $0.01 purchase: pull submitted and the endpoint answered 402
+   * five seconds later, with the money arriving in between.
+   *
+   * Returns what the spender held BEFORE the pull, which is what `#unwind` needs to
+   * tell an unsettled payment from a settled one.
+   */
+  async #pullUsdc(accountKey: string, amountUsd: number): Promise<{ heldBefore: number }> {
+    const spender = await this.#agentSpender();
+    const heldBefore = await this.#spenderUsdc();
+    const permission = await this.#requirePermission(accountKey);
+
+    const result = await spender.useSpendPermission({
+      spendPermission: permission,
+      value: parseUnits(String(amountUsd), USDC_DECIMALS),
+      network: this.#network,
+    });
+
+    const hash = (result as { transactionHash?: Hex }).transactionHash;
+    if (hash) await this.#waitForPull(hash);
+    return { heldBefore };
+  }
+
+  /** Block until the pull is mined, or say plainly that it never confirmed. */
+  async #waitForPull(hash: Hex): Promise<void> {
+    const client = createPublicClient({
+      chain: this.#network === "base" ? base : baseSepolia,
+      transport: http(),
+    });
+    let receipt;
+    try {
+      receipt = await client.waitForTransactionReceipt({
+        hash,
+        timeout: PULL_CONFIRM_TIMEOUT_MS,
+        pollingInterval: 750,
+      });
+    } catch {
+      throw new Error(
+        `the USDC transfer into the agent wallet did not confirm within ` +
+          `${PULL_CONFIRM_TIMEOUT_MS / 1000}s (tx ${hash}) — nothing was paid`,
+      );
+    }
+    if (receipt.status !== "success") {
+      throw new Error(
+        `the USDC transfer into the agent wallet reverted (tx ${hash}) — nothing was paid`,
+      );
+    }
   }
 
   /** The agent spender's USDC, for measuring a pull that may need returning. */
@@ -568,14 +628,8 @@ export class CdpWalletProvider implements WalletProvider {
       this.#agentSpender(),
       this.#userSmartAccount(accountKey),
     ]);
-    const permission = await this.#requirePermission(accountKey);
     const fromAmount = parseUnits(String(request.amountUsd), USDC_DECIMALS);
-    const heldBefore = await this.#spenderUsdc();
-    await spender.useSpendPermission({
-      spendPermission: permission,
-      value: fromAmount,
-      network: this.#network,
-    });
+    const { heldBefore } = await this.#pullUsdc(accountKey, request.amountUsd);
 
     // Measure around the swap. `spender.swap()` returns a transaction hash and
     // nothing about the output, so the delta in the spender's balance is the only
@@ -704,13 +758,9 @@ export class CdpWalletProvider implements WalletProvider {
    * hard error here, not the soft skip the near-atomic swap/x402 paths take.
    */
   async fundAgentFromUser(accountKey: string, amountUsd: number): Promise<{ pulledUsd: number }> {
-    const spender = await this.#agentSpender();
-    const permission = await this.#requirePermission(accountKey);
-    await spender.useSpendPermission({
-      spendPermission: permission,
-      value: parseUnits(String(amountUsd), USDC_DECIMALS),
-      network: this.#network,
-    });
+    // Same wait as every other pull: whatever spends this next needs the money to be
+    // there, not merely on its way.
+    await this.#pullUsdc(accountKey, amountUsd);
     return { pulledUsd: amountUsd };
   }
 

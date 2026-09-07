@@ -1,7 +1,7 @@
 import { Annotation, MessagesAnnotation } from "@langchain/langgraph";
 
 import type { ActionType, Channel, RiskLabel } from "../../memory/index.ts";
-import type { ParsedIntent } from "./intent.ts";
+import type { IntentAction, ParsedIntent } from "./intent.ts";
 
 /**
  * Graph state. `messages` + `onboarding` are the only per-turn/per-session fields;
@@ -70,6 +70,18 @@ export const WardState = Annotation.Root({
   onboardingAsked: Annotation<string[]>({
     reducer: (prev, next) => [...new Set([...prev, ...next])],
     default: () => [],
+  }),
+
+  /**
+   * Set by `confirm` when it has to ask which token, and consumed by it on the next
+   * turn. Without it the answer is just a bare address in an empty context: the LLM
+   * parser called `0x88Fb…e196` a `read_only` question, the conversational node took
+   * the turn, and the model — which cannot buy anything — replied "Proceeding to buy
+   * the Token Analysis… Please hold on." Nothing was bought, and the user waited.
+   */
+  awaitingSubject: Annotation<{ action: IntentAction; query: string } | null>({
+    reducer: (_, next) => next,
+    default: () => null,
   }),
 
   /** Set by `confirm` on approval, consumed + cleared by `execute`. */

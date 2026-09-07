@@ -46,7 +46,12 @@ export async function confirmNode(
 
   const action = intent.action_type as ActionType;
   const lastHuman = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
-  const query = typeof lastHuman?.content === "string" ? lastHuman.content : "";
+  // The question that started this. When the user is answering "which token?", the
+  // last message is just the token — the words that chose the endpoint were the ones
+  // before it, so those are what the catalogue is searched with.
+  const query =
+    state.awaitingSubject?.query ??
+    (typeof lastHuman?.content === "string" ? lastHuman.content : "");
 
   // --- resolve the concrete action + its cost ---
   let endpoint: X402Endpoint | null = null;
@@ -57,6 +62,8 @@ export async function confirmNode(
   let amountUsd: number;
   /** The normalised `SELL/BUY` for a swap — what `execute` is handed, not the raw parse. */
   let swapPair: string | undefined;
+  /** Whether an open "which token?" question has now been satisfied. */
+  let answered = false;
 
   if (action === "x402_data_purchase") {
     endpoint = await searchCatalog(`${query} ${intent.token ?? ""}`);
@@ -64,8 +71,14 @@ export async function confirmNode(
       return { messages: [new AIMessage(`I don't have an x402 endpoint for that.`)] };
     }
     if (endpointNeedsSubject(endpoint) && !intent.token) {
+      // Remember what was asked, so the bare answer resumes THIS purchase.
       return {
-        messages: [new AIMessage("Which token? Give me a ticker or a 0x address.")],
+        awaitingSubject: { action: intent.action_type, query },
+        messages: [
+          new AIMessage(
+            `Which token? Give me a ticker or a 0x address, and I'll price "${endpoint.name}" for it.`,
+          ),
+        ],
       };
     }
     // The endpoint's own idea of a subject, checked before a payment rather than
@@ -74,6 +87,7 @@ export async function confirmNode(
     if (mismatch) return { messages: [new AIMessage(mismatch)] };
     resolvedCall = resolveX402Call(endpoint, intent.token);
     amountUsd = endpoint.cost_usd;
+    answered = true;
   } else if (action === "acp_job") {
     acpSubject = intent.token ?? intent.pair ?? "the token";
     acpCounterparty = await acpProvider().preferredCounterparty("token_risk");
@@ -243,8 +257,10 @@ export async function confirmNode(
     acp: acpSubject ? { subject: acpSubject } : undefined,
   });
 
+  const clearSlot = answered ? { awaitingSubject: null } : {};
+
   if (!gate.needsApproval) {
-    return { confirmedIntent: confirmed() };
+    return { ...clearSlot, confirmedIntent: confirmed() };
   }
 
   const decision = interrupt({
@@ -257,9 +273,9 @@ export async function confirmNode(
   }) as { approved: boolean };
 
   if (!decision.approved) {
-    return { messages: [new AIMessage("Cancelled — nothing moved.")] };
+    return { ...clearSlot, messages: [new AIMessage("Cancelled — nothing moved.")] };
   }
-  return { confirmedIntent: confirmed() };
+  return { ...clearSlot, confirmedIntent: confirmed() };
 }
 
 function intentId(state: WardStateType, config: LangGraphRunnableConfig | undefined): string {

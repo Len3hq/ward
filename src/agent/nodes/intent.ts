@@ -20,6 +20,19 @@ export async function intentNode(state: WardStateType): Promise<Partial<WardStat
   const text = typeof last?.content === "string" ? last.content : "";
   if (!text.trim()) return { parsedIntent: null };
 
+  // Ward asked "which token?" last turn and this is the answer — a bare ticker or
+  // address, which in isolation classifies as a question and lands in the chat node.
+  const awaiting = state.awaitingSubject;
+  if (awaiting) {
+    const subject = bareSubject(text);
+    if (subject) {
+      log("intent", { user: state.userId, action: awaiting.action, source: "subject", ms: 0 });
+      return { parsedIntent: { action_type: awaiting.action, token: subject, source: "table" } };
+    }
+    // They said something else; the question has been dropped.
+    return { parsedIntent: await parseIntent(text), awaitingSubject: null };
+  }
+
   const started = performance.now();
   const parsedIntent = await parseIntent(text);
   // `source=llm` is the expensive one: a whole model round trip in front of the
@@ -31,4 +44,18 @@ export async function intentNode(state: WardStateType): Promise<Partial<WardStat
     ms: performance.now() - started,
   });
   return { parsedIntent };
+}
+
+/**
+ * A message that is nothing but a token: `0x…` or a bare ticker.
+ *
+ * Deliberately strict — this reinterprets a message as an ACTION, so anything with
+ * a sentence around it goes back through the normal parse.
+ */
+function bareSubject(text: string): string | undefined {
+  const trimmed = text.trim().replace(/^["'`]|["'`]$/g, "");
+  if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return trimmed;
+  if (/^\$?[A-Za-z][A-Za-z0-9]{1,9}$/.test(trimmed))
+    return trimmed.replace(/^\$/, "").toUpperCase();
+  return undefined;
 }
