@@ -10,9 +10,12 @@ import type { WardStateType } from "../state.ts";
  * `interrupt({ type, ... })`; the gateway shows the cost and resumes with
  * `new Command({ resume: { approved } })`. Structural, not prompt-mediated.
  *
- * Phase 2: `APPROVAL_REQUIRED` is empty, so this is a pass-through. Phase 5 adds
- * `swap` / `x402_data_purchase` and the memory-derived cost + on-chain allowance
- * to the interrupt payload.
+ * `APPROVAL_REQUIRED` is empty and this is a pass-through, which is the settled
+ * design rather than unfinished work: spending never became a tool call. Phase 5 put
+ * it on the deterministic `intent → router → confirm → execute` rail instead, where
+ * the cost and the on-chain allowance are read fresh and confirmed by
+ * `nodes/confirm.ts`. This node stays because that is one `APPROVAL_REQUIRED.add()`
+ * away from being needed again if a tool ever does have to spend.
  */
 export function approvalNode(state: WardStateType): Partial<WardStateType> {
   const last = state.messages.at(-1);
