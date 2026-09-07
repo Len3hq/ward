@@ -24,6 +24,12 @@ const endpointSchema = z.object({
    * `resolveX402Call`). Ignored for GET/HEAD.
    */
   body_template: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * What the endpoint can do something with: a ticker, a contract address, or
+   * either. Checked BEFORE paying — an endpoint that searches projects by name
+   * cannot use a 0x address, and finding that out costs a real payment otherwise.
+   */
+  subject_kind: z.enum(["ticker", "address", "any"]).default("any"),
   cost_usd: z.number().nonnegative(),
   tags: z.array(z.string()).default([]),
 });
@@ -38,6 +44,32 @@ export interface ResolvedX402Call {
 }
 
 const PLACEHOLDER = /\{(?:subject|token)\}/;
+const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
+
+/**
+ * Whether this endpoint can use the subject the user gave, and what to say if not.
+ *
+ * "analyse the whale flow of this token 0x88Fb…e196" was sent to a project SEARCH
+ * that takes a ticker or a name, with the address filled into its `ticker` field.
+ * The endpoint answered 502 — after being paid. One question beforehand is cheaper
+ * than one payment afterwards.
+ */
+export function subjectMismatch(endpoint: X402Endpoint, subject: string): string | null {
+  const isAddress = EVM_ADDRESS.test(subject.trim());
+  if (endpoint.subject_kind === "ticker" && isAddress) {
+    return (
+      `"${endpoint.name}" looks things up by ticker or project name, not by contract address. ` +
+      "Give me a symbol (AERO, DEGEN) and I'll ask it that."
+    );
+  }
+  if (endpoint.subject_kind === "address" && !isAddress) {
+    return (
+      `"${endpoint.name}" needs a contract address on Base, not a ticker. ` +
+      `Give me the 0x… address for ${subject}.`
+    );
+  }
+  return null;
+}
 
 /** True if the endpoint's url or body_template needs a token/subject to be usable. */
 export function endpointNeedsSubject(endpoint: X402Endpoint): boolean {

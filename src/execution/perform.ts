@@ -306,7 +306,15 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
       );
     }
     const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `Execution failed: ${message}. Nothing was charged beyond gas.` };
+    // "Nothing was charged beyond gas" is a claim about the chain, and it was made
+    // unconditionally — including for a failure that had already pulled the user's
+    // USDC into the agent spender. The provider marks the errors where it has
+    // accounted for the money, and those messages speak for themselves.
+    const accounted = typeof error === "object" && error !== null && "moneyAccounted" in error;
+    return {
+      ok: false,
+      message: `Execution failed: ${message}.${accounted ? "" : " Nothing was charged beyond gas."}`,
+    };
   }
 }
 
@@ -324,7 +332,75 @@ function capUsd(costUsd: number): number {
   return Math.ceil(costUsd * 1.5 * 1e6) / 1e6;
 }
 
+/**
+ * What the user paid for, as something readable in a chat.
+ *
+ * It used to be `JSON.stringify(data, null, 2)` pasted straight into the message,
+ * which arrives as an unformatted wall of braces:
+ *
+ *   { "result": { "data": { "lookback_days": 3, "summaries": [] } } }
+ *
+ * Two things wrong with that. It is not fenced, so neither channel renders it as
+ * data — Discord reflows it and Telegram runs it together. And the interesting fact
+ * about that particular payload is buried in the punctuation: the user paid for a
+ * list that came back empty, which is worth a sentence.
+ */
 function preview(data: unknown): string {
-  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-  return text.length > 1200 ? `${text.slice(0, 1200)}…` : text;
+  if (typeof data === "string") {
+    const text = data.trim();
+    return text.length === 0 ? EMPTY_PAYLOAD : clip(text);
+  }
+  if (isEmptyPayload(data)) return EMPTY_PAYLOAD;
+
+  const json = ["```json", clip(JSON.stringify(data, null, 2)), "```"].join("\n");
+  const empty = emptyFields(data);
+  if (empty.length === 0) return json;
+  return `${json}\n(${empty.map((f) => `\`${f}\``).join(", ")} came back empty.)`;
+}
+
+const EMPTY_PAYLOAD =
+  "The endpoint answered with no data for that request — the payment settled, but " +
+  "there is nothing to show. Worth trying a different endpoint, or the same one later.";
+
+const MAX_PREVIEW_CHARS = 1200;
+/** Enough to name what was missing without listing a whole schema back at the user. */
+const MAX_EMPTY_FIELDS = 4;
+
+function clip(text: string): string {
+  return text.length > MAX_PREVIEW_CHARS ? `${text.slice(0, MAX_PREVIEW_CHARS)}…` : text;
+}
+
+/**
+ * Whether the payload carries nothing at all, through however many wrappers the
+ * endpoint uses (`{ result: { data: … } }`). A number or a boolean counts as
+ * content: for a price endpoint, a number IS the product.
+ */
+function isEmptyPayload(data: unknown): boolean {
+  if (data === null || data === undefined) return true;
+  if (typeof data === "string") return data.trim().length === 0;
+  if (typeof data === "number" || typeof data === "boolean") return false;
+  if (Array.isArray(data)) return data.every(isEmptyPayload);
+  if (typeof data === "object") {
+    const values = Object.values(data as Record<string, unknown>);
+    return values.length === 0 || values.every(isEmptyPayload);
+  }
+  return false;
+}
+
+/**
+ * Names of fields that came back as an empty list or an empty string.
+ *
+ * Deliberately narrower than "is this payload useful?" — that judgement needs to
+ * know the endpoint, and getting it wrong in the other direction would print "no
+ * data" above a payload full of data. An empty `summaries` is a fact either way.
+ */
+function emptyFields(data: unknown, found: string[] = []): string[] {
+  if (found.length >= MAX_EMPTY_FIELDS || data === null || typeof data !== "object") return found;
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (found.length >= MAX_EMPTY_FIELDS) break;
+    if (Array.isArray(value) && value.length === 0) found.push(key);
+    else if (typeof value === "string" && value.trim().length === 0) found.push(key);
+    else if (value && typeof value === "object") emptyFields(value, found);
+  }
+  return found;
 }

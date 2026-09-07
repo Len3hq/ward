@@ -49,6 +49,39 @@ const AGENT_SPENDER_NAME = "ward-agent-spender";
 const SETTLEMENT_BUDGET = 4;
 
 /**
+ * How long an x402 endpoint has to answer a PAID request.
+ *
+ * Generous, because these endpoints do real work (Heurist advertises
+ * `maxTimeoutSeconds: 120`), but finite: one took 71 seconds to produce a 502 while
+ * the user's turn sat waiting with their money already pulled.
+ */
+const X402_REQUEST_TIMEOUT_MS = 60_000;
+/** A quote is a 402 challenge, not a computation — it should be quick. */
+const X402_QUOTE_TIMEOUT_MS = 20_000;
+/** Sub-cent tolerance when comparing balances, in USD. */
+const USDC_EPSILON = 1e-9;
+
+/**
+ * Is the pulled USDC still in the spender?
+ *
+ * The question a failed purchase turns on, and it is answered by balances rather
+ * than by an HTTP status: a 502 can come from a server that has already been paid.
+ * The spender is shared, so this compares against what it held BEFORE the pull —
+ * refunding on "the balance is at least the amount" would hand the user someone
+ * else's float when their own payment had in fact settled.
+ */
+export function pullWasUnspent(heldBefore: number, heldNow: number, pulledUsd: number): boolean {
+  return heldNow - heldBefore >= pulledUsd - USDC_EPSILON;
+}
+
+function describeCause(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return /abort|timeout/i.test(message)
+    ? `the endpoint did not answer within ${X402_REQUEST_TIMEOUT_MS / 1000}s`
+    : `the request failed (${message})`;
+}
+
+/**
  * A CDP account, as `x402-fetch` needs to see it.
  *
  * x402 duck-types its signer: a viem `LocalAccount` must have `address`, `sign`,
@@ -406,6 +439,9 @@ export class CdpWalletProvider implements WalletProvider {
     }
 
     const spender = await this.#agentSpender();
+    // Measured BEFORE the pull, so a failure can tell "the payment never settled"
+    // from "it settled and the endpoint broke afterwards" — see `#returnIfUnspent`.
+    const held = await this.#spenderUsdc();
     const permission = await this.#requirePermission(accountKey);
     await spender.useSpendPermission({
       spendPermission: permission,
@@ -419,8 +455,27 @@ export class CdpWalletProvider implements WalletProvider {
       parseUnits(String(request.maxUsd), USDC_DECIMALS),
     );
 
-    const response = await pay(request.url, init);
-    if (!response.ok) throw new Error(`x402 endpoint returned ${response.status}`);
+    let response: Response;
+    try {
+      response = await pay(request.url, {
+        ...init,
+        // An endpoint that never answers must not park the turn indefinitely. One
+        // took 71 seconds to return a 502; aborting is safe because the balance
+        // check below decides what actually happened to the money.
+        signal: AbortSignal.timeout(X402_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw await this.#unwind(accountKey, priceUsd, held, describeCause(error));
+    }
+
+    if (!response.ok) {
+      throw await this.#unwind(
+        accountKey,
+        priceUsd,
+        held,
+        `the endpoint returned ${response.status}`,
+      );
+    }
 
     const data: unknown = await response.json().catch(() => ({}));
     const paymentHeader = response.headers.get("x-payment-response") ?? "";
@@ -434,6 +489,53 @@ export class CdpWalletProvider implements WalletProvider {
     };
   }
 
+  /** The agent spender's USDC, for measuring a pull that may need returning. */
+  async #spenderUsdc(): Promise<number> {
+    const spender = await this.#agentSpender();
+    return (await this.balances(spender.address as Hex)).usdcUsd;
+  }
+
+  /**
+   * A purchase that took the user's money and returned nothing.
+   *
+   * The pull happens before the request, so a failed request leaves USDC sitting in
+   * the SHARED agent spender — the user's money, in Ward's wallet, for a thing they
+   * never received. Production, exactly this: a 502 from the Whale Flows endpoint,
+   * $0.001 stranded, and a message that said "Nothing was charged beyond gas."
+   *
+   * Whether it can be returned is a question about the chain, not about the HTTP
+   * status: a 502 can come from a server that already took payment. So compare the
+   * spender's USDC against what it held before the pull. Still there → the payment
+   * never settled, and it goes back. Gone → the endpoint has it, and the user is
+   * told that plainly rather than being refunded someone else's float.
+   */
+  async #unwind(
+    accountKey: string,
+    pulledUsd: number,
+    heldBefore: number,
+    reason: string,
+  ): Promise<Error> {
+    let outcome: string;
+    try {
+      const heldNow = await this.#spenderUsdc();
+      if (pullWasUnspent(heldBefore, heldNow, pulledUsd)) {
+        const { txHash } = await this.refundUser(accountKey, pulledUsd);
+        outcome = `your $${pulledUsd} USDC was returned to your wallet (tx ${txHash}).`;
+      } else {
+        outcome =
+          `$${pulledUsd} USDC had already left for the endpoint, so it is NOT recoverable ` +
+          "automatically — you paid for a response that failed.";
+      }
+    } catch (error) {
+      outcome =
+        `$${pulledUsd} USDC was pulled and I could not return it ` +
+        `(${error instanceof Error ? error.message : String(error)}). It is held by the agent spender.`;
+    }
+    // Marked so `execution/perform.ts` does not append its blanket "Nothing was
+    // charged beyond gas" to a message that has just explained where the money went.
+    return Object.assign(new Error(`${reason} — ${outcome}`), { moneyAccounted: true });
+  }
+
   /**
    * The endpoint's own price, in USD, from an unpaid request — or `null` if it did
    * not answer with a usable 402 (then the catalogue estimate stands, still capped).
@@ -443,7 +545,10 @@ export class CdpWalletProvider implements WalletProvider {
    */
   async #quoteX402(url: string, init: RequestInit): Promise<number | null> {
     try {
-      const response = await fetch(url, init);
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(X402_QUOTE_TIMEOUT_MS),
+      });
       if (response.status !== 402) return null;
       return x402QuoteUsd(await response.json(), this.#network, this.#token("USDC"));
     } catch {
@@ -465,6 +570,7 @@ export class CdpWalletProvider implements WalletProvider {
     ]);
     const permission = await this.#requirePermission(accountKey);
     const fromAmount = parseUnits(String(request.amountUsd), USDC_DECIMALS);
+    const heldBefore = await this.#spenderUsdc();
     await spender.useSpendPermission({
       spendPermission: permission,
       value: fromAmount,
@@ -477,13 +583,25 @@ export class CdpWalletProvider implements WalletProvider {
     // belong to the user, not to the agent that executed for them.
     const spenderAddress = spender.address as Hex;
     const before = await this.#rawBalance(spenderAddress, request.buySymbol);
-    const result = await spender.swap({
-      network: this.#network,
-      fromToken: this.#token(request.sellSymbol),
-      toToken: this.#token(request.buySymbol),
-      fromAmount,
-      slippageBps: 150,
-    });
+    let result;
+    try {
+      result = await spender.swap({
+        network: this.#network,
+        fromToken: this.#token(request.sellSymbol),
+        toToken: this.#token(request.buySymbol),
+        fromAmount,
+        slippageBps: 150,
+      });
+    } catch (error) {
+      // Same rule as a failed purchase: the USDC was pulled before the swap, so a
+      // swap that never happened must not leave it in the shared spender.
+      throw await this.#unwind(
+        accountKey,
+        request.amountUsd,
+        heldBefore,
+        `the swap failed (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
 
     const txHash =
       (result as { transactionHash?: string }).transactionHash ??
@@ -519,9 +637,21 @@ export class CdpWalletProvider implements WalletProvider {
    * permission was missing would be the worst possible failure here.
    */
   async sendUsdc(accountKey: string, request: SendRequest): Promise<SendResult> {
+    const heldBefore = await this.#spenderUsdc();
     await this.fundAgentFromUser(accountKey, request.amountUsd);
-    const { txHash } = await this.transferUsdcFromSpender(request.to, request.amountUsd);
-    return { txHash, amountUsd: request.amountUsd };
+    try {
+      const { txHash } = await this.transferUsdcFromSpender(request.to, request.amountUsd);
+      return { txHash, amountUsd: request.amountUsd };
+    } catch (error) {
+      // The pull landed and the forward did not: the money is in the spender, not
+      // with the recipient. Put it back rather than leaving it in Ward's wallet.
+      throw await this.#unwind(
+        accountKey,
+        request.amountUsd,
+        heldBefore,
+        `the transfer failed (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
   }
 
   /**

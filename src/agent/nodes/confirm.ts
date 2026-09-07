@@ -19,6 +19,7 @@ import {
   endpointNeedsSubject,
   resolveX402Call,
   searchCatalog,
+  subjectMismatch,
   type ResolvedX402Call,
   type X402Endpoint,
 } from "../../execution/catalog.ts";
@@ -67,6 +68,10 @@ export async function confirmNode(
         messages: [new AIMessage("Which token? Give me a ticker or a 0x address.")],
       };
     }
+    // The endpoint's own idea of a subject, checked before a payment rather than
+    // discovered through one — see `subjectMismatch`.
+    const mismatch = intent.token ? subjectMismatch(endpoint, intent.token) : null;
+    if (mismatch) return { messages: [new AIMessage(mismatch)] };
     resolvedCall = resolveX402Call(endpoint, intent.token);
     amountUsd = endpoint.cost_usd;
   } else if (action === "acp_job") {

@@ -11,6 +11,7 @@
         "token_address": "{subject}",
         "depth": "full"
       },
+      "subject_kind": "any",
       "cost_usd": 0.05,
       "tags": ["risk", "rug", "scam", "safety", "honeypot", "token", "audit"]
     },
@@ -25,6 +26,7 @@
         "chain": "base",
         "limit": 5
       },
+      "subject_kind": "ticker",
       "cost_usd": 0.001,
       "tags": ["whale", "flows", "accumulation", "distribution", "holder"]
     },
@@ -51,6 +53,7 @@
         "token": "{subject}",
         "language": "en"
       },
+      "subject_kind": "any",
       "cost_usd": 0.01,
       "tags": ["price", "liquidity", "volume", "quote"]
     }

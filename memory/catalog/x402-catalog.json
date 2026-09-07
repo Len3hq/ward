@@ -12,6 +12,7 @@
         "chain": "base",
         "limit": 5
       },
+      "subject_kind": "ticker",
       "cost_usd": 0.001,
       "tags": ["whale", "flows", "accumulation", "distribution", "large transfers", "holder"]
     },
@@ -38,6 +39,7 @@
         "token": "{subject}",
         "language": "en"
       },
+      "subject_kind": "any",
       "cost_usd": 0.01,
       "tags": ["price", "liquidity", "volume", "quote", "token", "analysis", "assess", "risk"]
     }

@@ -20,14 +20,38 @@
 
 export type CopyStyle = "inline" | "block";
 
-/** A 20-byte EVM address. Tx hashes are left alone: they are for tapping, not copying. */
-const ADDRESS_SOURCE = String.raw`0x[a-fA-F0-9]{40}`;
-const ADDRESS = new RegExp(String.raw`\b${ADDRESS_SOURCE}\b`, "g");
+/**
+ * A 20-byte EVM address, and nothing that merely starts like one.
+ *
+ * The lookarounds are load-bearing. Without the trailing one, the first 40 hex
+ * characters of a 64-character TRANSACTION hash match — which is exactly what
+ * happened to a settlement link in production:
+ *
+ *   Paid $0.001 for "Smart Money Positioning". https://basescan.org/tx/
+ *   ```
+ *   0x32271c07ce577c598c8ce1d7a4084317276a082b
+ *   ```
+ *   57f779053e039342621414d6
+ *
+ * A link cut in half, a hash in two pieces, neither of them clickable or copyable.
+ * Tx hashes are deliberately left whole: they are for tapping, not copying.
+ */
+const ADDRESS_SOURCE = String.raw`(?<![\w])0x[a-fA-F0-9]{40}(?![0-9a-fA-F])`;
+const ADDRESS = new RegExp(ADDRESS_SOURCE, "g");
 
-/** Regions to step over: fenced code, inline code, and the whole of a markdown link. */
-const PROTECTED = /```[\s\S]*?```|`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)/g;
-/** Block style re-does inline code, so only fenced blocks and links stay off-limits. */
-const FENCED_OR_LINK = /```[\s\S]*?```|\[[^\]\n]*\]\([^)\n]*\)/g;
+/** A bare URL. Reformatting anything inside one breaks it — see above. */
+const URL_SOURCE = String.raw`https?:\/\/\S+`;
+
+/** Regions to step over: fenced code, inline code, markdown links, and bare URLs. */
+const PROTECTED = new RegExp(
+  String.raw`\`\`\`[\s\S]*?\`\`\`|\`[^\`\n]*\`|\[[^\]\n]*\]\([^)\n]*\)|${URL_SOURCE}`,
+  "g",
+);
+/** Block style re-does inline code, so only fences, links and URLs stay off-limits. */
+const FENCED_OR_LINK = new RegExp(
+  String.raw`\`\`\`[\s\S]*?\`\`\`|\[[^\]\n]*\]\([^)\n]*\)|${URL_SOURCE}`,
+  "g",
+);
 
 export function markCopyable(text: string, style: CopyStyle): string {
   if (style === "inline") return outside(text, PROTECTED, inlineCode);

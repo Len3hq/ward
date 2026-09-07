@@ -48,6 +48,7 @@ describe("resolveX402Call", () => {
     description: "",
     url: "https://x.test/score?token={subject}",
     method: "GET",
+    subject_kind: "any",
     cost_usd: 0.01,
     tags: [],
   };
@@ -58,6 +59,7 @@ describe("resolveX402Call", () => {
     url: "https://x.test/analyze",
     method: "POST",
     body_template: { token_address: "{subject}", chain: "base", depth: "full" },
+    subject_kind: "any",
     cost_usd: 0.02,
     tags: [],
   };
