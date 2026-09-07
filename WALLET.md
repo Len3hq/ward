@@ -71,7 +71,8 @@ option for an EOA transaction.
 
 ```
 generate my wallet           → creates the smart account + spender, writes ward.wallet
-grant a $100 daily permission → on-chain Spend Permission, ward.wallet.spend_permission = active
+grant a $100 daily permission → asks yes/no, then the on-chain Spend Permission,
+                                ward.wallet.spend_permission = active
 swap $40 usdc for eth        → pull → swap → **sweep the proceeds to your smart account**
 send $10 to 0xAbC…            → pull → transfer USDC to any Base address
 revoke my permission         → on-chain revoke + pauses every spend action in memory
@@ -80,6 +81,12 @@ pause swaps                   → memory-only revocation of one action type
 
 `generate_wallet` / `grant_permission` / `revoke` are deterministic (the `wallet`
 node), not LLM tool calls — they work without `OPENAI_API_KEY`.
+
+Of the three, only `grant_permission` asks for a confirmation. It is the one that
+_enlarges_ what Ward may do, and it is a transaction that costs gas; `revoke` only
+ever takes authority away and fails safe, so it stays immediate. Questions never
+reach any of them — "how do I grant a permission?" is classified `read_only` and
+answered, not executed (`ASKS_ABOUT_AN_ACTION` in `src/agent/intent.ts`).
 
 ## Swap, in full
 

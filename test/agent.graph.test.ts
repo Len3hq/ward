@@ -254,7 +254,7 @@ describe("wallet & spend permission", () => {
     expect(wallet?.smart_account).toMatch(/^0x[0-9a-f]{40}$/);
     expect(wallet?.spend_permission).toBeNull();
 
-    const granted = await say(graph, "w1", "grant a $100 daily permission");
+    const granted = await confirmAction(graph, "w1", "grant a $100 daily permission");
     expect(granted).toMatch(/spend permission/i);
     expect((await readWallet(USER))?.spend_permission).toMatchObject({
       status: "active",
@@ -267,7 +267,7 @@ describe("wallet & spend permission", () => {
     const graph = buildGraph();
     await onboard(graph, "w2"); // per-action $50, daily $100
     await say(graph, "w2", "generate my wallet");
-    await say(graph, "w2", "grant a $30 daily permission");
+    await confirmAction(graph, "w2", "grant a $30 daily permission");
 
     const prompt = await askAction(graph, "w2", "swap $20 usdc for eth");
     expect(prompt).toMatch(/on-chain allowance \$30\.00 remaining/i);
@@ -281,7 +281,7 @@ describe("wallet & spend permission", () => {
     const graph = buildGraph();
     await onboard(graph, "w3");
     await say(graph, "w3", "generate my wallet");
-    await say(graph, "w3", "grant a $100 daily permission");
+    await confirmAction(graph, "w3", "grant a $100 daily permission");
 
     // revoke only the on-chain permission record, leave the memory revocation_log clean
     const wallet = await readWallet(USER);

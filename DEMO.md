@@ -71,9 +71,18 @@ gate._ Then re-onboard (say "set me up", `moderate` / `50` / `100`) to continue.
 you: generate my wallet
 ward: Wallet generated on base-sepolia. Your smart account: 0x… Agent spender: 0x…
 you: grant a $100 daily permission
+ward: Grant an on-chain spend permission: $100 USDC per day, spender 0x….
+      This is a transaction on base-sepolia and costs gas.
+      It lets me move up to that much USDC without asking again — swaps, x402 data
+      and ACP hires all draw on it. Confirm? (yes / no)
+you: yes
 ward: Granted an on-chain spend permission: $100 USDC per 1 day … tx 0x…
       I now act within min(your $100 memory cap, this $100 on-chain allowance).
 ```
+
+Worth saying on camera: granting is the one action that _enlarges_ what Ward may do,
+so it asks first — the same yes/no every spend gets. Revoking never asks, because it
+only ever takes authority away.
 
 Open the `tx` on sepolia.basescan.org. The address is monospaced in both apps, so a
 tap (Telegram) or the code block's copy button (Discord) puts it on the clipboard —

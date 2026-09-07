@@ -26,7 +26,7 @@ describe("on-chain spend-permission revocation", () => {
     const graph = newGraph();
     await onboard(graph, "oc");
     await say(graph, "oc", "generate my wallet");
-    await say(graph, "oc", "grant a $100 daily permission");
+    await confirmAction(graph, "oc", "grant a $100 daily permission");
 
     expect(await confirmAction(graph, "oc", "swap $20 usdc for eth")).toMatch(/swapped/i);
     const callsBefore = walletCalls().length;
@@ -53,7 +53,7 @@ describe("on-chain spend-permission revocation", () => {
     const graph = newGraph();
     await onboard(graph, "oc2");
     await say(graph, "oc2", "generate my wallet");
-    await say(graph, "oc2", "grant a $100 daily permission");
+    await confirmAction(graph, "oc2", "grant a $100 daily permission");
 
     const wallet = await readWallet(USER);
     await writeWallet(USER, {
@@ -62,7 +62,7 @@ describe("on-chain spend-permission revocation", () => {
     });
     expect(await say(graph, "oc2", "swap $10 usdc for eth")).toMatch(/revoked/i);
 
-    await say(graph, "oc2", "grant a $100 daily permission");
+    await confirmAction(graph, "oc2", "grant a $100 daily permission");
     expect(await confirmAction(graph, "oc2", "swap $10 usdc for eth")).toMatch(/swapped/i);
   });
 });

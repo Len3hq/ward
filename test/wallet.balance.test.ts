@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { tableIntent } from "../src/agent/intent.ts";
 import { balanceReport } from "../src/wallet/balances.ts";
-import { hermeticSetup, hermeticTeardown, newGraph, onboard, say, USER } from "./support.ts";
+import {
+  confirmAction,
+  hermeticSetup,
+  hermeticTeardown,
+  newGraph,
+  onboard,
+  say,
+  USER,
+} from "./support.ts";
 
 /**
  * Issue 1: "what is my balance" used to reach the conversational node, which has
@@ -55,7 +63,7 @@ describe("balanceReport", () => {
     const graph = newGraph();
     await onboard(graph, "t-perm", { daily: 100 });
     await say(graph, "t-perm", "generate my wallet");
-    await say(graph, "t-perm", "grant a $50 daily permission");
+    await confirmAction(graph, "t-perm", "grant a $50 daily permission");
 
     const report = await balanceReport(USER);
     expect(report).toContain("Spend permission: active, $50 USDC per 1 day");

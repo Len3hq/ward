@@ -119,10 +119,57 @@ function extractSubject(text: string): string | undefined {
   return ticker ? ticker[0] : undefined;
 }
 
+/**
+ * Openings that ask ABOUT an action rather than requesting one.
+ *
+ * "How do I grant eth permission" used to match the grant rule on `grant` +
+ * `permission` and execute a real on-chain grant — a question that cost gas, changed
+ * the user's authority, and answered a different one than was asked. "how do i
+ * revoke" was worse: it revoked the permission and paused every action type.
+ *
+ * Deliberately narrow, and anchored to the start of the message. "can you…" /
+ * "could you…" are polite REQUESTS and must keep working, so they are not here; only
+ * openings that ask for an explanation are. A turn that matches this never reaches an
+ * executing rule — it is classified `read_only` and answered by the agent node, which
+ * knows the capabilities and can explain them.
+ */
+const ASKS_ABOUT_AN_ACTION =
+  /^\s*(?:how\s+(?:do|does|did|can|could|would|should|is|are|difficult|hard|easy)\b|what\s+(?:is|are|do|does|happens|would|should)\b|what'?s\s+(?:the\s+)?(?:point|difference|process|best)\b|should\s+i\b|is\s+it\s+(?:possible|safe)\b|do\s+i\s+(?:need|have\s+to)\b|why\s+(?:do|does|would|should|is|are|can|can't|cant)\b|can\s+you\s+explain\b|explain\b|tell\s+me\s+(?:about|how)\b|what\s+do\s+you\s+mean\b)/;
+
 /** Obvious cases — no LLM. Returns `null` when the text is ambiguous. */
 export function tableIntent(text: string): ParsedIntent | null {
   const t = text.toLowerCase().trim();
+  const asksAbout = ASKS_ABOUT_AN_ACTION.test(t);
 
+  // Every rule from here to the `balance` check EXECUTES something. A question is
+  // routed past all of them; the read-only classifications below are safe either way.
+  if (!asksAbout) {
+    const action = executableIntent(text, t);
+    if (action) return action;
+  }
+
+  if (
+    /\b(balance|balances|holdings|portfolio)\b/.test(t) ||
+    /\bhow much\b.*\b(usdc|eth|do i have|have i got|is in (my|the) wallet)\b/.test(t)
+  ) {
+    return { action_type: "balance", source: "table" };
+  }
+  if (
+    /\b(my|the)\b.*\b(limit|cap|balance|authorization|risk profile|spent|allowance)\b/.test(t) ||
+    /^\s*(what|how much|show|status)\b/.test(t)
+  ) {
+    return { action_type: "read_only", source: "table" };
+  }
+
+  // A question that matched nothing else is still a question. Returning `null` here
+  // would hand it to the LLM parser, which might yet call it an action; the whole
+  // point of the guard is that it cannot.
+  if (asksAbout) return { action_type: "read_only", source: "table" };
+  return null;
+}
+
+/** The rules that cause something to happen. Reached only for non-interrogative text. */
+function executableIntent(text: string, t: string): ParsedIntent | null {
   // CDP *creates* the account — there is no external wallet to connect. "connect"
   // and friends stay matched anyway: it is what people type, and what earlier
   // builds (and DEMO.md) told them to.
@@ -165,21 +212,8 @@ export function tableIntent(text: string): ParsedIntent | null {
   ) {
     return { action_type: "x402_data_purchase", token: extractSubject(text), source: "table" };
   }
-  // After the spend rules, so "swap my balance into ETH" is still a swap, and before
-  // the read-only catch-all, whose "my … balance" branch would otherwise swallow it
-  // into a recital of the caps — which is exactly what it used to do.
-  if (
-    /\b(balance|balances|holdings|portfolio)\b/.test(t) ||
-    /\bhow much\b.*\b(usdc|eth|do i have|have i got|is in (my|the) wallet)\b/.test(t)
-  ) {
-    return { action_type: "balance", source: "table" };
-  }
-  if (
-    /\b(my|the)\b.*\b(limit|cap|balance|authorization|risk profile|spent|allowance)\b/.test(t) ||
-    /^\s*(what|how much|show|status)\b/.test(t)
-  ) {
-    return { action_type: "read_only", source: "table" };
-  }
+  // Nothing executable. The caller falls through to `balance` / `read_only`, which is
+  // why the spend rules above must come first: "swap my balance into ETH" is a swap.
   return null;
 }
 
@@ -217,7 +251,12 @@ export async function parseIntent(text: string): Promise<ParsedIntent> {
           "Only pick swap / x402_data_purchase / acp_job / grant_permission / revoke / " +
           "generate_wallet when the user is clearly asking for that action. send = moving USDC to " +
           "an 0x address the user names; put that address in `token`. Extract amount_usd, pair " +
-          '(like "USDC/ETH"), token, endpoint when present.',
+          '(like "USDC/ETH"), token, endpoint when present.\n' +
+          "A question ABOUT an action is read_only, never the action itself. " +
+          '"How do I grant a permission?", "should I revoke?", "what happens if I swap?" and ' +
+          '"how does the spend permission work?" are all read_only — the user is asking to be ' +
+          "told something, not asking you to do it. Choose the action only when the message " +
+          "would still read as an instruction with the question mark removed.",
       },
       { role: "user", content: text },
     ]);

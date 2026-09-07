@@ -1,4 +1,5 @@
 import { AIMessage } from "@langchain/core/messages";
+import { interrupt } from "@langchain/langgraph";
 
 import {
   ACTION_TYPES,
@@ -18,6 +19,9 @@ import type { WardStateType } from "../state.ts";
  * `grant_permission`, `revoke`, `balance`. Calls the wallet provider (CDP or stub), then
  * persists to the `ward.wallet` entity / `revocation_log` so memory and chain
  * agree. No LLM — the router sends these intents straight here.
+ *
+ * `grant_permission` interrupts for a yes/no first; the other three do not. See the
+ * comment at that branch for why granting is the one that has to ask.
  *
  * `balance` is here rather than in the model's hands for the same reason: a number
  * the user acts on must be read from chain, never produced by a model that has only
@@ -95,6 +99,41 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       return { messages: [new AIMessage('Generate a wallet first — say "generate my wallet".')] };
     }
     const allowance = intent.amount_usd ?? record.standing_caps.daily_limit_usd;
+
+    // Granting is the one action that ENLARGES what Ward may do, and it is a real
+    // transaction that costs gas. Spends have confirmed since Phase 5; this did not,
+    // which is how "How do I grant eth permission" executed a live grant — a question
+    // that changed the user's authority and answered a different one than it asked.
+    //
+    // `revoke` deliberately stays immediate. It only ever REMOVES authority and fails
+    // safe, so friction there costs more than it buys: someone typing "revoke
+    // everything" wants it to have happened already.
+    //
+    // On resume LangGraph re-enters this node from the top, so everything above must
+    // stay read-only — it runs twice.
+    const decision = interrupt({
+      type: "confirm_action",
+      action: "grant_permission",
+      summary: `Grant $${allowance} USDC per day to ${wallet.agent_spender}`,
+      amount_usd: allowance,
+      text: [
+        `Grant an on-chain spend permission: $${allowance} USDC per day, spender ${wallet.agent_spender}.`,
+        `This is a transaction on ${provider.network()} and costs gas.`,
+        `It lets me move up to that much USDC without asking again — swaps, x402 data and ACP hires all draw on it.`,
+        `Confirm? (yes / no)`,
+      ].join("\n"),
+    }) as { approved: boolean };
+
+    if (!decision.approved) {
+      return {
+        messages: [
+          new AIMessage(
+            "Cancelled — nothing was granted, and I still have no authority to move your funds.",
+          ),
+        ],
+      };
+    }
+
     let permission;
     try {
       permission = await provider.grantSpendPermission(wallet.account_key, allowance, 1);
