@@ -181,6 +181,31 @@ describe("data requests are questions, and must survive the interrogative guard"
     }
   });
 
+  /**
+   * Asking what is on the menu must never cost money. In production, "What onchain
+   * data sources do you have" matched `on-chain data` and came back "Buy 'Nansen
+   * Smart Money Holdings' (~$0.05). Confirm?" — a price quote in answer to a question
+   * about the price list.
+   */
+  test("asking what data sources exist is answered, not sold", () => {
+    for (const q of [
+      "What onchain data sources do you have",
+      "what data sources do you have",
+      "which endpoints are available",
+      "list your data sources",
+      "what can you buy",
+      "show me the endpoints",
+    ]) {
+      expect(tableIntent(q)?.action_type).toBe("read_only");
+    }
+  });
+
+  test("asking FOR data still buys it — the menu rule must not swallow requests", () => {
+    for (const q of ["what is smart money buying on base", "risk score on PEPE", "token holders"]) {
+      expect(tableIntent(q)?.action_type).toBe("x402_data_purchase");
+    }
+  });
+
   test("authority questions are still blocked — the exemption is data only", () => {
     for (const q of [
       "how do I grant eth permission",

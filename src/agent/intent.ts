@@ -153,9 +153,28 @@ function extractSubject(text: string): string | undefined {
 const ASKS_ABOUT_AN_ACTION =
   /^\s*(?:how\s+(?:do|does|did|can|could|would|should|is|are|difficult|hard|easy)\b|what\s+(?:is|are|do|does|happens|would|should)\b|what'?s\s+(?:the\s+)?(?:point|difference|process|best)\b|should\s+i\b|is\s+it\s+(?:possible|safe)\b|do\s+i\s+(?:need|have\s+to)\b|why\s+(?:do|does|would|should|is|are|can|can't|cant)\b|can\s+you\s+explain\b|explain\b|tell\s+me\s+(?:about|how)\b|what\s+do\s+you\s+mean\b)/;
 
+/**
+ * Asking about the CATALOGUE rather than for anything in it.
+ *
+ * Checked before every other rule, because these phrases are made of the same words
+ * the data rules match on — "what onchain data sources do you have" is "on-chain
+ * data" surrounded by a question about the menu. The tell is a possessive or
+ * enumerating verb aimed at Ward ("do you have", "can you buy", "what … are
+ * available"), never a subject to look up.
+ */
+const ASKS_FOR_THE_MENU =
+  /\b(?:what|which|list|show\s+me)\b[^?]*\b(?:data\s+(?:sources?|providers?|feeds?)|endpoints?|sources?|apis?|catalogue|catalog)\b|\b(?:endpoints?|data\s+sources?)\b[^?]*\b(?:do\s+you\s+have|are\s+available|can\s+you\s+(?:buy|use|access)|exist)\b|\bwhat\s+(?:can|could)\s+you\s+(?:buy|fetch|look\s+up|access)\b/;
+
 /** Obvious cases — no LLM. Returns `null` when the text is ambiguous. */
 export function tableIntent(text: string): ParsedIntent | null {
   const t = text.toLowerCase().trim();
+
+  // Asking WHAT Ward can buy is never itself a purchase. "What onchain data sources
+  // do you have" matched `on-chain data` and was answered with "Buy 'Nansen Smart
+  // Money Holdings' (~$0.05). Confirm?" — a price quote in reply to a question about
+  // the menu. The agent node has `discover_x402_endpoints` and answers this for free.
+  if (ASKS_FOR_THE_MENU.test(t)) return { action_type: "read_only", source: "table" };
+
   const asksAbout = ASKS_ABOUT_AN_ACTION.test(t);
 
   // Every rule from here to the `balance` check EXECUTES something. A question is

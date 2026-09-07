@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { loadCatalog, resolveX402Call } from "../src/execution/catalog.ts";
-import { x402QuoteUsd, x402Signer } from "../src/wallet/cdp.ts";
+import { failureDetail, x402QuoteUsd, x402Signer } from "../src/wallet/cdp.ts";
 
 /**
  * Why no x402 purchase had ever worked.
@@ -185,6 +185,42 @@ describe("what the endpoint actually charges", () => {
     test("mainnet and sepolia are not interchangeable", () => {
       expect(x402QuoteUsd(v2, "base-sepolia", USDC)).toBeNull();
     });
+  });
+});
+
+/**
+ * A paid request that comes back 402 is the one failure that matters most, and the
+ * reason is in its body. Throwing on the status alone discarded it: production logged
+ * "the endpoint returned 402" and nothing else, so why a signed voucher was refused
+ * could not be worked out from the logs at all.
+ */
+describe("why a paid request was refused", () => {
+  const res = (body: string, type = "application/json") =>
+    new Response(body, { status: 402, headers: { "content-type": type } });
+
+  test("pulls x402's own reason out of the body", async () => {
+    expect(await failureDetail(res('{"x402Version":2,"error":"invalid_payment_signature"}'))).toBe(
+      "invalid_payment_signature",
+    );
+  });
+
+  test("falls back to `message`, which is what Nansen uses", async () => {
+    expect(await failureDetail(res('{"message":"settlement failed: insufficient balance"}'))).toBe(
+      "settlement failed: insufficient balance",
+    );
+  });
+
+  test("a non-JSON body is still better than nothing", async () => {
+    expect(await failureDetail(res("Bad Gateway", "text/plain"))).toBe("Bad Gateway");
+  });
+
+  test("an empty body says nothing rather than inventing something", async () => {
+    expect(await failureDetail(res(""))).toBe("");
+  });
+
+  test("it is trimmed — this reaches the user's chat", async () => {
+    const detail = await failureDetail(res(JSON.stringify({ error: "x".repeat(500) })));
+    expect(detail.length).toBeLessThanOrEqual(200);
   });
 });
 

@@ -82,6 +82,29 @@ export function pullWasUnspent(heldBefore: number, heldNow: number, pulledUsd: n
   return heldNow - heldBefore >= pulledUsd - USDC_EPSILON;
 }
 
+/**
+ * Why a paid request was refused, from its own body — trimmed to one line.
+ *
+ * x402 puts the reason in `error`; Nansen also uses `message`. Kept short because it
+ * reaches the user's chat, and wrapped in nothing: this is a server's own words about
+ * a payment, so it is data, never instruction.
+ */
+export async function failureDetail(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => "");
+  if (!raw) return "";
+  let text = raw;
+  try {
+    const body = JSON.parse(raw) as { error?: unknown; message?: unknown };
+    const reason = body.error ?? body.message;
+    if (reason !== undefined && reason !== null) {
+      text = typeof reason === "string" ? reason : JSON.stringify(reason);
+    }
+  } catch {
+    // Not JSON. The raw text, trimmed, is still better than nothing.
+  }
+  return text.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
 function describeCause(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return /abort|timeout/i.test(message)
@@ -496,11 +519,20 @@ export class CdpWalletProvider implements WalletProvider {
     }
 
     if (!response.ok) {
+      // Read the body before unwinding. A second 402 carries x402's own reason for
+      // refusing the payment — the ONE thing that says why a signed voucher was not
+      // accepted — and throwing on the status alone discarded it, leaving the failure
+      // undiagnosable from the logs.
+      const detail = await failureDetail(response);
+      console.error(
+        `x402 endpoint refused a paid request: ${response.status} ${request.url}` +
+          (detail ? ` — ${detail}` : " — (no body)"),
+      );
       throw await this.#unwind(
         accountKey,
         priceUsd,
         held,
-        `the endpoint returned ${response.status}`,
+        `the endpoint returned ${response.status}${detail ? ` (${detail})` : ""}`,
       );
     }
 
@@ -579,10 +611,42 @@ export class CdpWalletProvider implements WalletProvider {
     }
   }
 
-  /** The agent spender's USDC, for measuring a pull that may need returning. */
+  /**
+   * The agent spender's USDC, read from the CHAIN, for measuring a pull that may need
+   * returning.
+   *
+   * `balances()` goes through CDP's `listTokenBalances`, which is an INDEXED read and
+   * lags the chain by seconds. That lag decided whether a user got their money back.
+   * Production: a $0.05 purchase failed 3.7s after it started, the pull had been mined
+   * — the transfer is on chain, one `0xc350` into the spender — but the indexer had
+   * not caught up, so the "after" balance still read the old value, the delta was
+   * zero, and Ward told the user their $0.05 "had already left for the endpoint" and
+   * was "NOT recoverable". Nothing had left; nothing has ever left. The refund was
+   * simply never attempted.
+   *
+   * `balanceOf` at `latest` cannot lag what a mined transaction did.
+   */
   async #spenderUsdc(): Promise<number> {
     const spender = await this.#agentSpender();
-    return (await this.balances(spender.address as Hex)).usdcUsd;
+    const client = createPublicClient({
+      chain: this.#network === "base" ? base : baseSepolia,
+      transport: http(),
+    });
+    const raw = await client.readContract({
+      address: this.#token("USDC"),
+      abi: [
+        {
+          type: "function",
+          name: "balanceOf",
+          stateMutability: "view",
+          inputs: [{ name: "account", type: "address" }],
+          outputs: [{ name: "", type: "uint256" }],
+        },
+      ] as const,
+      functionName: "balanceOf",
+      args: [spender.address as Hex],
+    });
+    return Number(formatUnits(raw, USDC_DECIMALS));
   }
 
   /**
@@ -612,9 +676,19 @@ export class CdpWalletProvider implements WalletProvider {
         const { txHash } = await this.refundUser(accountKey, pulledUsd);
         outcome = `your $${pulledUsd} USDC was returned to your wallet (tx ${txHash}).`;
       } else {
+        // Say what is known, not the worst reading of it. "You paid for a response
+        // that failed" was said about money that had never moved, and a user told
+        // that has no reason to go looking. The balance not showing the pull does
+        // NOT prove the endpoint took it — the spender is shared, so a concurrent
+        // spend explains the same reading.
+        console.error(
+          `x402 unwind: spender USDC ${heldNow} vs ${heldBefore} before a $${pulledUsd} pull — ` +
+            "not refunding automatically; check the spender against the chain",
+        );
         outcome =
-          `$${pulledUsd} USDC had already left for the endpoint, so it is NOT recoverable ` +
-          "automatically — you paid for a response that failed.";
+          `$${pulledUsd} USDC is not back in your wallet, and I can't tell from here whether ` +
+          `the endpoint took it or it is still held by the agent spender — so I have not ` +
+          `refunded it automatically. Nothing further will happen on its own.`;
       }
     } catch (error) {
       outcome =
