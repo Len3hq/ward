@@ -149,6 +149,49 @@ export function x402Signer(account: { address: string; signTypedData: unknown })
   return toClientEvmSigner(account as unknown as Parameters<typeof toClientEvmSigner>[0]);
 }
 
+/**
+ * A `fetch` that restates an x402 **v1** challenge in the vocabulary the v2 scheme
+ * can read.
+ *
+ * `@x402/evm` derives the EIP-712 chain id by parsing the network as CAIP-2, and a v1
+ * server names it `"base"` — so every v1 endpoint died with "Unsupported network
+ * format: base (expected eip155:CHAIN_ID)" after its USDC had been pulled. The
+ * client's own `registerV1` does not help: it routes the lookup, then hands the
+ * scheme the same unparseable name. Two fields differ and both are renames:
+ * `network` → CAIP-2, and v1's `maxAmountRequired` → v2's `amount`.
+ *
+ * `x402Version` is deliberately left at 1, which is what keeps the reply correct: the
+ * client picks the envelope and the header (`X-PAYMENT`, not `PAYMENT-SIGNATURE`)
+ * from it. And the signed payload carries no network field of its own, so the server
+ * never sees the rewritten name — verified against a local v1 server before this
+ * shipped.
+ */
+export function modernizeV1Challenge(network: "base" | "base-sepolia"): typeof fetch {
+  // Bun's `fetch` carries a `preconnect` property that a plain function does not, and
+  // `wrapFetchWithPayment` only ever calls it — hence the cast rather than a stub.
+  const shim = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await fetch(input, init);
+    if (response.status !== 402) return response;
+
+    const body = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { x402Version?: number; accepts?: X402Offer[] } | null;
+    if (body?.x402Version !== 1 || !Array.isArray(body.accepts)) return response;
+
+    const accepts = body.accepts.map((offer) =>
+      offer.network === network
+        ? { ...offer, network: caip2(network), amount: offer.maxAmountRequired }
+        : offer,
+    );
+    return new Response(JSON.stringify({ ...body, accepts }), {
+      status: 402,
+      headers: response.headers,
+    });
+  };
+  return shim as unknown as typeof fetch;
+}
+
 /** CAIP-2 chain id, which is how x402 v2 names a network. v1 used the bare name. */
 function caip2(network: "base" | "base-sepolia"): `${string}:${string}` {
   return network === "base" ? "eip155:8453" : "eip155:84532";
@@ -521,10 +564,13 @@ export class CdpWalletProvider implements WalletProvider {
     // enforced above, against the endpoint's own quote, BEFORE any USDC is pulled —
     // which is stricter than v1's check, which fired after the pull.
     const signer = x402Signer(spender);
+    const network = caip2(this.#network);
     const client = new x402Client()
-      .register(caip2(this.#network), new ExactEvmScheme(signer))
-      .registerV1(this.#network, new ExactEvmScheme(signer));
-    const pay = wrapFetchWithPayment(fetch, client);
+      .register(network, new ExactEvmScheme(signer))
+      // Registered under the CAIP-2 name for v1 too, because `modernizeV1Challenge`
+      // rewrites the challenge to it before the client ever looks a scheme up.
+      .registerV1(network, new ExactEvmScheme(signer));
+    const pay = wrapFetchWithPayment(modernizeV1Challenge(this.#network), client);
 
     let response: Response;
     try {

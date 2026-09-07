@@ -3,7 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 
 import { loadCatalog, resolveX402Call } from "../src/execution/catalog.ts";
-import { failureDetail, x402QuoteUsd, x402Signer } from "../src/wallet/cdp.ts";
+import {
+  failureDetail,
+  modernizeV1Challenge,
+  x402QuoteUsd,
+  x402Signer,
+} from "../src/wallet/cdp.ts";
 
 /**
  * Why no x402 purchase had ever worked.
@@ -239,6 +244,97 @@ describe("why a paid request was refused", () => {
 
   test("a body with nothing but the reason stays clean", async () => {
     expect(await failureDetail(res('{"message":"Invalid parameter"}'))).toBe("Invalid parameter");
+  });
+});
+
+/**
+ * The v2 client cannot read a v1 challenge unaided.
+ *
+ * `@x402/evm` parses the network as CAIP-2 to get the EIP-712 chain id, and a v1
+ * server says `"base"` — so every v1 endpoint died with "Unsupported network format:
+ * base (expected eip155:CHAIN_ID)", in production, AFTER its USDC had been pulled.
+ * `x402Client.registerV1` does not save it: that routes the lookup and then hands the
+ * scheme the same unparseable name.
+ */
+describe("paying a v1 endpoint with the v2 client", () => {
+  const v1Challenge = {
+    x402Version: 1,
+    accepts: [
+      {
+        scheme: "exact",
+        network: "base",
+        maxAmountRequired: "1000",
+        resource: "https://mesh.heurist.xyz/x402/agents/X/get_market_summary",
+        description: "",
+        mimeType: "",
+        outputSchema: {},
+        payTo: "0x93053f1e7A5eFEDa532Fe69CbbE43cBEc3A0F13f",
+        maxTimeoutSeconds: 120,
+        asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        extra: { name: "USD Coin", version: "2" },
+      },
+    ],
+  };
+  const respond = () => new Response(JSON.stringify(v1Challenge), { status: 402 });
+
+  async function shimmed(): Promise<Record<string, unknown>> {
+    const real = globalThis.fetch;
+    globalThis.fetch = (() => Promise.resolve(respond())) as unknown as typeof fetch;
+    try {
+      const out = await modernizeV1Challenge("base")("https://example.test/x", { method: "POST" });
+      return (await out.json()) as Record<string, unknown>;
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  test("the network is restated as CAIP-2, which is what the scheme can parse", async () => {
+    const offer = ((await shimmed()).accepts as Record<string, unknown>[])[0]!;
+    expect(offer.network).toBe("eip155:8453");
+  });
+
+  test("v1's `maxAmountRequired` is carried across as v2's `amount`", async () => {
+    const offer = ((await shimmed()).accepts as Record<string, unknown>[])[0]!;
+    expect(offer.amount).toBe("1000");
+    expect(offer.maxAmountRequired).toBe("1000"); // left in place, nothing else reads it
+  });
+
+  test("the protocol version is NOT touched — it decides the envelope and the header", async () => {
+    // Bump this to 2 and the client would answer a v1 server on `PAYMENT-SIGNATURE`,
+    // which is precisely the header those servers do not accept.
+    expect((await shimmed()).x402Version).toBe(1);
+  });
+
+  test("a v2 challenge passes through untouched", async () => {
+    const real = globalThis.fetch;
+    const v2 = { x402Version: 2, accepts: [{ scheme: "exact", network: "eip155:8453" }] };
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify(v2), { status: 402 }),
+      )) as unknown as typeof fetch;
+    try {
+      const out = await modernizeV1Challenge("base")("https://example.test/x");
+      expect(await out.json()).toEqual(v2);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  test("a signed v1 payload comes out the other side", async () => {
+    const key = privateKeyToAccount(("0x" + "22".repeat(32)) as `0x${string}`);
+    const signer = x402Signer({
+      address: key.address,
+      signTypedData: (d: unknown) => key.signTypedData(d as never),
+    });
+    const offer = ((await shimmed()).accepts as Record<string, unknown>[])[0]!;
+
+    const payload = await new ExactEvmScheme(signer).createPaymentPayload(1, offer as never);
+
+    expect((payload as { x402Version: number }).x402Version).toBe(1);
+    expect(JSON.stringify(payload)).toMatch(/0x[0-9a-f]{120,}/i);
+    // The rewritten name must not travel to the server — it does not appear in the
+    // signed payload, which is why the shim is safe.
+    expect(JSON.stringify(payload)).not.toContain("eip155");
   });
 });
 
