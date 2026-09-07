@@ -40,11 +40,22 @@ describe("rendering a table of results", () => {
     expect(out).toContain("1 result:");
   });
 
-  test("long lists are capped and say what was left out", () => {
+  /**
+   * The user paid for these rows. Twenty came back and five were shown, with "…and 15
+   * more." standing in for three quarters of a purchase — while both channels split a
+   * long message on their own anyway.
+   */
+  test("every row that was paid for is shown", () => {
     const out = preview({ data: Array.from({ length: 20 }, () => screenerRow), pagination: {} });
     expect(out).toContain("20 results:");
-    expect(out).toContain("…and 15 more.");
-    expect(out.split("\n").filter((l) => /^\d+\. /.test(l))).toHaveLength(5);
+    expect(out).not.toContain("more.");
+    expect(out.split("\n").filter((l) => /^\d+\. /.test(l))).toHaveLength(20);
+  });
+
+  test("a pathological list is still bounded", () => {
+    const out = preview({ data: Array.from({ length: 500 }, () => screenerRow), pagination: {} });
+    expect(out).toContain("500 results:");
+    expect(out).toContain("more.");
   });
 
   test("identifying fields lead the row", () => {
@@ -109,7 +120,48 @@ describe("units come from the field name, never the value", () => {
     const line = preview({ data: [{ token_symbol: "AERO", ...wide }], pagination: {} })
       .split("\n")
       .find((l) => l.startsWith("   "))!;
-    expect(line.split(" · ")).toHaveLength(5);
+    expect(line.split(" · ")).toHaveLength(6);
+  });
+
+  /**
+   * From a real purchase: three of five slots went to `token_age_days`,
+   * `token_age_hours` and `token_deployment_date` — one fact told three ways — while
+   * price, volume and net flow were cut. The row has six slots; they have to earn it.
+   */
+  test("the same fact is not told three ways", () => {
+    const out = preview({
+      data: [
+        {
+          token_symbol: "USDC",
+          token_age_days: 1116,
+          token_age_hours: 26787,
+          token_deployment_date: "2023-08-18T18:36:29",
+          market_cap_usd: 74.21e9,
+          liquidity: 218.29e6,
+          price_usd: 1.0001,
+          volume: 21e6,
+          netflow: 3e6,
+        },
+      ],
+      pagination: {},
+    });
+
+    expect(out).not.toContain("token age hours");
+    expect(out).not.toContain("deployment date");
+    // The slots freed up go to what the user actually bought the data for.
+    expect(out).toContain("market cap usd");
+    expect(out).toContain("liquidity");
+    expect(out).toContain("volume");
+  });
+
+  test("money outranks counts when the row is trimmed", () => {
+    const out = preview({
+      data: [
+        { token_symbol: "AERO", nof_traders: 4210, a: 1, b: 2, c: 3, d: 4, market_cap_usd: 5 },
+      ],
+      pagination: {},
+    });
+    expect(out).toContain("market cap usd $5");
   });
 
   test("empty and null fields are dropped rather than printed", () => {

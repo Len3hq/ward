@@ -431,6 +431,33 @@ function formatValue(key: string, value: unknown): string | null {
 /** Field names that identify the row, so they lead it. */
 const LABEL_FIELDS = /symbol|_label$|^name$|^chain$|address/;
 
+/**
+ * A field that says what a field already shown says.
+ *
+ * The screener returns `token_age_days`, `token_age_hours` AND
+ * `token_deployment_date` — one fact, three columns, and between them they took three
+ * of the row's slots while price, volume and net flow were cut. Age in hours is the
+ * same age; the deployment date is the same age with more characters.
+ */
+function isRedundant(key: string, row: Record<string, unknown>): boolean {
+  if (/_hours$/.test(key) && `${key.slice(0, -6)}_days` in row) return true;
+  if (/deployment_date|_date$/.test(key) && Object.keys(row).some((k) => /_age_days$/.test(k))) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * How much a column earns its place. The row has six slots and the endpoint may offer
+ * twenty-three; object order is the API's convenience, not the reader's interest.
+ */
+function fieldRank(key: string): number {
+  if (/_usd$|market_cap|liquidity|volume|flow|price|pnl|value|profit/.test(key)) return 3;
+  if (/_change|percentage|ownership|holders?|_amount$|balance/.test(key)) return 2;
+  if (/^nof_|_count$|_days$/.test(key)) return 1;
+  return 0;
+}
+
 function renderRows(rows: Record<string, unknown>[]): string {
   const shown = rows.slice(0, MAX_PREVIEW_ROWS);
   const lines = shown.map((row, index) => {
@@ -439,7 +466,11 @@ function renderRows(rows: Record<string, unknown>[]): string {
       .filter((pair): pair is readonly [string, string] => pair[1] !== null);
 
     const labels = entries.filter(([key]) => LABEL_FIELDS.test(key));
-    const rest = entries.filter(([key]) => !LABEL_FIELDS.test(key)).slice(0, MAX_FIELDS_PER_ROW);
+    const rest = entries
+      .filter(([key]) => !LABEL_FIELDS.test(key))
+      .filter(([key]) => !isRedundant(key, row))
+      .sort((a, b) => fieldRank(b[0]) - fieldRank(a[0]))
+      .slice(0, MAX_FIELDS_PER_ROW);
     const head = labels.map(([, v]) => v).join(" · ") || `row ${index + 1}`;
     const body = rest.map(([key, v]) => `${key.replace(/_/g, " ")} ${v}`).join(" · ");
     return body ? `${index + 1}. ${head}\n   ${body}` : `${index + 1}. ${head}`;
@@ -455,11 +486,17 @@ const EMPTY_PAYLOAD =
   "The endpoint answered with no data for that request — the payment settled, but " +
   "there is nothing to show. Worth trying a different endpoint, or the same one later.";
 
-const MAX_PREVIEW_CHARS = 1200;
+/**
+ * The user paid for these rows, so they get these rows. Both channels split a long
+ * message on their own (4096 on Telegram, 2000 on Discord), so the old 1200-character
+ * clip was not protecting anything — it just threw away three quarters of a purchase
+ * and printed "…and 15 more."
+ */
+const MAX_PREVIEW_CHARS = 6000;
 /** Rows a chat message can carry before it stops being readable. */
-const MAX_PREVIEW_ROWS = 5;
+const MAX_PREVIEW_ROWS = 30;
 /** Columns per row. Nansen returns up to 23; nobody reads 23 on a phone. */
-const MAX_FIELDS_PER_ROW = 5;
+const MAX_FIELDS_PER_ROW = 6;
 /** Enough to name what was missing without listing a whole schema back at the user. */
 const MAX_EMPTY_FIELDS = 4;
 
