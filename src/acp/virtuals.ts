@@ -202,13 +202,19 @@ export class VirtualsAcpProvider implements AcpProvider {
               });
               await agent.stop();
             } else if (entry.event.type === "job.rejected" || entry.event.type === "job.expired") {
-              finish(notSettled(job, `job ${entry.event.type}`));
+              finish(notSettled(job, `job ${entry.event.type}`, provider.walletAddress));
               await agent.stop();
             }
           } catch (err) {
             // A throw in here (no Spend Permission, a failed fund) would otherwise
             // hang the job until the timeout with the user's money already pulled.
-            finish(notSettled(job, err instanceof Error ? err.message : "job handler failed"));
+            finish(
+              notSettled(
+                job,
+                err instanceof Error ? err.message : "job handler failed",
+                provider.walletAddress,
+              ),
+            );
             await agent.stop().catch(() => undefined);
           }
         });
@@ -223,7 +229,7 @@ export class VirtualsAcpProvider implements AcpProvider {
           );
         });
 
-        setTimeout(() => finish(notSettled(job, "timed out")), 180_000);
+        setTimeout(() => finish(notSettled(job, "timed out", provider.walletAddress)), 180_000);
       });
 
       // Escrow releases to the buyer, so whatever the job didn't consume is the
@@ -369,9 +375,18 @@ function round6(usd: number): number {
   return Math.round(usd * 1e6) / 1e6;
 }
 
-function notSettled(job: AcpJobRequest, why: string): AcpJobResult {
+/**
+ * A job that did not settle, attributed to the agent it was posted to.
+ *
+ * `counterpartyId` is what `appendAcpJob` writes and `trustScore()` reads, so an
+ * "unknown" here spends the trust penalty on nobody: production showed "The job with
+ * agent://unknown did not settle" while the confirmation the user had just approved
+ * named `agent://0x3bc3…0fff`. The failure has to land on the counterparty that
+ * failed, or the memory that decides who to hire next learns nothing from it.
+ */
+export function notSettled(job: AcpJobRequest, why: string, counterparty?: string): AcpJobResult {
   return {
-    counterpartyId: "agent://unknown",
+    counterpartyId: counterparty ? `agent://${counterparty}` : "agent://unknown",
     jobType: job.jobType,
     outcomeSummary: `did not settle: ${why}`,
     rawResult: null,

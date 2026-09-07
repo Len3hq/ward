@@ -1,5 +1,9 @@
 import { base } from "@account-kit/infra";
-import { AcpAgent, PrivyAlchemyEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
+import {
+  AcpAgent,
+  AssetToken,
+  PrivyAlchemyEvmProviderAdapter,
+} from "@virtuals-protocol/acp-node-v2";
 import type { JobRoomEntry, JobSession } from "@virtuals-protocol/acp-node-v2";
 
 import { assess } from "./score.ts";
@@ -23,11 +27,23 @@ import { assess } from "./score.ts";
  *   "Override in subclass". `PrivyAlchemyEvmProviderAdapter` is the only usable
  *   built-in EVM adapter.
  *
- * The seller's only move is `submit(deliverable)` on `job.funded` — there is no
+ * The seller has two moves, and missing either one deadlocks the job:
+ * `setBudget` while the job is `open` (there is no negotiation — the seller names
+ * the price), then `submit(deliverable)` once the buyer has funded it. There is no
  * accept step, and the deliverable is a **string**.
  */
 
 const CHAIN_ID = 8453; // Base
+
+/**
+ * What this agent charges, in USDC.
+ *
+ * The seller names the price: ACP has no negotiation step here, so whatever is set
+ * on `job.created` is what the buyer is asked to fund. Kept well under Ward's own
+ * per-job budget so a job is never refused for being too dear — the buyer's gate
+ * caps it independently, and the unspent remainder goes back to them.
+ */
+const PRICE_USD = Number(process.env.COUNTERPARTY_MIN_USD?.trim() || "0.01");
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -75,7 +91,31 @@ async function main(): Promise<void> {
     const type = entry.event.type;
     console.log(`[${session.jobId}] ${type}`);
 
-    // Escrow is funded — do the work and submit. This is the seller's only move.
+    // A new job is OPEN, and open is the seller's turn: the SDK's tool matrix gives
+    // `setBudget` to the provider and only `wait`/`fund` to the client, and the tool's
+    // own description is blunt about it — "a budget MUST be set before the buyer can
+    // fund". Skipping it deadlocks the job: Ward waits for `budget.set` before
+    // funding, this side waits for `job.funded` before working, and neither moves.
+    // Observed in production — job 77352 sat in `open` until Ward's 180s timeout,
+    // and the counterparty took a trust penalty for a stall it was not part of.
+    if (type === "job.created") {
+      // The SDK's own view of whose turn it is, rather than a second guess at the
+      // state machine — this also makes a session hydrated after a restart safe.
+      if (!session.availableTools().some((tool) => tool.name === "setBudget")) {
+        console.log("  not ours to price right now — waiting");
+        return;
+      }
+      try {
+        console.log(`  setting budget $${PRICE_USD}`);
+        await session.setBudget(AssetToken.usdc(PRICE_USD, session.chainId));
+        console.log("  budget set — waiting for the buyer to fund");
+      } catch (err) {
+        console.error(`  setBudget failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // Escrow is funded — do the work and submit.
     if (type !== "job.funded") return;
 
     try {

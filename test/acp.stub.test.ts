@@ -119,3 +119,33 @@ describe("runAcpJob write-back", () => {
     expect(run.trustBefore).toBeGreaterThan(0.5);
   });
 });
+
+/**
+ * A failure has to land on the agent that failed.
+ *
+ * `counterpartyId` is what `appendAcpJob` writes and `trustScore()` reads back before
+ * the next hire. Production showed "The job with agent://unknown did not settle" for a
+ * job whose confirmation had just named `agent://0x3bc3…0fff` — so the trust penalty
+ * was spent on nobody, and memory learned nothing from a real failure.
+ */
+describe("attributing a failed ACP job", () => {
+  const job = { jobType: "token_risk", subject: "PEPE", maxUsd: 0.5 } as const;
+
+  test("a failure in flight names the counterparty", async () => {
+    const { notSettled } = await import("../src/acp/virtuals.ts");
+    const result = notSettled(job, "timed out", "0x3bc37bbac8b34e0ead2d20cf9ab030af60520fff");
+
+    expect(result.counterpartyId).toBe("agent://0x3bc37bbac8b34e0ead2d20cf9ab030af60520fff");
+    expect(result.settled).toBe(false);
+    expect(result.outcomeSummary).toContain("timed out");
+    expect(result.amountUsd).toBe(0);
+  });
+
+  test("only a failure BEFORE one is chosen is anonymous", async () => {
+    // Selection itself failing is the one case with genuinely no counterparty to name.
+    const { notSettled } = await import("../src/acp/virtuals.ts");
+    expect(notSettled(job, "no ACP agent offers token-risk assessment").counterpartyId).toBe(
+      "agent://unknown",
+    );
+  });
+});
