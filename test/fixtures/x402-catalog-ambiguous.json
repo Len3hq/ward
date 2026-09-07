@@ -1,0 +1,46 @@
+{
+  "_note": "Three endpoints that all honestly answer 'smart money', at three prices, plus one that only matches 'holders'. Purpose-built so the choice logic is tested on ambiguity rather than on whatever the real catalogue happens to contain today.",
+  "endpoints": [
+    {
+      "id": "cheap-smart-money",
+      "name": "Cheap Smart Money",
+      "description": "What profitable wallets are doing.",
+      "url": "https://example.test/cheap",
+      "method": "POST",
+      "body_template": { "chain": "base" },
+      "cost_usd": 0.001,
+      "tags": ["smart money", "positioning"]
+    },
+    {
+      "id": "mid-smart-money",
+      "name": "Mid Smart Money",
+      "description": "What profitable wallets hold.",
+      "url": "https://example.test/mid",
+      "method": "POST",
+      "body_template": { "chain": "base" },
+      "cost_usd": 0.01,
+      "tags": ["smart money", "holdings"]
+    },
+    {
+      "id": "dear-smart-money",
+      "name": "Dear Smart Money",
+      "description": "Net flow for profitable wallets.",
+      "url": "https://example.test/dear",
+      "method": "POST",
+      "body_template": { "chain": "base" },
+      "cost_usd": 0.05,
+      "tags": ["smart money", "netflow"]
+    },
+    {
+      "id": "holders-only",
+      "name": "Holders Only",
+      "description": "Holder concentration for one token.",
+      "url": "https://example.test/holders",
+      "method": "POST",
+      "body_template": { "chain": "base", "token_address": "{subject}" },
+      "subject_kind": "address",
+      "cost_usd": 0.02,
+      "tags": ["holders", "concentration"]
+    }
+  ]
+}

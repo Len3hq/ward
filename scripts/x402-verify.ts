@@ -14,6 +14,7 @@
  */
 import { loadCatalog, resolveX402Call } from "../src/execution/catalog.ts";
 import { loadConfig } from "../src/config.ts";
+import { x402QuoteUsd } from "../src/wallet/cdp.ts";
 
 /** A token whose address is valid everywhere, for endpoints that need a subject. */
 const SAMPLE_SUBJECT = "0x4200000000000000000000000000000000000006"; // WETH on Base
@@ -21,13 +22,6 @@ const USDC: Record<string, string> = {
   base: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
   "base-sepolia": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
 };
-
-interface Accepts {
-  scheme?: string;
-  network?: string;
-  asset?: string;
-  maxAmountRequired?: string;
-}
 
 const network = loadConfig().baseNetwork;
 const endpoints = await loadCatalog();
@@ -59,22 +53,25 @@ for (const endpoint of endpoints) {
       continue;
     }
 
-    const body = (await response.json()) as { accepts?: Accepts[] };
-    const offer = (body.accepts ?? []).find((a) => a.scheme === "exact" && a.network === network);
-    if (!offer) {
+    // The SAME matcher the payment path uses, deliberately — this script existed to
+    // catch drift, and a second copy of the offer-matching logic is itself drift. It
+    // had one: written against x402 v1 only, it reported Nansen's v2 challenge as
+    // "no exact offer on base" when the endpoint was perfectly payable.
+    const body: unknown = await response.json();
+    const priceUsd = x402QuoteUsd(body, network, USDC[network]!);
+    if (priceUsd === null) {
       problems++;
-      console.log(`${line}✗ no "exact" offer on ${network} (Ward cannot pay it)`);
+      console.log(`${line}✗ no "exact" USDC offer on ${network} (Ward cannot pay it)`);
       continue;
     }
 
-    const priceUsd = Number(offer.maxAmountRequired) / 1e6;
-    const isUsdc = offer.asset?.toLowerCase() === USDC[network];
+    const version = (body as { x402Version?: number }).x402Version ?? 1;
     const matches = Math.abs(priceUsd - endpoint.cost_usd) < 1e-9;
-    if (!isUsdc || !matches) problems++;
+    if (!matches) problems++;
 
     console.log(
-      `${line}${matches && isUsdc ? "✓" : "✗"} asks $${priceUsd} ` +
-        `(catalogue says $${endpoint.cost_usd})${isUsdc ? "" : ` — NOT USDC: ${offer.asset}`}`,
+      `${line}${matches ? "✓" : "✗"} asks $${priceUsd} ` +
+        `(catalogue says $${endpoint.cost_usd}) [x402 v${version}]`,
     );
   } catch (error) {
     problems++;

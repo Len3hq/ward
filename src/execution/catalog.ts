@@ -71,23 +71,49 @@ export function subjectMismatch(endpoint: X402Endpoint, subject: string): string
   return null;
 }
 
-/** True if the endpoint's url or body_template needs a token/subject to be usable. */
+/**
+ * True if the endpoint's url or body_template needs a token/subject to be usable.
+ *
+ * Walks the whole body, not just its top level — a placeholder nested inside an
+ * object or an array is still a placeholder, and reporting "no subject needed" for
+ * one means asking the endpoint about an empty string, after paying it.
+ */
 export function endpointNeedsSubject(endpoint: X402Endpoint): boolean {
   if (PLACEHOLDER.test(endpoint.url)) return true;
-  return (
-    !!endpoint.body_template &&
-    Object.values(endpoint.body_template).some((v) => typeof v === "string" && PLACEHOLDER.test(v))
-  );
+  const needs = (value: unknown): boolean => {
+    if (typeof value === "string") return PLACEHOLDER.test(value);
+    if (Array.isArray(value)) return value.some(needs);
+    if (value !== null && typeof value === "object") return Object.values(value).some(needs);
+    return false;
+  };
+  return !!endpoint.body_template && needs(endpoint.body_template);
 }
+
+/** How far back `{date_from}` reaches. A week reads as "recently" for every entry using it. */
+const LOOKBACK_DAYS = 7;
 
 /**
  * Turn a catalog entry + the token the user asked about into a concrete call.
  * `{subject}` / `{token}` placeholders in the url (any method) and in every
  * string leaf of `body_template` (POST/PUT/PATCH) are replaced with `subject`.
+ *
+ * `{date_from}` / `{date_to}` become a rolling window ending now. Several Nansen
+ * endpoints *require* a date range, and a literal one baked into the catalogue would
+ * silently rot: the entry would keep paying and keep returning a slice of last year.
  */
-export function resolveX402Call(endpoint: X402Endpoint, subject?: string): ResolvedX402Call {
+export function resolveX402Call(
+  endpoint: X402Endpoint,
+  subject?: string,
+  now: Date = new Date(),
+): ResolvedX402Call {
   const sub = (subject ?? "").trim();
-  const fill = (s: string): string => s.replace(/\{(?:subject|token)\}/g, sub);
+  const to = now.toISOString();
+  const from = new Date(now.getTime() - LOOKBACK_DAYS * 86_400_000).toISOString();
+  const fill = (s: string): string =>
+    s
+      .replace(/\{(?:subject|token)\}/g, sub)
+      .replace(/\{date_from\}/g, from)
+      .replace(/\{date_to\}/g, to);
 
   const method = endpoint.method.toUpperCase();
   const url = fill(endpoint.url);
@@ -96,10 +122,22 @@ export function resolveX402Call(endpoint: X402Endpoint, subject?: string): Resol
     return { url, method };
   }
 
-  const body: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(endpoint.body_template)) {
-    body[key] = typeof value === "string" ? fill(value) : value;
-  }
+  // Recursive, because the placeholders that matter are NOT at the top level. Every
+  // Nansen entry needing a date carries it as `{"date": {"from": "{date_from}"}}`, and
+  // a one-level walk passed that straight through — the endpoint would have been paid
+  // and then answered 400 on a literal "{date_from}". Arrays too: `order_by` is a list
+  // of objects.
+  const fillDeep = (value: unknown): unknown => {
+    if (typeof value === "string") return fill(value);
+    if (Array.isArray(value)) return value.map(fillDeep);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, fillDeep(v)]),
+      );
+    }
+    return value;
+  };
+  const body = fillDeep(endpoint.body_template) as Record<string, unknown>;
   return { url, method, body };
 }
 
@@ -128,23 +166,57 @@ export function resetCatalog(): void {
 
 /** Best keyword match, or `null`. Scores name/description/tag hits from the query terms. */
 export async function searchCatalog(query: string): Promise<X402Endpoint | null> {
+  return (await rankCatalog(query))[0]?.endpoint ?? null;
+}
+
+export interface RankedEndpoint {
+  endpoint: X402Endpoint;
+  score: number;
+}
+
+/**
+ * Every endpoint that matches, best first.
+ *
+ * One best match was the wrong shape for a catalogue this size. With twelve Nansen
+ * entries beside the three others, "smart money on base" has half a dozen honest
+ * answers at three different prices, and picking one silently means the user pays for
+ * whichever happened to score highest — measurably the WRONG one, since the older
+ * entry usually wins on shared tags. `confirm` offers the close ones instead.
+ */
+export async function rankCatalog(query: string, limit = 4): Promise<RankedEndpoint[]> {
   const endpoints = await loadCatalog();
   const terms = query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 2);
-  if (terms.length === 0) return null;
+  if (terms.length === 0) return [];
 
-  let best: { endpoint: X402Endpoint; score: number } | null = null;
+  const scored: RankedEndpoint[] = [];
   for (const endpoint of endpoints) {
-    const haystack =
-      `${endpoint.name} ${endpoint.description} ${endpoint.tags.join(" ")}`.toLowerCase();
+    const name = endpoint.name.toLowerCase();
+    const haystack = `${name} ${endpoint.description} ${endpoint.tags.join(" ")}`.toLowerCase();
     let score = 0;
     for (const term of terms) {
-      if (endpoint.tags.some((tag) => tag.toLowerCase().includes(term))) score += 3;
+      // The name is the strongest signal, and it is how a user picks from a list:
+      // answering "nansen token holders" must beat everything that merely tags it.
+      if (name.includes(term)) score += 5;
+      else if (endpoint.tags.some((tag) => tag.toLowerCase().includes(term))) score += 3;
       else if (haystack.includes(term)) score += 1;
     }
-    if (score > 0 && (!best || score > best.score)) best = { endpoint, score };
+    if (score > 0) scored.push({ endpoint, score });
   }
-  return best?.endpoint ?? null;
+  return scored
+    .sort((a, b) => b.score - a.score || a.endpoint.id.localeCompare(b.endpoint.id))
+    .slice(0, limit);
+}
+
+/**
+ * Is the top match clear enough to act on without asking?
+ *
+ * A decisive lead means the user named the thing. A near-tie means several endpoints
+ * answer the question they actually asked, and choosing for them spends their money
+ * on a guess.
+ */
+export function isAmbiguous(ranked: RankedEndpoint[]): boolean {
+  return ranked.length > 1 && ranked[1]!.score >= ranked[0]!.score - 1;
 }

@@ -84,6 +84,22 @@ export const WardState = Annotation.Root({
     default: () => null,
   }),
 
+  /**
+   * Set by `confirm` when several endpoints answer the question equally well, and
+   * consumed by it on the next turn.
+   *
+   * The catalogue outgrew "one best match": with fifteen entries, "smart money on
+   * base" is a fair description of six of them at three different prices, and
+   * silently picking the top-scoring one spends the user's money on a guess — and
+   * measurably the wrong guess, since an older entry wins on shared tags. So the
+   * close ones are offered, and this remembers what was on the list so "2" means
+   * something on the next turn.
+   */
+  x402Choices: Annotation<{ ids: string[]; query: string; subject?: string } | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+
   /** Set by `confirm` on approval, consumed + cleared by `execute`. */
   confirmedIntent: Annotation<ConfirmedIntent | null>({
     reducer: (_, next) => next,

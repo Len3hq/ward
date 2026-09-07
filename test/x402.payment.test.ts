@@ -1,4 +1,6 @@
+import { ExactEvmScheme } from "@x402/evm";
 import { describe, expect, test } from "bun:test";
+import { privateKeyToAccount } from "viem/accounts";
 
 import { loadCatalog, resolveX402Call } from "../src/execution/catalog.ts";
 import { x402QuoteUsd, x402Signer } from "../src/wallet/cdp.ts";
@@ -43,19 +45,23 @@ const cdpAccount = {
 };
 
 describe("the payment signer", () => {
-  test("a raw CDP account is rejected by x402 — the bug", () => {
-    expect(x402AcceptsSigner(cdpAccount)).toBe(false);
-    // One field. It has every signing method x402 asks for.
-    expect("type" in cdpAccount).toBe(false);
+  /**
+   * The v1 duck-type above is kept as the record of what used to break, but it is no
+   * longer the contract. `@x402/evm`'s `ClientEvmSigner` asks for `address` +
+   * `signTypedData` and nothing else — the `type: "local"` field that a raw CDP
+   * account lacked, and that `toAccount()` existed to bolt on, is not consulted.
+   * A CDP server account satisfies v2 as it comes.
+   */
+  test("v2 asks for less than v1 did — the field that broke it is gone", () => {
+    expect(x402AcceptsSigner(cdpAccount)).toBe(false); // would have failed v1
+    const signer = x402Signer(cdpAccount) as unknown as Record<string, unknown>;
+    expect(typeof signer.address).toBe("string");
+    expect(typeof signer.signTypedData).toBe("function");
   });
 
-  test("the adapter makes it acceptable, and keeps the address", () => {
-    const signer = x402Signer(cdpAccount);
-    expect(x402AcceptsSigner(signer)).toBe(true);
-    expect((signer as unknown as { address: string }).address.toLowerCase()).toBe(
-      cdpAccount.address.toLowerCase(),
-    );
-    expect((signer as unknown as { type: string }).type).toBe("local");
+  test("the adapter keeps the address", () => {
+    const signer = x402Signer(cdpAccount) as unknown as { address: string };
+    expect(signer.address.toLowerCase()).toBe(cdpAccount.address.toLowerCase());
   });
 
   test("signing still goes through the CDP account, not a local key", async () => {
@@ -72,6 +78,37 @@ describe("the payment signer", () => {
     ).signTypedData({});
     expect(called).toBe(true);
     expect(signature).toBe("0xsig");
+  });
+
+  /**
+   * The migration's load-bearing claim, proved rather than assumed: the NARROW
+   * surface a CDP account exposes is enough to build a real v2 payload. The account
+   * here is deliberately reduced to `address` + `signTypedData` — no `type`, no
+   * `sign`, no `signMessage`, no `signTransaction`. Verified against Nansen's live
+   * challenge during the migration; pinned here against a captured copy of it.
+   */
+  test("a CDP-shaped signer produces a signed v2 payload", async () => {
+    const key = privateKeyToAccount(("0x" + "11".repeat(32)) as `0x${string}`);
+    const signer = x402Signer({
+      address: key.address,
+      signTypedData: (d: unknown) => key.signTypedData(d as never),
+    });
+
+    const payload = await new ExactEvmScheme(signer).createPaymentPayload(2, {
+      scheme: "exact",
+      network: "eip155:8453",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      amount: "50000",
+      payTo: "0x93053f1e7A5eFEDa532Fe69CbbE43cBEc3A0F13f",
+      maxTimeoutSeconds: 300,
+      extra: { name: "USD Coin", version: "2" },
+      resource: "https://api.nansen.ai/api/v1/smart-money/holdings",
+      description: "Get Smart Money Holdings Data",
+      mimeType: "",
+    } as never);
+
+    expect((payload as { x402Version: number }).x402Version).toBe(2);
+    expect(JSON.stringify(payload)).toMatch(/0x[0-9a-f]{120,}/i); // a real 65-byte signature
   });
 });
 
@@ -108,6 +145,46 @@ describe("what the endpoint actually charges", () => {
     expect(x402QuoteUsd({}, "base", USDC)).toBeNull();
     expect(x402QuoteUsd(null, "base", USDC)).toBeNull();
     expect(x402QuoteUsd({ accepts: [] }, "base", USDC)).toBeNull();
+  });
+
+  /**
+   * v2 renames both fields that matter: `maxAmountRequired` → `amount`, and the
+   * network becomes a CAIP-2 id. Reading only v1 is what made the verify script
+   * report Nansen as "no exact offer on base" while the endpoint was perfectly
+   * payable — and would have made the payment path quote the catalogue estimate
+   * instead of the real price.
+   */
+  describe("x402 v2 challenges", () => {
+    /** Trimmed from Nansen's live 402 — the shape, verbatim. */
+    const v2 = {
+      x402Version: 2,
+      resource: { url: "https://api.nansen.ai/api/v1/smart-money/netflow" },
+      accepts: [
+        { scheme: "exact", network: "eip155:8453", asset: USDC, amount: "50000" },
+        { scheme: "exact", network: "eip155:56", asset: "0xcE24", amount: "50000000000000000" },
+        { scheme: "exact", network: "solana:5eykt4", asset: "EPjFW", amount: "50000" },
+      ],
+    };
+
+    test("reads the price from a v2 body", () => {
+      expect(x402QuoteUsd(v2, "base", USDC)).toBe(0.05);
+    });
+
+    test("picks the Base/USDC offer out of a multi-chain challenge", () => {
+      // BNB is listed first at a nominally larger number and Solana at the same one.
+      // Neither is payable: the Spend Permission is USDC on Base and nothing else.
+      const reordered = { ...v2, accepts: [...v2.accepts].reverse() };
+      expect(x402QuoteUsd(reordered, "base", USDC)).toBe(0.05);
+    });
+
+    test("a v2 challenge that omits Base is not payable", () => {
+      const noBase = { ...v2, accepts: v2.accepts.filter((a) => a.network !== "eip155:8453") };
+      expect(x402QuoteUsd(noBase, "base", USDC)).toBeNull();
+    });
+
+    test("mainnet and sepolia are not interchangeable", () => {
+      expect(x402QuoteUsd(v2, "base-sepolia", USDC)).toBeNull();
+    });
   });
 });
 

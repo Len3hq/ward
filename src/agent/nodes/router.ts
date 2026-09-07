@@ -37,6 +37,13 @@ export async function routerNode(state: WardStateType): Promise<Partial<WardStat
     // model improvise a reply to it.
     if (isBareAnswer(lastHumanText(state))) return { route: "stale_confirm" satisfies Route };
 
+    // A choice from the list `confirm` just offered. "2" parses as nothing at all, so
+    // without this it reaches the conversational node — which cannot buy anything and
+    // would improvise a reply to a selection the user believes they just made.
+    if (state.x402Choices && isChoiceReply(lastHumanText(state))) {
+      return { route: "confirm" satisfies Route };
+    }
+
     if (intent && SPEND_ACTIONS.has(intent.action_type)) {
       return { route: "confirm" satisfies Route };
     }
@@ -50,6 +57,17 @@ export async function routerNode(state: WardStateType): Promise<Partial<WardStat
 
   const isAction = intent !== null && intent.action_type !== "read_only";
   return { route: isAction ? "refuse" : "onboarding" };
+}
+
+/**
+ * Could this be picking from an offered list? Deliberately loose — `confirm` does the
+ * real resolution and falls back to a fresh search when it cannot match, so a false
+ * positive costs nothing. A short reply is the giveaway: a number, or a few words
+ * naming one of the options.
+ */
+function isChoiceReply(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= 60 && /^(?:option\s*|no\.?\s*|#)?\d{1,2}\b|[a-z]/i.test(t);
 }
 
 function lastHumanText(state: WardStateType): string {

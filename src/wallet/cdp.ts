@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { CdpClient, parseUnits } from "@coinbase/cdp-sdk";
+import { ExactEvmScheme, toClientEvmSigner, type ClientEvmSigner } from "@x402/evm";
+import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { createPublicClient, formatUnits, http } from "viem";
-import { toAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
-import { wrapFetchWithPayment } from "x402-fetch";
 
 import type { CdpConfig } from "../config.ts";
 import { installCdpProxy } from "../net.ts";
@@ -90,34 +90,42 @@ function describeCause(error: unknown): string {
 }
 
 /**
- * A CDP account, as `x402-fetch` needs to see it.
+ * A CDP account, as `@x402/evm` needs to see it.
  *
- * x402 duck-types its signer: a viem `LocalAccount` must have `address`, `sign`,
- * `signMessage`, `signTransaction`, `signTypedData` **and `type`**. A CDP server
- * account has every one of those methods, with viem-compatible shapes, and no
- * `type` — so passing it straight through (which is what the old cast did) fails
- * the check and throws "Invalid wallet client provided does not support
- * signTypedData" before any request is made. `toAccount` adds `type: "local"` and
- * changes nothing else; it is the adapter CDP's own x402 guide uses.
+ * v2 duck-types far more narrowly than v1 did: `ClientEvmSigner` is `address` +
+ * `signTypedData`, both of which a CDP server account already has in viem-compatible
+ * shapes. The v1 path needed `toAccount()` to bolt on the `type: "local"` field
+ * x402 v1 checked for, without which it threw "Invalid wallet client provided does
+ * not support signTypedData" before a byte hit the network. That whole problem is
+ * gone — `toClientEvmSigner` is exactly what CDP's own adapter
+ * (`fromCdpEvmAccount` in `@coinbase/cdp-sdk/x402`) calls, so this is the
+ * first-party path, reached without pulling in that module's Solana dependencies.
  */
-export function x402Signer(account: {
-  address: string;
-  sign?: unknown;
-  signMessage: unknown;
-  signTransaction: unknown;
-  signTypedData: unknown;
-}): Parameters<typeof wrapFetchWithPayment>[1] {
-  return toAccount(account as unknown as Parameters<typeof toAccount>[0]) as unknown as Parameters<
-    typeof wrapFetchWithPayment
-  >[1];
+export function x402Signer(account: { address: string; signTypedData: unknown }): ClientEvmSigner {
+  return toClientEvmSigner(account as unknown as Parameters<typeof toClientEvmSigner>[0]);
 }
 
-/** One offer in a 402 challenge — what the endpoint will accept as payment. */
+/** CAIP-2 chain id, which is how x402 v2 names a network. v1 used the bare name. */
+function caip2(network: "base" | "base-sepolia"): `${string}:${string}` {
+  return network === "base" ? "eip155:8453" : "eip155:84532";
+}
+
+/**
+ * One offer in a 402 challenge — what the endpoint will accept as payment.
+ *
+ * Two protocol versions are in the wild and the field names differ: v1 says
+ * `maxAmountRequired` and names the network `"base"`, v2 says `amount` and names it
+ * `"eip155:8453"`. Both are read, because Ward's catalogue holds endpoints of each
+ * kind (Heurist and lucyos serve v1; Nansen is v2-only).
+ */
 interface X402Offer {
   scheme?: string;
   network?: string;
   asset?: string;
+  /** v1. */
   maxAmountRequired?: string;
+  /** v2. */
+  amount?: string;
 }
 
 /**
@@ -129,17 +137,27 @@ interface X402Offer {
  * catalogue price is only ever an estimate shown at confirmation; this is the number
  * that gets pulled from the user.
  */
-export function x402QuoteUsd(body: unknown, network: string, usdcAddress: string): number | null {
+export function x402QuoteUsd(
+  body: unknown,
+  network: "base" | "base-sepolia",
+  usdcAddress: string,
+): number | null {
   const offers = (body as { accepts?: X402Offer[] } | null)?.accepts ?? [];
+  // A v2 endpoint lists several chains — Nansen offers Base, X Layer, BNB and
+  // Solana in one challenge. Only the one Ward's Spend Permission covers is an
+  // option at all; the rest are not cheaper, they are impossible.
+  const accepted = new Set<string>([network, caip2(network)]);
+  const amountOf = (a: X402Offer): string | undefined => a.maxAmountRequired ?? a.amount;
   const offer = offers.find(
     (a) =>
       a.scheme === "exact" &&
-      a.network === network &&
+      a.network !== undefined &&
+      accepted.has(a.network) &&
       a.asset?.toLowerCase() === usdcAddress.toLowerCase() &&
-      a.maxAmountRequired !== undefined,
+      amountOf(a) !== undefined,
   );
   if (!offer) return null;
-  const price = Number(offer.maxAmountRequired) / 10 ** USDC_DECIMALS;
+  const price = Number(amountOf(offer)) / 10 ** USDC_DECIMALS;
   return Number.isFinite(price) && price >= 0 ? price : null;
 }
 
@@ -450,11 +468,19 @@ export class CdpWalletProvider implements WalletProvider {
     // Pulled AND confirmed before the endpoint is asked to be paid — see `#pullUsdc`.
     const { heldBefore: held } = await this.#pullUsdc(accountKey, priceUsd);
 
-    const pay = wrapFetchWithPayment(
-      fetch,
-      x402Signer(spender),
-      parseUnits(String(request.maxUsd), USDC_DECIMALS),
-    );
+    // One client, both protocol versions. `register` takes a CAIP-2 network and
+    // speaks v2 (Nansen is v2-only and rejects the v1 `X-PAYMENT` header);
+    // `registerV1` takes the bare name v1 servers advertise (Heurist, lucyos).
+    // Registering only one of them silently strands half the catalogue.
+    //
+    // v1's positional `maxValue` argument is gone, and nothing is lost: the cap is
+    // enforced above, against the endpoint's own quote, BEFORE any USDC is pulled —
+    // which is stricter than v1's check, which fired after the pull.
+    const signer = x402Signer(spender);
+    const client = new x402Client()
+      .register(caip2(this.#network), new ExactEvmScheme(signer))
+      .registerV1(this.#network, new ExactEvmScheme(signer));
+    const pay = wrapFetchWithPayment(fetch, client);
 
     let response: Response;
     try {
@@ -479,7 +505,11 @@ export class CdpWalletProvider implements WalletProvider {
     }
 
     const data: unknown = await response.json().catch(() => ({}));
-    const paymentHeader = response.headers.get("x-payment-response") ?? "";
+    // v1 answers on `x-payment-response`, v2 on `payment-response` (Nansen lists
+    // both `Payment-Response` and `Payment-Receipt` in its CORS exposure). Miss the
+    // v2 name and every Nansen purchase lands in the ledger with `txHash: "0x"`.
+    const paymentHeader =
+      response.headers.get("x-payment-response") ?? response.headers.get("payment-response") ?? "";
     const decoded = decodePayment(paymentHeader);
     return {
       data,

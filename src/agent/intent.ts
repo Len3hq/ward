@@ -113,12 +113,23 @@ export function extractAddress(text: string): string | undefined {
   return text.match(/\b0x[a-fA-F0-9]{40}\b/)?.[0];
 }
 
-/** The token a data / assessment request is *about* — a ticker or 0x address. */
+/**
+ * The token a data / assessment request is *about* — a ticker or 0x address.
+ *
+ * Tickers are upper-cased; addresses are NOT. Upper-casing everything turned
+ * "risk score for 0x4200…" into `0X4200…`, which then failed the `^0x` test in
+ * `subjectMismatch` and was refused as "a ticker, not a contract address" — for an
+ * address the user had typed correctly. It only bit when the address followed one of
+ * the keywords below ("for", "on", "about", "is"), which is how most people write it.
+ */
 function extractSubject(text: string): string | undefined {
   const keyed = text.match(
     /\b(?:assess|check|analy\w*|audit|score|risk|about|on|for|is)\s+(?:the\s+|token\s+|a\s+)?(0x[a-fA-F0-9]{40}|[A-Z][A-Z0-9]{1,9})\b/,
   );
-  if (keyed) return keyed[1]!.toUpperCase();
+  if (keyed) {
+    const found = keyed[1]!;
+    return /^0x/i.test(found) ? found : found.toUpperCase();
+  }
   const address = text.match(/\b0x[a-fA-F0-9]{40}\b/);
   if (address) return address[0];
   const ticker = text.match(/\b[A-Z]{2,10}\b/);
@@ -152,6 +163,15 @@ export function tableIntent(text: string): ParsedIntent | null {
   if (!asksAbout) {
     const action = executableIntent(text, t);
     if (action) return action;
+  } else {
+    // One exemption, and it is not a loophole. Buying data is ASKED for — "what is
+    // smart money buying on Base" is a question in form and a purchase in intent,
+    // and the guard was swallowing every one of them. It is safe to exempt because
+    // a data purchase always reaches `confirm` and shows its price first; the
+    // actions the guard exists for — grant, revoke, generate a wallet — change
+    // authority with no price prompt at all, and stay behind it.
+    const data = x402Intent(text, t);
+    if (data) return data;
   }
 
   if (
@@ -211,16 +231,37 @@ function executableIntent(text: string, t: string): ParsedIntent | null {
   if (/\bhire\b.*\b(agent|someone)\b|\bacp\b.*\bjob\b|\bpost\b.*\bacp\b/.test(t)) {
     return { action_type: "acp_job", token: extractSubject(text), source: "table" };
   }
-  if (
-    /\b(risk\s*(score|assessment|check|rating)|is\s+\S+\s+(a\s+)?(rug|scam|safe|honeypot)|assess\b.*\btoken|audit\b.*\btoken|whale|smart\s*money|holder|inflow|outflow|token\s*(flow|analytics|price|risk)|on-?chain\s*data|premium\s*data|liquidity\s*depth)\b/.test(
-      t,
-    )
-  ) {
-    return { action_type: "x402_data_purchase", token: extractSubject(text), source: "table" };
-  }
+  const data = x402Intent(text, t);
+  if (data) return data;
+
   // Nothing executable. The caller falls through to `balance` / `read_only`, which is
   // why the spend rules above must come first: "swap my balance into ETH" is a swap.
   return null;
+}
+
+/**
+ * Asking for on-chain data Ward can buy.
+ *
+ * Its own function because `tableIntent` reaches it down two paths: the ordinary one,
+ * and the question path — a data request is normally phrased as a question, so the
+ * interrogative guard must not swallow it.
+ *
+ * The vocabulary tracks the catalogue. It grew with the Nansen entries: holders and
+ * concentration, netflow, transfers, PnL leaderboards, who bought and sold, wallet
+ * counterparties. A word the catalogue can answer but this cannot spell is an
+ * endpoint nobody can reach.
+ */
+function x402Intent(text: string, t: string): ParsedIntent | null {
+  // NOTE: no bare `holdings`/`holds` — "show me my holdings" is a question about the
+  // user's OWN wallet and belongs to the `balance` rule. Nansen's Smart Money
+  // Holdings is reached through "smart money" anyway, and "who holds …" through the
+  // `who …` alternative below.
+  const matches =
+    /\b(risk\s*(score|assessment|check|rating)|is\s+\S+\s+(a\s+)?(rug|scam|safe|honeypot)|assess\b.*\btoken|audit\b.*\btoken|whale|smart\s*money|holders?|concentration|inflow|outflow|net\s*flow|netflow|token\s*(flow|analytics|price|risk)|on-?chain\s*data|premium\s*data|liquidity\s*depth|transfers?|pnl|profit\s*and\s*loss|leaderboard|counterpart\w*|screener|who\s+(bought|sold|holds|is\s+buying|is\s+selling))\b/.test(
+      t,
+    );
+  if (!matches) return null;
+  return { action_type: "x402_data_purchase", token: extractSubject(text), source: "table" };
 }
 
 /**

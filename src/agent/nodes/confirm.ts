@@ -17,8 +17,10 @@ import { loadConfig } from "../../config.ts";
 import { evaluateGate } from "../../execution/gate.ts";
 import {
   endpointNeedsSubject,
+  isAmbiguous,
+  loadCatalog,
+  rankCatalog,
   resolveX402Call,
-  searchCatalog,
   subjectMismatch,
   type ResolvedX402Call,
   type X402Endpoint,
@@ -44,14 +46,22 @@ export async function confirmNode(
     return { messages: [new AIMessage("I lost the thread there — say that again?")] };
   }
 
-  const action = intent.action_type as ActionType;
   const lastHuman = [...state.messages].reverse().find((m) => m instanceof HumanMessage);
-  // The question that started this. When the user is answering "which token?", the
-  // last message is just the token — the words that chose the endpoint were the ones
-  // before it, so those are what the catalogue is searched with.
-  const query =
-    state.awaitingSubject?.query ??
-    (typeof lastHuman?.content === "string" ? lastHuman.content : "");
+  const reply = typeof lastHuman?.content === "string" ? lastHuman.content : "";
+
+  // Picking from a list Ward offered decides the action by itself. "3" parses as no
+  // intent at all, so dispatching on `parsedIntent` sent it down the swap branch and
+  // asked "How much? Give me a USD amount." — to someone who had just chosen a data
+  // endpoint by number.
+  const chosen = await pickFromChoices(state.x402Choices, reply);
+  const action = (chosen ? "x402_data_purchase" : intent.action_type) as ActionType;
+
+  // The question that started this. When the user is answering "which token?" or
+  // picking from a list, the last message is just the answer — the words that chose
+  // the endpoint were the ones before it, so those are what the catalogue is
+  // searched with, and the subject travels with them.
+  const query = state.awaitingSubject?.query ?? state.x402Choices?.query ?? reply;
+  const subject = intent.token ?? (chosen ? state.x402Choices?.subject : undefined);
 
   // --- resolve the concrete action + its cost ---
   let endpoint: X402Endpoint | null = null;
@@ -66,14 +76,41 @@ export async function confirmNode(
   let answered = false;
 
   if (action === "x402_data_purchase") {
-    endpoint = await searchCatalog(`${query} ${intent.token ?? ""}`);
+    // Answering a list Ward just offered wins over re-searching: "2" and "the holders
+    // one" are about THAT list, not new search terms.
+    endpoint = chosen;
+
     if (!endpoint) {
-      return { messages: [new AIMessage(`I don't have an x402 endpoint for that.`)] };
+      const ranked = await rankCatalog(`${query} ${subject ?? ""}`);
+      if (ranked.length === 0) {
+        return { messages: [new AIMessage(`I don't have an x402 endpoint for that.`)] };
+      }
+      if (isAmbiguous(ranked)) {
+        const lines = ranked.map(
+          (r, i) =>
+            `${i + 1}. ${r.endpoint.name} — ${r.endpoint.description} ($${r.endpoint.cost_usd})`,
+        );
+        return {
+          x402Choices: { ids: ranked.map((r) => r.endpoint.id), query, subject },
+          messages: [
+            new AIMessage(
+              [
+                `A few endpoints answer that, at different prices. Which one?`,
+                "",
+                ...lines,
+                "",
+                `Reply with the number, or the name. Nothing is bought until you confirm the price.`,
+              ].join("\n"),
+            ),
+          ],
+        };
+      }
+      endpoint = ranked[0]!.endpoint;
     }
-    if (endpointNeedsSubject(endpoint) && !intent.token) {
+    if (endpointNeedsSubject(endpoint) && !subject) {
       // Remember what was asked, so the bare answer resumes THIS purchase.
       return {
-        awaitingSubject: { action: intent.action_type, query },
+        awaitingSubject: { action, query },
         messages: [
           new AIMessage(
             `Which token? Give me a ticker or a 0x address, and I'll price "${endpoint.name}" for it.`,
@@ -83,9 +120,9 @@ export async function confirmNode(
     }
     // The endpoint's own idea of a subject, checked before a payment rather than
     // discovered through one — see `subjectMismatch`.
-    const mismatch = intent.token ? subjectMismatch(endpoint, intent.token) : null;
+    const mismatch = subject ? subjectMismatch(endpoint, subject) : null;
     if (mismatch) return { messages: [new AIMessage(mismatch)] };
-    resolvedCall = resolveX402Call(endpoint, intent.token);
+    resolvedCall = resolveX402Call(endpoint, subject);
     amountUsd = endpoint.cost_usd;
     answered = true;
   } else if (action === "acp_job") {
@@ -257,7 +294,7 @@ export async function confirmNode(
     acp: acpSubject ? { subject: acpSubject } : undefined,
   });
 
-  const clearSlot = answered ? { awaitingSubject: null } : {};
+  const clearSlot = answered ? { awaitingSubject: null, x402Choices: null } : { x402Choices: null };
 
   if (!gate.needsApproval) {
     return { ...clearSlot, confirmedIntent: confirmed() };
@@ -276,6 +313,35 @@ export async function confirmNode(
     return { ...clearSlot, messages: [new AIMessage("Cancelled — nothing moved.")] };
   }
   return { ...clearSlot, confirmedIntent: confirmed() };
+}
+
+/**
+ * The endpoint the user just chose from a list Ward offered, or `null`.
+ *
+ * Accepts a position ("2", "option 2") or a name ("the holders one", "nansen token
+ * holders"), because both are what people actually type. A name is resolved by the
+ * same ranking used everywhere else, restricted to the ids that were on the list —
+ * so "holders" cannot wander off and select something that was never offered.
+ */
+export async function pickFromChoices(
+  choices: WardStateType["x402Choices"],
+  reply: string,
+): Promise<X402Endpoint | null> {
+  if (!choices || choices.ids.length === 0) return null;
+  const catalogue = await loadCatalog();
+  const offered = choices.ids
+    .map((id) => catalogue.find((e) => e.id === id))
+    .filter((e): e is X402Endpoint => e !== undefined);
+  if (offered.length === 0) return null;
+
+  const position = reply.trim().match(/^(?:option\s*|no\.?\s*|#)?(\d{1,2})\b/);
+  if (position) {
+    const index = Number(position[1]) - 1;
+    if (index >= 0 && index < offered.length) return offered[index]!;
+  }
+
+  const ranked = await rankCatalog(reply, catalogue.length);
+  return ranked.find((r) => choices.ids.includes(r.endpoint.id))?.endpoint ?? null;
 }
 
 function intentId(state: WardStateType, config: LangGraphRunnableConfig | undefined): string {

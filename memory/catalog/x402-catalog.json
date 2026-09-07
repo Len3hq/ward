@@ -42,6 +42,223 @@
       "subject_kind": "any",
       "cost_usd": 0.01,
       "tags": ["price", "liquidity", "volume", "quote", "token", "analysis", "assess", "risk"]
+    },
+    {
+      "id": "nansen-smart-money-netflow",
+      "name": "Nansen Smart Money Netflow",
+      "description": "Nansen's Smart Money cohort — funds and consistently-profitable traders — and what they are net buying or selling on Base over the last 24h.",
+      "url": "https://api.nansen.ai/api/v1/smart-money/netflow",
+      "method": "POST",
+      "body_template": {
+        "chains": ["base"],
+        "order_by": [
+          {
+            "field": "net_flow_24h_usd",
+            "direction": "DESC"
+          }
+        ]
+      },
+      "cost_usd": 0.05,
+      "tags": ["nansen", "netflow", "net flow", "smart money", "funds", "accumulating", "selling"]
+    },
+    {
+      "id": "nansen-smart-money-holdings",
+      "name": "Nansen Smart Money Holdings",
+      "description": "What Nansen's Smart Money wallets currently hold on Base, by token, with 24h balance change and share of holdings.",
+      "url": "https://api.nansen.ai/api/v1/smart-money/holdings",
+      "method": "POST",
+      "body_template": {
+        "chains": ["base"]
+      },
+      "cost_usd": 0.05,
+      "tags": [
+        "nansen",
+        "holdings",
+        "portfolio",
+        "positions",
+        "smart money holds",
+        "what do funds hold"
+      ]
+    },
+    {
+      "id": "nansen-smart-money-dex-trades",
+      "name": "Nansen Smart Money DEX Trades",
+      "description": "Individual DEX trades made by Nansen Smart Money wallets on Base — what they bought and sold, and for how much.",
+      "url": "https://api.nansen.ai/api/v1/smart-money/dex-trades",
+      "method": "POST",
+      "body_template": {
+        "chains": ["base"]
+      },
+      "cost_usd": 0.05,
+      "tags": ["nansen", "dex trades", "swaps", "trades", "buying", "selling", "smart money trades"]
+    },
+    {
+      "id": "nansen-token-screener",
+      "name": "Nansen Token Screener",
+      "description": "Screens Base tokens by Smart Money activity, age and market cap — the discovery endpoint for finding tokens rather than checking one.",
+      "url": "https://api.nansen.ai/api/v1/token-screener",
+      "method": "POST",
+      "body_template": {
+        "chains": ["base"],
+        "timeframe": "24h",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        }
+      },
+      "cost_usd": 0.01,
+      "tags": ["nansen", "screener", "discover", "find tokens", "trending", "new tokens", "scan"]
+    },
+    {
+      "id": "nansen-holders",
+      "name": "Nansen Token Holders",
+      "description": "Holder concentration for a Base token: who holds it, what share each controls, and which holders Nansen labels smart money. The strongest rug-risk read in the catalogue.",
+      "url": "https://api.nansen.ai/api/v1/tgm/holders",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token_address": "{subject}",
+        "aggregate_by_entity": false,
+        "label_type": "all_holders"
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.05,
+      "tags": ["nansen", "holders", "concentration", "supply", "rug", "risk", "safety", "whales"]
+    },
+    {
+      "id": "nansen-token-flows",
+      "name": "Nansen Token Flows",
+      "description": "Inflows and outflows for one Base token over the last week, split by holder label — where the money is coming from and going to.",
+      "url": "https://api.nansen.ai/api/v1/tgm/flows",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token_address": "{subject}",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        },
+        "label": "smart_money"
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.01,
+      "tags": ["nansen", "flows", "inflow", "outflow", "token flow", "money in", "money out"]
+    },
+    {
+      "id": "nansen-token-dex-trades",
+      "name": "Nansen Token DEX Trades",
+      "description": "Every DEX trade in one Base token over the last week, with the option to see only smart-money trades.",
+      "url": "https://api.nansen.ai/api/v1/tgm/dex-trades",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token_address": "{subject}",
+        "only_smart_money": true,
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        }
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.01,
+      "tags": ["nansen", "token trades", "dex", "swaps for token", "who traded"]
+    },
+    {
+      "id": "nansen-token-transfers",
+      "name": "Nansen Token Transfers",
+      "description": "Raw transfers of one Base token over the last week, including exchange deposits and withdrawals.",
+      "url": "https://api.nansen.ai/api/v1/tgm/transfers",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token_address": "{subject}",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        }
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.01,
+      "tags": ["nansen", "transfers", "movements", "exchange deposits", "withdrawals"]
+    },
+    {
+      "id": "nansen-pnl-leaderboard",
+      "name": "Nansen Token PnL Leaderboard",
+      "description": "Which wallets made and lost the most on one Base token over the last week, realised and unrealised.",
+      "url": "https://api.nansen.ai/api/v1/tgm/pnl-leaderboard",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token_address": "{subject}",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        }
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.05,
+      "tags": ["nansen", "pnl", "leaderboard", "profit", "winners", "losers", "who made money"]
+    },
+    {
+      "id": "nansen-who-bought-sold",
+      "name": "Nansen Who Bought and Sold",
+      "description": "The wallets that bought and sold one Base token over the last week, with labels — the fastest read on who is behind a move.",
+      "url": "https://api.nansen.ai/api/v1/tgm/who-bought-sold",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token_address": "{subject}",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        }
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.01,
+      "tags": ["nansen", "who bought", "who sold", "buyers", "sellers", "behind the move"]
+    },
+    {
+      "id": "nansen-wallet-pnl",
+      "name": "Nansen Wallet PnL Summary",
+      "description": "Profit and loss for one Base WALLET address over the last week — how a trader has actually done, not a token.",
+      "url": "https://api.nansen.ai/api/v1/profiler/address/pnl-summary",
+      "method": "POST",
+      "body_template": {
+        "address": "{subject}",
+        "chain": "base",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        }
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.01,
+      "tags": ["nansen", "wallet pnl", "trader", "address profit", "how did this wallet do"]
+    },
+    {
+      "id": "nansen-wallet-counterparties",
+      "name": "Nansen Wallet Counterparties",
+      "description": "Who one Base WALLET address has been transacting with over the last week, grouped by wallet or entity.",
+      "url": "https://api.nansen.ai/api/v1/profiler/address/counterparties",
+      "method": "POST",
+      "body_template": {
+        "address": "{subject}",
+        "chain": "base",
+        "date": {
+          "from": "{date_from}",
+          "to": "{date_to}"
+        },
+        "group_by": "wallet"
+      },
+      "subject_kind": "address",
+      "cost_usd": 0.05,
+      "tags": [
+        "nansen",
+        "counterparties",
+        "who do they trade with",
+        "wallet connections",
+        "linked wallets"
+      ]
     }
   ]
 }
