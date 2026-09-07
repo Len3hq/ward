@@ -235,8 +235,21 @@ describe("date placeholders", () => {
       undefined,
       now,
     );
-    // Nested objects are passed through untouched, so the window lives on a string leaf.
     const body = JSON.stringify(call.body);
     expect(body).not.toContain("{date_from}");
+    expect(body).not.toContain("{date_to}");
+
+    /**
+     * Second precision, and this is not cosmetic. `toISOString()` emits
+     * `2026-09-07T12:00:00.000Z`; Nansen's own example bodies use
+     * `2025-01-01T00:00:00Z`, and it answered `422 Invalid parameter` to the
+     * millisecond form — after taking the money. Seven catalogue entries carry a
+     * date, so the wrong format is seven paid failures, not one.
+     */
+    const dates = (call.body as { date: { from: string; to: string } }).date;
+    expect(dates.from).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(dates.to).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(dates.to).toBe("2026-09-07T12:00:00Z");
+    expect(dates.from).toBe("2026-08-31T12:00:00Z"); // the seven-day window
   });
 });

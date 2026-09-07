@@ -107,8 +107,13 @@ export function resolveX402Call(
   now: Date = new Date(),
 ): ResolvedX402Call {
   const sub = (subject ?? "").trim();
-  const to = now.toISOString();
-  const from = new Date(now.getTime() - LOOKBACK_DAYS * 86_400_000).toISOString();
+  // Second precision, no milliseconds. `toISOString()` emits `…T20:45:50.880Z`;
+  // every date Nansen publishes in its own example bodies is `…T00:00:00Z`, and a
+  // token-screener call with the millisecond form came back `422 Invalid parameter`
+  // — after the USDC had been pulled. Both are valid ISO 8601; only one is accepted.
+  const iso = (d: Date): string => `${d.toISOString().slice(0, 19)}Z`;
+  const to = iso(now);
+  const from = iso(new Date(now.getTime() - LOOKBACK_DAYS * 86_400_000));
   const fill = (s: string): string =>
     s
       .replace(/\{(?:subject|token)\}/g, sub)

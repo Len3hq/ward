@@ -23,6 +23,57 @@ const USDC: Record<string, string> = {
   "base-sepolia": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
 };
 
+const ISO_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/**
+ * What the endpoint would object to in the body we intend to send, judged against the
+ * example body it publishes in its own 402 (`extensions.bazaar`).
+ *
+ * Free, and the only pre-payment check there is: Nansen validates the body only after
+ * taking the money, so every shape mistake otherwise costs a purchase to find.
+ */
+function bodyComplaints(ours: Record<string, unknown> | undefined, challenge: unknown): string[] {
+  const bazaar = (challenge as { extensions?: { bazaar?: { info?: { input?: unknown } } } })
+    ?.extensions?.bazaar?.info?.input as
+    { body?: Record<string, unknown>; method?: string } | undefined;
+  const example = bazaar?.body;
+  if (!example || !ours) return [];
+
+  const out: string[] = [];
+  for (const key of Object.keys(ours)) {
+    if (!(key in example)) out.push(`we send "${key}", which the endpoint's example does not`);
+  }
+  for (const [key, value] of Object.entries(ours)) {
+    const expected = example[key];
+    if (expected === undefined) continue;
+    const kind = (v: unknown) => (Array.isArray(v) ? "array" : v === null ? "null" : typeof v);
+    if (kind(value) !== kind(expected)) {
+      out.push(`"${key}" is ${kind(value)}, the example has ${kind(expected)}`);
+    }
+  }
+  // Dates are where the formats actually diverge, and the divergence is invisible
+  // until it is paid for.
+  const walk = (value: unknown, sample: unknown, at: string): void => {
+    if (typeof value === "string" && typeof sample === "string") {
+      if (ISO_SECONDS.test(sample) && !ISO_SECONDS.test(value)) {
+        out.push(`${at} is "${value}", the example uses "${sample}" (no milliseconds)`);
+      }
+      return;
+    }
+    if (value && sample && typeof value === "object" && typeof sample === "object") {
+      for (const key of Object.keys(value as Record<string, unknown>)) {
+        walk(
+          (value as Record<string, unknown>)[key],
+          (sample as Record<string, unknown>)[key],
+          `${at}.${key}`,
+        );
+      }
+    }
+  };
+  walk(ours, example, "body");
+  return out;
+}
+
 const network = loadConfig().baseNetwork;
 const endpoints = await loadCatalog();
 let problems = 0;
@@ -69,10 +120,19 @@ for (const endpoint of endpoints) {
     const matches = Math.abs(priceUsd - endpoint.cost_usd) < 1e-9;
     if (!matches) problems++;
 
+    // The body is only validated AFTER payment, so a wrong shape costs real money to
+    // discover: the token screener took $0.01 and answered `422 Invalid parameter`
+    // because our dates carried milliseconds and Nansen's did not. The 402 carries
+    // the endpoint's own example body for free — comparing against it catches that
+    // class before anyone pays for it.
+    const complaints = bodyComplaints(call.body, body);
+    if (complaints.length > 0) problems++;
+
     console.log(
-      `${line}${matches ? "✓" : "✗"} asks $${priceUsd} ` +
+      `${line}${matches && complaints.length === 0 ? "✓" : "✗"} asks $${priceUsd} ` +
         `(catalogue says $${endpoint.cost_usd}) [x402 v${version}]`,
     );
+    for (const complaint of complaints) console.log(`${" ".repeat(15)}↳ body: ${complaint}`);
   } catch (error) {
     problems++;
     console.log(`${line}✗ unreachable — ${error instanceof Error ? error.message : String(error)}`);

@@ -68,6 +68,12 @@ const X402_QUOTE_TIMEOUT_MS = 20_000;
 const PULL_CONFIRM_TIMEOUT_MS = 45_000;
 /** Sub-cent tolerance when comparing balances, in USD. */
 const USDC_EPSILON = 1e-9;
+/**
+ * How hard to look for a pull before concluding the endpoint took the money.
+ * ~2s Base blocks, so five tries at 1.5s covers a pull that is merely slow to mine.
+ */
+const UNWIND_BALANCE_ATTEMPTS = 5;
+const UNWIND_BALANCE_INTERVAL_MS = 1_500;
 
 /**
  * Is the pulled USDC still in the spender?
@@ -626,6 +632,25 @@ export class CdpWalletProvider implements WalletProvider {
    *
    * `balanceOf` at `latest` cannot lag what a mined transaction did.
    */
+  /**
+   * The spender's USDC once the pull has had a chance to land, for the refund
+   * decision.
+   *
+   * Returns as soon as the balance reflects the pull, so the ordinary case costs one
+   * read. Only a genuinely spent pull waits out the budget — and waiting a few
+   * seconds to answer "is the user's money still here?" correctly is worth far more
+   * than answering it instantly and wrongly.
+   */
+  async #spenderUsdcSettled(heldBefore: number, pulledUsd: number): Promise<number> {
+    let heldNow = await this.#spenderUsdc();
+    for (let attempt = 0; attempt < UNWIND_BALANCE_ATTEMPTS; attempt++) {
+      if (pullWasUnspent(heldBefore, heldNow, pulledUsd)) return heldNow;
+      await new Promise((resolve) => setTimeout(resolve, UNWIND_BALANCE_INTERVAL_MS));
+      heldNow = await this.#spenderUsdc();
+    }
+    return heldNow;
+  }
+
   async #spenderUsdc(): Promise<number> {
     const spender = await this.#agentSpender();
     const client = createPublicClient({
@@ -671,7 +696,12 @@ export class CdpWalletProvider implements WalletProvider {
   ): Promise<Error> {
     let outcome: string;
     try {
-      const heldNow = await this.#spenderUsdc();
+      // Poll, don't snapshot. A fast rejection can beat its own pull: the 422 from
+      // the token screener came back in about a second while the USDC transfer took
+      // ~2s to mine, so a single read showed the money "missing", no refund was
+      // attempted, and it landed in the spender moments later. The endpoint failing
+      // quickly must not be what decides whether the user gets their money back.
+      const heldNow = await this.#spenderUsdcSettled(heldBefore, pulledUsd);
       if (pullWasUnspent(heldBefore, heldNow, pulledUsd)) {
         const { txHash } = await this.refundUser(accountKey, pulledUsd);
         outcome = `your $${pulledUsd} USDC was returned to your wallet (tx ${txHash}).`;
