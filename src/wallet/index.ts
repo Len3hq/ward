@@ -5,6 +5,7 @@ export {
   type UserWallet,
   type SpendPermissionState,
   type SpendPermissionStatus,
+  type TokenBalances,
   type X402Request,
   type X402Result,
   type SwapRequest,

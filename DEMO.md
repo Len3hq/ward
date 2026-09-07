@@ -75,7 +75,20 @@ ward: Granted an on-chain spend permission: $100 USDC per 1 day … tx 0x…
       I now act within min(your $100 memory cap, this $100 on-chain allowance).
 ```
 
-Open the `tx` on sepolia.basescan.org.
+Open the `tx` on sepolia.basescan.org. The address is monospaced in both apps, so a
+tap (Telegram) or the code block's copy button (Discord) puts it on the clipboard —
+which is how you fund it without transcribing 42 hex characters.
+
+```
+you: what is my balance
+ward: Your wallet 0x… on base-sepolia:
+      • USDC: $100.00
+      • ETH: 0.0021 (gas)
+      Spend permission: active, $100 USDC per 1 day.
+      Spent today: $0.00 of your $100 daily cap (remaining $100.00).
+```
+
+That number is read from chain each time it is asked for, never from the model.
 
 ## Beat 4 — one x402 payment on Base (≈30s)
 

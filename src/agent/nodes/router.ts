@@ -6,13 +6,14 @@ const WALLET_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
   "generate_wallet",
   "grant_permission",
   "revoke",
+  "balance",
 ]);
 
 /**
  * Decides the turn's path from Sibyl Memory + the parsed intent:
  *
  *   record exists, intent is a spend action    → confirm
- *   record exists, intent is a wallet action   → wallet
+ *   record exists, intent is a wallet action   → wallet  (incl. reading the balance)
  *   record exists, anything else               → agent
  *   no record, onboarding in progress          → onboarding
  *   no record, intent is any action            → refuse (no authorization → no money moves)

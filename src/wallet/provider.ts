@@ -25,6 +25,18 @@ export interface UserWallet {
   agentSpender: Hex;
 }
 
+/**
+ * What an address actually holds on Base, read from chain. `usdcUsd` is what Ward
+ * can spend; `eth` is gas, and is the difference between a grant that lands and the
+ * opaque `precheck failed` in `agent/nodes/wallet.ts::isGasShortfall`.
+ */
+export interface TokenBalances {
+  /** USDC, in whole USD. */
+  usdcUsd: number;
+  /** Native ETH, in whole ETH. */
+  eth: number;
+}
+
 export interface SpendPermissionState {
   status: SpendPermissionStatus;
   allowanceUsd: number;
@@ -50,6 +62,8 @@ export interface WalletProvider {
   revokeSpendPermission(accountKey: string): Promise<{ txHash: string }>;
   /** USDC balance of an address, in whole USD. */
   usdcBalanceUsd(address: Hex): Promise<number>;
+  /** Everything Ward reports to the user about an address: USDC and gas, one call. */
+  balances(address: Hex): Promise<TokenBalances>;
 
   /** Pay an x402 endpoint from the agent spender (pulls within the Spend Permission). */
   payX402(accountKey: string, request: X402Request): Promise<X402Result>;

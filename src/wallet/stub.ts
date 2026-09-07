@@ -7,6 +7,7 @@ import type {
   SendResult,
   SwapRequest,
   SwapResult,
+  TokenBalances,
   UserWallet,
   WalletProvider,
   X402Request,
@@ -79,7 +80,12 @@ export class StubWalletProvider implements WalletProvider {
   }
 
   async usdcBalanceUsd(): Promise<number> {
-    return 1000; // plenty, for the demo
+    return (await this.balances()).usdcUsd;
+  }
+
+  /** Plenty of USDC and just enough ETH, so the no-key path shows a funded wallet. */
+  async balances(): Promise<TokenBalances> {
+    return { usdcUsd: 1000, eth: 0.01 };
   }
 
   async payX402(accountKey: string, request: X402Request): Promise<X402Result> {

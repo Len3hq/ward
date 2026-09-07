@@ -13,6 +13,7 @@ import type {
   SendResult,
   SwapRequest,
   SwapResult,
+  TokenBalances,
   UserWallet,
   WalletProvider,
   X402Request,
@@ -222,13 +223,27 @@ export class CdpWalletProvider implements WalletProvider {
   }
 
   async usdcBalanceUsd(address: Hex): Promise<number> {
-    const usdc = this.#token("USDC").toLowerCase();
+    return (await this.balances(address)).usdcUsd;
+  }
+
+  /**
+   * One `listTokenBalances` call for both things a user is told: their USDC, and
+   * the ETH that pays for a grant or a revocation. CDP returns native ETH in the
+   * same list, under the `0xEeee…EEeE` pseudo-address — hence the symbol fallback,
+   * which also covers a chain where the contract address differs.
+   */
+  async balances(address: Hex): Promise<TokenBalances> {
     const { balances } = await this.#cdp.evm.listTokenBalances({ address, network: this.#network });
-    const match = balances.find(
-      (b) =>
-        b.token.contractAddress.toLowerCase() === usdc || b.token.symbol?.toUpperCase() === "USDC",
-    );
-    return match ? Number(match.amount.amount) / 10 ** Number(match.amount.decimals) : 0;
+    const held = (symbol: "USDC" | "ETH"): number => {
+      const contract = this.#token(symbol).toLowerCase();
+      const match = balances.find(
+        (b) =>
+          b.token.contractAddress.toLowerCase() === contract ||
+          b.token.symbol?.toUpperCase() === symbol,
+      );
+      return match ? Number(match.amount.amount) / 10 ** Number(match.amount.decimals) : 0;
+    };
+    return { usdcUsd: held("USDC"), eth: held("ETH") };
   }
 
   /**

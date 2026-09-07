@@ -4,6 +4,7 @@ import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel } from "../gateway/channels.ts";
+import { markCopyable } from "../gateway/format.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
 import {
   announceLink,
@@ -22,7 +23,8 @@ import { redeemLinkState } from "../identity/linking.ts";
  *
  * Since Phase 11 the conversation itself is driven by `gateway/core.ts`. What is
  * left here is genuinely Telegram: HTML rendering, the 4096 limit, throttled edits,
- * and answering a confirmation by typing "yes".
+ * answering a confirmation by typing "yes", and rendering addresses as `<code>` so
+ * one tap copies them.
  *
  * A Telegram id is not an identity, it is an *account*: `resolveUser` maps it to the
  * principal that keys everything in Sibyl Memory, minting one on first contact. The
@@ -237,7 +239,7 @@ function cancelPending(s: ChatSession): void {
  */
 function telegramAdapter(telegram: Telegram, chatId: number, s: ChatSession): ChannelAdapter {
   const body = (text: string, mode: SendMode) =>
-    mode === "rendered" ? mdToHtml(text) : text.slice(0, TELEGRAM_LIMIT);
+    mode === "rendered" ? render(text) : text.slice(0, TELEGRAM_LIMIT);
 
   const extra = (mode: SendMode) =>
     mode === "rendered"
@@ -273,7 +275,7 @@ function telegramAdapter(telegram: Telegram, chatId: number, s: ChatSession): Ch
      * holds the resolver, so this turn simply awaits it.
      */
     async askConfirm(text) {
-      await telegram.sendMessage(chatId, mdToHtml(text), {
+      await telegram.sendMessage(chatId, render(text), {
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
       });
@@ -297,6 +299,15 @@ function telegramAdapter(telegram: Telegram, chatId: number, s: ChatSession): Ch
 // --- Telegram rendering ---
 
 export { splitMessage };
+
+/**
+ * A finished message, ready for Telegram: addresses made copyable first, then
+ * markdown to HTML. Order matters — `markCopyable` adds backticks, and `mdToHtml`
+ * is what turns them into the `<code>` spans Telegram copies on tap.
+ */
+export function render(md: string): string {
+  return mdToHtml(markCopyable(md, "inline")).slice(0, TELEGRAM_LIMIT);
+}
 
 /** Minimal markdown → Telegram HTML. */
 export function mdToHtml(md: string): string {

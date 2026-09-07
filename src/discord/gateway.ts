@@ -17,8 +17,9 @@ import { randomUUID } from "node:crypto";
 
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
-import type { ChannelAdapter } from "../gateway/adapter.ts";
+import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel, registerDmLink } from "../gateway/channels.ts";
+import { markCopyable } from "../gateway/format.ts";
 import { runTurn } from "../gateway/core.ts";
 import { linkCommand, mcpCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import { resolveExisting, resolveUser } from "../identity/index.ts";
@@ -33,8 +34,8 @@ import { resolveExisting, resolveUser } from "../identity/index.ts";
  *
  * - **2000 characters**, not 4096. `splitMessage` takes the limit from the adapter
  *   for exactly this reason.
- * - **Markdown is native**, so there is no render step — `mdToHtml` has no analogue
- *   and sending raw text is correct.
+ * - **Markdown is native**, so there is no `mdToHtml` analogue; the only rendering
+ *   is putting addresses in a fenced code block, which is Discord's copy affordance.
  * - **Confirmations are buttons.** Better than matching a typed "yes" against a
  *   regex, and it removes the ambiguity entirely. The clicking user is still checked
  *   against the account that was asked: a button is visible to anyone who can see
@@ -348,6 +349,16 @@ async function handleDirectMessage(
  * `accountId` is the user who is being talked to; `askConfirm` will accept a button
  * click from nobody else.
  */
+/**
+ * Discord has no tap-to-copy for inline code, but a fenced code block carries a copy
+ * button on desktop and long-presses cleanly on mobile — so an address goes in one.
+ * See `gateway/format.ts`.
+ */
+function render(text: string, mode: SendMode): string {
+  const body = mode === "rendered" ? markCopyable(text, "block") : text;
+  return body.slice(0, DISCORD_LIMIT);
+}
+
 export function discordAdapter(channel: SendableChannels, accountId: string): ChannelAdapter {
   const sent = new Map<string, Message>();
 
@@ -360,17 +371,19 @@ export function discordAdapter(channel: SendableChannels, accountId: string): Ch
       await channel.sendTyping().catch(() => undefined);
     },
 
-    // Discord renders markdown itself, so "plain" and "rendered" are the same text.
-    async send(text) {
-      const message = await channel.send(text.slice(0, DISCORD_LIMIT));
+    // Discord renders markdown itself, so a finished message needs no render step —
+    // only the address pass, which mid-stream fragments must not get (half an
+    // address must never be presented as the whole of one).
+    async send(text, mode) {
+      const message = await channel.send(render(text, mode));
       sent.set(message.id, message);
       return message.id;
     },
 
-    async edit(handle, text) {
+    async edit(handle, text, mode) {
       const message = sent.get(handle);
       if (!message) return;
-      await message.edit(text.slice(0, DISCORD_LIMIT)).catch(() => undefined);
+      await message.edit(render(text, mode)).catch(() => undefined);
     },
 
     async askConfirm(text) {
@@ -387,7 +400,7 @@ export function discordAdapter(channel: SendableChannels, accountId: string): Ch
       );
 
       const prompt = await channel.send({
-        content: text.slice(0, DISCORD_LIMIT),
+        content: render(text, "rendered"),
         components: [row],
       });
 

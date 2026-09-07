@@ -17,6 +17,7 @@ export const INTENT_ACTIONS = [
   "send",
   "x402_data_purchase",
   "acp_job",
+  "balance",
   "read_only",
 ] as const;
 export type IntentAction = (typeof INTENT_ACTIONS)[number];
@@ -138,6 +139,15 @@ export function tableIntent(text: string): ParsedIntent | null {
   ) {
     return { action_type: "x402_data_purchase", token: extractSubject(text), source: "table" };
   }
+  // After the spend rules, so "swap my balance into ETH" is still a swap, and before
+  // the read-only catch-all, whose "my … balance" branch would otherwise swallow it
+  // into a recital of the caps — which is exactly what it used to do.
+  if (
+    /\b(balance|balances|holdings|portfolio)\b/.test(t) ||
+    /\bhow much\b.*\b(usdc|eth|do i have|have i got|is in (my|the) wallet)\b/.test(t)
+  ) {
+    return { action_type: "balance", source: "table" };
+  }
   if (
     /\b(my|the)\b.*\b(limit|cap|balance|authorization|risk profile|spent|allowance)\b/.test(t) ||
     /^\s*(what|how much|show|status)\b/.test(t)
@@ -176,7 +186,9 @@ export async function parseIntent(text: string): Promise<ParsedIntent> {
         role: "system",
         content:
           "Classify the user's message into one Ward action. read_only = a question or chit-chat, " +
-          "no money moves. Only pick swap / x402_data_purchase / acp_job / grant_permission / revoke / " +
+          "no money moves. balance = the user asking what they hold on chain (wallet balance, " +
+          "USDC, ETH, whether they can afford something). " +
+          "Only pick swap / x402_data_purchase / acp_job / grant_permission / revoke / " +
           "generate_wallet when the user is clearly asking for that action. send = moving USDC to " +
           "an 0x address the user names; put that address in `token`. Extract amount_usd, pair " +
           '(like "USDC/ETH"), token, endpoint when present.',
@@ -199,6 +211,8 @@ export function describeIntent(intent: ParsedIntent): string {
       return `Buy premium data${intent.token ? ` on ${intent.token}` : ""}`;
     case "acp_job":
       return `Hire an agent to assess${intent.token ? ` ${intent.token}` : " a token"}`;
+    case "balance":
+      return "Read your wallet balance";
     default:
       return intent.action_type.replace(/_/g, " ");
   }

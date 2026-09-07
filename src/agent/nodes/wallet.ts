@@ -8,15 +8,21 @@ import {
   writeWallet,
   type ActionType,
 } from "../../../memory/index.ts";
+import { balanceReport } from "../../wallet/balances.ts";
 import { walletProvider } from "../../wallet/index.ts";
 import type { RevokeScope } from "../intent.ts";
 import type { WardStateType } from "../state.ts";
 
 /**
  * Deterministic wallet + authorization actions: `generate_wallet`,
- * `grant_permission`, `revoke`. Calls the wallet provider (CDP or stub), then
+ * `grant_permission`, `revoke`, `balance`. Calls the wallet provider (CDP or stub), then
  * persists to the `ward.wallet` entity / `revocation_log` so memory and chain
- * agree. No LLM — the router sends these three intents straight here.
+ * agree. No LLM — the router sends these intents straight here.
+ *
+ * `balance` is here rather than in the model's hands for the same reason: a number
+ * the user acts on must be read from chain, never produced by a model that has only
+ * the authorization block in front of it. Before it existed, "what is my balance?"
+ * got "I cannot access that information".
  *
  * Note what is handed to the provider: `wallet.account_key`, never `state.userId`.
  * The provider derives its CDP account names from that string, so the user's
@@ -77,6 +83,10 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
         ),
       ],
     };
+  }
+
+  if (intent.action_type === "balance") {
+    return { messages: [new AIMessage(await balanceReport(state.userId))] };
   }
 
   if (intent.action_type === "grant_permission") {
