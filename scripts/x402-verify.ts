@@ -32,16 +32,38 @@ const ISO_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
  * Free, and the only pre-payment check there is: Nansen validates the body only after
  * taking the money, so every shape mistake otherwise costs a purchase to find.
  */
-function bodyComplaints(ours: Record<string, unknown> | undefined, challenge: unknown): string[] {
+interface BodyReview {
+  /** Things that will make the endpoint reject the call — worth failing over. */
+  problems: string[];
+  /** Differences from the example that are probably fine. Printed, not counted. */
+  notes: string[];
+}
+
+function bodyComplaints(ours: Record<string, unknown> | undefined, challenge: unknown): BodyReview {
   const bazaar = (challenge as { extensions?: { bazaar?: { info?: { input?: unknown } } } })
     ?.extensions?.bazaar?.info?.input as
     { body?: Record<string, unknown>; method?: string } | undefined;
   const example = bazaar?.body;
-  if (!example || !ours) return [];
+  if (!example || !ours) return { problems: [], notes: [] };
 
   const out: string[] = [];
+  const notes: string[] = [];
+
+  // The example is evidence, not a specification — and it can be wrong. Nansen's own
+  // token-screener example sends `timeframe` AND `date`, which its documentation says
+  // are mutually exclusive; copying it earned a `422 Invalid parameter` and a paid
+  // call to find out. So the documented conflicts are checked directly, against the
+  // body rather than against the example.
+  if ("timeframe" in ours && "date" in ours) {
+    out.push('"timeframe" and "date" are mutually exclusive — send one (the example sends both)');
+  }
+
+  // A key the example omits is NOT an error: the example is one sample call, not the
+  // parameter list. `pagination` is documented and valid and absent from it — flagging
+  // that as a fault is the checker crying wolf about a correct body.
   for (const key of Object.keys(ours)) {
-    if (!(key in example)) out.push(`we send "${key}", which the endpoint's example does not`);
+    if (!(key in example))
+      notes.push(`"${key}" is not in the endpoint's example (may still be valid)`);
   }
   for (const [key, value] of Object.entries(ours)) {
     const expected = example[key];
@@ -71,7 +93,7 @@ function bodyComplaints(ours: Record<string, unknown> | undefined, challenge: un
     }
   };
   walk(ours, example, "body");
-  return out;
+  return { problems: out, notes };
 }
 
 const network = loadConfig().baseNetwork;
@@ -125,14 +147,15 @@ for (const endpoint of endpoints) {
     // because our dates carried milliseconds and Nansen's did not. The 402 carries
     // the endpoint's own example body for free — comparing against it catches that
     // class before anyone pays for it.
-    const complaints = bodyComplaints(call.body, body);
-    if (complaints.length > 0) problems++;
+    const review = bodyComplaints(call.body, body);
+    if (review.problems.length > 0) problems++;
 
     console.log(
-      `${line}${matches && complaints.length === 0 ? "✓" : "✗"} asks $${priceUsd} ` +
+      `${line}${matches && review.problems.length === 0 ? "✓" : "✗"} asks $${priceUsd} ` +
         `(catalogue says $${endpoint.cost_usd}) [x402 v${version}]`,
     );
-    for (const complaint of complaints) console.log(`${" ".repeat(15)}↳ body: ${complaint}`);
+    for (const p of review.problems) console.log(`${" ".repeat(15)}↳ body: ${p}`);
+    for (const n of review.notes) console.log(`${" ".repeat(15)}· ${n}`);
   } catch (error) {
     problems++;
     console.log(`${line}✗ unreachable — ${error instanceof Error ? error.message : String(error)}`);

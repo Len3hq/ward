@@ -95,15 +95,15 @@
     {
       "id": "nansen-token-screener",
       "name": "Nansen Token Screener",
-      "description": "Screens Base tokens by Smart Money activity, age and market cap — the discovery endpoint for finding tokens rather than checking one.",
+      "description": "Screens Base tokens by Smart Money activity over the last 24h — the discovery endpoint for finding tokens rather than checking one.",
       "url": "https://api.nansen.ai/api/v1/token-screener",
       "method": "POST",
       "body_template": {
         "chains": ["base"],
         "timeframe": "24h",
-        "date": {
-          "from": "{date_from}",
-          "to": "{date_to}"
+        "pagination": {
+          "page": 1,
+          "per_page": 20
         }
       },
       "cost_usd": 0.01,

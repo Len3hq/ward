@@ -220,7 +220,25 @@ describe("why a paid request was refused", () => {
 
   test("it is trimmed — this reaches the user's chat", async () => {
     const detail = await failureDetail(res(JSON.stringify({ error: "x".repeat(500) })));
-    expect(detail.length).toBeLessThanOrEqual(200);
+    expect(detail.length).toBeLessThanOrEqual(300);
+  });
+
+  /**
+   * "Invalid parameter" — which one, out of six? That answer cost a second paid call.
+   * When an endpoint does name the field it is usually in a sibling key, so those
+   * travel with the reason; a body holding nothing else adds nothing and is left out.
+   */
+  test("sibling fields come along, because they are where the field name lives", async () => {
+    const detail = await failureDetail(
+      res('{"message":"Invalid parameter","param":"timeframe","detail":"conflicts with date"}'),
+    );
+    expect(detail).toContain("Invalid parameter");
+    expect(detail).toContain("timeframe");
+    expect(detail).toContain("conflicts with date");
+  });
+
+  test("a body with nothing but the reason stays clean", async () => {
+    expect(await failureDetail(res('{"message":"Invalid parameter"}'))).toBe("Invalid parameter");
   });
 });
 

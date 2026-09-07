@@ -74,6 +74,12 @@ const USDC_EPSILON = 1e-9;
  */
 const UNWIND_BALANCE_ATTEMPTS = 5;
 const UNWIND_BALANCE_INTERVAL_MS = 1_500;
+/**
+ * Fields carried BACK to the reason are the ones that might name what was wrong.
+ * These are not: they are the reason itself, or x402's own scaffolding, and repeating
+ * them in a chat message is noise where the point is to be specific.
+ */
+const NON_DIAGNOSTIC_KEYS = new Set(["error", "message", "x402Version", "accepts", "resource"]);
 
 /**
  * Is the pulled USDC still in the spender?
@@ -100,15 +106,24 @@ export async function failureDetail(response: Response): Promise<string> {
   if (!raw) return "";
   let text = raw;
   try {
-    const body = JSON.parse(raw) as { error?: unknown; message?: unknown };
+    const body = JSON.parse(raw) as Record<string, unknown>;
     const reason = body.error ?? body.message;
     if (reason !== undefined && reason !== null) {
       text = typeof reason === "string" ? reason : JSON.stringify(reason);
+      // Carry the OTHER fields too, when there are any. Nansen's 422 said exactly
+      // "Invalid parameter" and nothing else, so which of six parameters was wrong
+      // cost another paid call to work out; an endpoint that does name the field
+      // usually does it in a sibling key (`detail`, `errors`, `param`). Dumping the
+      // whole body when there is nothing else in it would only add noise.
+      const rest = Object.fromEntries(
+        Object.entries(body).filter(([key]) => !NON_DIAGNOSTIC_KEYS.has(key)),
+      );
+      if (Object.keys(rest).length > 0) text = `${text} · ${JSON.stringify(rest)}`;
     }
   } catch {
     // Not JSON. The raw text, trimmed, is still better than nothing.
   }
-  return text.replace(/\s+/g, " ").trim().slice(0, 200);
+  return text.replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
 function describeCause(error: unknown): string {
