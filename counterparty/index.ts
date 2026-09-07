@@ -7,6 +7,7 @@ import {
 import type { JobRoomEntry, JobSession } from "@virtuals-protocol/acp-node-v2";
 
 import { assess } from "./score.ts";
+import { sellerAction } from "./lifecycle.ts";
 
 /**
  * The seller side of the ACP spike: a standalone agent that sells one thing —
@@ -27,10 +28,12 @@ import { assess } from "./score.ts";
  *   "Override in subclass". `PrivyAlchemyEvmProviderAdapter` is the only usable
  *   built-in EVM adapter.
  *
- * The seller has two moves, and missing either one deadlocks the job:
- * `setBudget` while the job is `open` (there is no negotiation — the seller names
- * the price), then `submit(deliverable)` once the buyer has funded it. There is no
- * accept step, and the deliverable is a **string**.
+ * The seller has two moves, and missing either one deadlocks the job: `setBudget`
+ * when the BUYER'S REQUIREMENT MESSAGE arrives (there is no negotiation — the seller
+ * names the price), then `submit(deliverable)` once the buyer has funded it. There is
+ * no accept step, and the deliverable is a **string**. The trigger is a `message`
+ * entry, not a system event, which is the distinction that kept this broken; the
+ * decision lives in `lifecycle.ts`, tested.
  */
 
 const CHAIN_ID = 8453; // Base
@@ -39,7 +42,7 @@ const CHAIN_ID = 8453; // Base
  * What this agent charges, in USDC.
  *
  * The seller names the price: ACP has no negotiation step here, so whatever is set
- * on `job.created` is what the buyer is asked to fund. Kept well under Ward's own
+ * when the requirement arrives is what the buyer is asked to fund. Kept well under Ward's own
  * per-job budget so a job is never refused for being too dear — the buyer's gate
  * caps it independently, and the unspent remainder goes back to them.
  */
@@ -98,6 +101,37 @@ async function main(): Promise<void> {
     }),
   });
 
+  /** Jobs already priced, so the two triggers below cannot double-set a budget. */
+  const priced = new Set<string>();
+
+  /**
+   * Name the price, once, while the job is still open.
+   *
+   * Both call sites are legitimate and either may fire first, so this is idempotent
+   * on `jobId` and re-checks `status` — a second attempt after the buyer has funded
+   * would be refused by the SDK anyway, and the refusal would read like a fault.
+   */
+  async function priceJob(session: JobSession, trigger: string): Promise<void> {
+    if (priced.has(session.jobId)) return;
+    if (session.status !== "open") {
+      console.log(`[${session.jobId}] ${trigger}: status=${session.status}, nothing to price`);
+      return;
+    }
+    priced.add(session.jobId);
+    try {
+      console.log(`[${session.jobId}] pricing on ${trigger}: $${PRICE_USD}`);
+      await session.setBudget(AssetToken.usdc(PRICE_USD, session.chainId));
+      console.log(`[${session.jobId}] budget set — waiting for the buyer to fund`);
+    } catch (err) {
+      // Let it be retried by the other trigger rather than stranding the job on one
+      // transient failure.
+      priced.delete(session.jobId);
+      console.error(
+        `[${session.jobId}] setBudget failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   agent.on("entry", (session: JobSession, entry: JobRoomEntry) => {
     // The handler is async and the emitter does not await it, so a rejection here is
     // an unhandled promise and the process just carries on in silence. That silence
@@ -111,39 +145,18 @@ async function main(): Promise<void> {
   });
 
   async function handle(session: JobSession, entry: JobRoomEntry): Promise<void> {
-    if (entry.kind !== "system") return;
-    const type = entry.event.type;
-    console.log(`[${session.jobId}] ${type}`);
+    // The routing decision lives in `lifecycle.ts`, pure and tested. It used to be
+    // `if (entry.kind !== "system") return` inline here, which discarded the buyer's
+    // requirement message — the very entry that tells a seller to name its price.
+    const label = entry.kind === "system" ? entry.event.type : `${entry.kind}/${entry.contentType}`;
+    const action = sellerAction(entry, session.status);
+    console.log(`[${session.jobId}] ${label} → ${action} (status=${session.status})`);
 
-    // A new job is OPEN, and open is the seller's turn: the SDK's tool matrix gives
-    // `setBudget` to the provider and only `wait`/`fund` to the client, and the tool's
-    // own description is blunt about it — "a budget MUST be set before the buyer can
-    // fund". Skipping it deadlocks the job: Ward waits for `budget.set` before
-    // funding, this side waits for `job.funded` before working, and neither moves.
-    // Observed in production — job 77352 sat in `open` until Ward's 180s timeout,
-    // and the counterparty took a trust penalty for a stall it was not part of.
-    if (type === "job.created") {
-      // Roles and status first, always. The previous attempt used
-      // `session.availableTools()` as a guard, which reads `TOOL_MATRIX[role][status]`
-      // and throws a TypeError on any role outside provider/client/evaluator — from
-      // OUTSIDE the try, so the handler rejected and the process logged `job.created`
-      // and nothing else. Twice. A seller that cannot say why it did nothing is worse
-      // than one that fails loudly.
-      console.log(`  roles=[${session.roles.join(",")}] status=${session.status}`);
-      try {
-        console.log(`  setting budget $${PRICE_USD}`);
-        await session.setBudget(AssetToken.usdc(PRICE_USD, session.chainId));
-        console.log("  budget set — waiting for the buyer to fund");
-      } catch (err) {
-        // Attempt it and let the SDK object, rather than pre-judging whose turn it
-        // is: its own error names the role and status, which is the thing we need.
-        console.error(`  setBudget failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    if (action === "price") {
+      await priceJob(session, label);
       return;
     }
-
-    // Escrow is funded — do the work and submit.
-    if (type !== "job.funded") return;
+    if (action !== "deliver") return;
 
     try {
       const subject = subjectOf(session);
