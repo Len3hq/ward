@@ -74,6 +74,18 @@ function subjectOf(session: JobSession): string {
 }
 
 async function main(): Promise<void> {
+  // Last line of defence. Anything that escapes a handler still gets said out loud,
+  // because a seller that stalls without explaining itself costs the buyer a real
+  // timeout and a real trust penalty for a fault on this side.
+  process.on("unhandledRejection", (reason) => {
+    console.error(
+      `unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`,
+    );
+  });
+  process.on("uncaughtException", (err: Error) => {
+    console.error(`uncaught exception: ${err.stack ?? err.message}`);
+  });
+
   const agent = await AcpAgent.create({
     evmProvider: await PrivyAlchemyEvmProviderAdapter.create({
       walletAddress: required("ACP_WALLET_ADDRESS") as `0x${string}`,
@@ -86,7 +98,19 @@ async function main(): Promise<void> {
     }),
   });
 
-  agent.on("entry", async (session: JobSession, entry: JobRoomEntry) => {
+  agent.on("entry", (session: JobSession, entry: JobRoomEntry) => {
+    // The handler is async and the emitter does not await it, so a rejection here is
+    // an unhandled promise and the process just carries on in silence. That silence
+    // is what made two rounds of this bug undiagnosable: `job.created` in the log and
+    // no reason for the nothing that followed. Nothing thrown in `handle` escapes.
+    void handle(session, entry).catch((err: unknown) => {
+      console.error(
+        `[${session.jobId}] handler threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+      );
+    });
+  });
+
+  async function handle(session: JobSession, entry: JobRoomEntry): Promise<void> {
     if (entry.kind !== "system") return;
     const type = entry.event.type;
     console.log(`[${session.jobId}] ${type}`);
@@ -99,17 +123,20 @@ async function main(): Promise<void> {
     // Observed in production — job 77352 sat in `open` until Ward's 180s timeout,
     // and the counterparty took a trust penalty for a stall it was not part of.
     if (type === "job.created") {
-      // The SDK's own view of whose turn it is, rather than a second guess at the
-      // state machine — this also makes a session hydrated after a restart safe.
-      if (!session.availableTools().some((tool) => tool.name === "setBudget")) {
-        console.log("  not ours to price right now — waiting");
-        return;
-      }
+      // Roles and status first, always. The previous attempt used
+      // `session.availableTools()` as a guard, which reads `TOOL_MATRIX[role][status]`
+      // and throws a TypeError on any role outside provider/client/evaluator — from
+      // OUTSIDE the try, so the handler rejected and the process logged `job.created`
+      // and nothing else. Twice. A seller that cannot say why it did nothing is worse
+      // than one that fails loudly.
+      console.log(`  roles=[${session.roles.join(",")}] status=${session.status}`);
       try {
         console.log(`  setting budget $${PRICE_USD}`);
         await session.setBudget(AssetToken.usdc(PRICE_USD, session.chainId));
         console.log("  budget set — waiting for the buyer to fund");
       } catch (err) {
+        // Attempt it and let the SDK object, rather than pre-judging whose turn it
+        // is: its own error names the role and status, which is the thing we need.
         console.error(`  setBudget failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
@@ -134,7 +161,7 @@ async function main(): Promise<void> {
         .reject(why)
         .catch((e: unknown) => console.error(`  reject failed: ${String(e)}`));
     }
-  });
+  }
 
   await agent.start();
   const address = await agent.getAddress();
