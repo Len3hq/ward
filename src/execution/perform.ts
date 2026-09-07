@@ -95,9 +95,18 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     if (permission.status !== "active") {
       return { ok: false, message: "Spend permission revoked — nothing moved." };
     }
+    // Falling back to the remembered allowance is deliberate — a chain read that is
+    // merely unreachable must not block a spend the user already confirmed — but it
+    // is a fallback, and a silent one hides an RPC outage behind stale numbers.
     const live = await walletProvider()
       .readSpendPermission(accountKey)
-      .catch(() => null);
+      .catch((error: unknown) => {
+        console.error(
+          `on-chain spend permission unreadable for ${userId}, using the remembered allowance:`,
+          error,
+        );
+        return null;
+      });
     if (live?.status === "revoked") {
       return { ok: false, message: "Spend permission revoked on-chain — nothing moved." };
     }
@@ -117,6 +126,14 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     grant: request.grant,
   });
   if (!gate.allow) {
+    // Worth a line, unlike the ordinary refusals above: in the chat path the gate
+    // already passed at confirmation time, so a block HERE means something changed in
+    // between — a revocation landing mid-flight, or another surface spending the same
+    // cap. `warn`, not `error`: this is the gate working, and `error` should keep
+    // meaning something went wrong.
+    console.warn(
+      `spend blocked at execution: ${request.actionType} $${request.amountUsd} for ${userId} — ${gate.reason}`,
+    );
     return { ok: false, message: `Blocked at execution — ${gate.reason} Nothing moved.` };
   }
 
@@ -229,9 +246,18 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
 
     return { ok: false, message: "Nothing to execute." };
   } catch (error) {
+    // Say it on the server too, with the stack. This used to return the message to
+    // chat and nothing else, so a spend that failed on chain — no gas on the spender,
+    // no route for a dust-sized swap — left the only copy of the reason in the user's
+    // Telegram thread, and the logs showed a completely healthy process.
+    console.error(
+      `spend failed: ${request.actionType} $${request.amountUsd} for ${userId}` +
+        `${request.pair ? ` (${request.pair})` : ""}${request.viaToken ? " via MCP token" : ""}:`,
+      error,
+    );
     if (request.endpoint) {
       await appendX402(userId, { url: request.endpoint.url, ok: false, amount_usd: 0 }).catch(
-        () => undefined,
+        (writeError: unknown) => console.error("x402 failure not recorded in memory:", writeError),
       );
     }
     const message = error instanceof Error ? error.message : String(error);

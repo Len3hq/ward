@@ -205,3 +205,81 @@ describe("a swap's proceeds reach the user", () => {
     expect(outcome.message).toContain("still");
   });
 });
+
+/**
+ * A failed spend used to return its reason to chat and log NOTHING, so a production
+ * swap could die on chain while `railway logs` showed a perfectly healthy process —
+ * the only copy of the error sat in the user's Telegram thread. Diagnosing one cost
+ * an afternoon, which is what this guards against.
+ */
+describe("a failed spend reaches the server log", () => {
+  /** Captures both streams: a thrown spend is an `error`, a gate block only a `warn`. */
+  function captureErrors(): { lines: string[]; restore: () => void } {
+    const lines: string[] = [];
+    const realError = console.error;
+    const realWarn = console.warn;
+    const record = (...args: unknown[]) => {
+      lines.push(args.map((a) => (a instanceof Error ? a.message : String(a))).join(" "));
+    };
+    console.error = record;
+    console.warn = record;
+    return {
+      lines,
+      restore: () => {
+        console.error = realError;
+        console.warn = realWarn;
+      },
+    };
+  }
+
+  test("a provider that throws is logged with the action, the amount and the user", async () => {
+    const { walletProvider } = await import("../src/wallet/index.ts");
+    const provider = walletProvider();
+    const original = provider.swap.bind(provider);
+    provider.swap = async () => {
+      throw new Error("execution reverted: no route for 0.1 USDC");
+    };
+
+    const capture = captureErrors();
+    let outcome;
+    try {
+      outcome = await performSpend({
+        userId,
+        actionType: "swap",
+        amountUsd: 0.1,
+        idempotencyKey: "log1",
+        pair: "USDC/ETH",
+      });
+    } finally {
+      capture.restore();
+      provider.swap = original;
+    }
+
+    expect(outcome.ok).toBe(false);
+    const logged = capture.lines.join("\n");
+    expect(logged).toContain("spend failed");
+    expect(logged).toContain("swap $0.1");
+    expect(logged).toContain(userId);
+    expect(logged).toContain("no route for 0.1 USDC");
+  });
+
+  test("a gate block at execution time is logged — it means something changed", async () => {
+    const capture = captureErrors();
+    let outcome;
+    try {
+      // Over the $50 per-action cap, so the gate refuses after confirmation.
+      outcome = await performSpend({
+        userId,
+        actionType: "swap",
+        amountUsd: 500,
+        idempotencyKey: "log2",
+        pair: "USDC/ETH",
+      });
+    } finally {
+      capture.restore();
+    }
+
+    expect(outcome.ok).toBe(false);
+    expect(capture.lines.join("\n")).toContain("spend blocked at execution");
+  });
+});

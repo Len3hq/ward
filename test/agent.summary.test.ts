@@ -47,6 +47,15 @@ describe("maybeSummarize (episodic conversation memory)", () => {
     expect(first?.turn_count).toBe(4);
     expect(first?.summary.toLowerCase()).toContain("pepe");
 
+    // `updated_at` is `new Date().toISOString()` — millisecond resolution. With no
+    // model key both summaries are pure local file writes, so on a fast runner they
+    // land inside the same millisecond and the assertion below compares a string to
+    // itself. Measured margin on this sequence: median 1ms, and 11 of 25 samples at
+    // 0ms. That is what failed CI twice. Wait for the clock rather than race it —
+    // the property under test is "a later write gets a later timestamp", which cannot
+    // be observed without the two writes being at different times.
+    await Bun.sleep(5);
+
     await maybeSummarize(
       USER,
       turns(
