@@ -9,7 +9,15 @@ import {
   type X402Endpoint,
 } from "../src/execution/catalog.ts";
 
-beforeEach(() => resetCatalog());
+import path from "node:path";
+
+const FIXTURE = path.join(import.meta.dir, "fixtures", "x402-catalog.json");
+
+beforeEach(() => {
+  // Behaviour under test is the SEARCH, not which endpoints happen to be live today.
+  process.env.WARD_X402_CATALOG = FIXTURE;
+  resetCatalog();
+});
 afterEach(() => {
   resetCatalog();
   delete process.env.WARD_X402_CATALOG;

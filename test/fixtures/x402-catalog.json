@@ -1,0 +1,58 @@
+{
+  "_note": "Test catalogue. The bundled one at memory/catalog/x402-catalog.json describes REAL endpoints, which die and change price — a dead entry there must not read as a broken test here. Graph tests point WARD_X402_CATALOG at this file (see test/support.ts) so they assert Ward's behaviour against fixed data. Prices mirror the real ones so the caps under test stay meaningful.",
+  "endpoints": [
+    {
+      "id": "token-risk",
+      "name": "Token Risk Score",
+      "description": "Rug-pull and honeypot risk assessment for an ERC-20 on Base.",
+      "url": "https://example.test/x402/token-risk",
+      "method": "POST",
+      "body_template": {
+        "token_address": "{subject}",
+        "depth": "full"
+      },
+      "cost_usd": 0.05,
+      "tags": ["risk", "rug", "scam", "safety", "honeypot", "token", "audit"]
+    },
+    {
+      "id": "whale-flows",
+      "name": "Whale Flows",
+      "description": "Recent large transfers and net accumulation for a token, by wallet cohort.",
+      "url": "https://example.test/x402/whale-flows",
+      "method": "POST",
+      "body_template": {
+        "ticker": "{subject}",
+        "chain": "base",
+        "limit": 5
+      },
+      "cost_usd": 0.001,
+      "tags": ["whale", "flows", "accumulation", "distribution", "holder"]
+    },
+    {
+      "id": "smart-money",
+      "name": "Smart Money Positioning",
+      "description": "What consistently-profitable wallets are buying and selling right now on Base.",
+      "url": "https://example.test/x402/smart-money",
+      "method": "POST",
+      "body_template": {
+        "lookback_days": 7
+      },
+      "cost_usd": 0.001,
+      "tags": ["smart money", "profitable wallets", "positioning", "alpha", "market"]
+    },
+    {
+      "id": "token-price",
+      "name": "Token Price & Liquidity",
+      "description": "Spot price, 24h volume and pool liquidity depth for a Base token.",
+      "url": "https://example.test/x402/token-price",
+      "method": "POST",
+      "body_template": {
+        "chain": "base",
+        "token": "{subject}",
+        "language": "en"
+      },
+      "cost_usd": 0.01,
+      "tags": ["price", "liquidity", "volume", "quote"]
+    }
+  ]
+}

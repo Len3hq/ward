@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildGraph } from "../src/agent/graph.ts";
+import { resetCatalog } from "../src/execution/catalog.ts";
 import { resetAcpProvider } from "../src/acp/index.ts";
 import { resetWalletProvider } from "../src/wallet/index.ts";
 import { backend, resetBackend } from "../memory/backend.ts";
@@ -18,6 +19,10 @@ const USER = "ward_01J9XQ4M7BZK3TVWXY0123456B";
 let dir: string;
 
 beforeEach(async () => {
+  // The bundled catalogue describes real endpoints that die and change price; this
+  // file is testing the graph, so it runs against the fixture (see test/support.ts).
+  process.env.WARD_X402_CATALOG = path.join(import.meta.dir, "fixtures", "x402-catalog.json");
+  resetCatalog();
   dir = await mkdtemp(path.join(tmpdir(), "ward-graph-"));
   process.env.WARD_MEMORY_DIR = dir;
   process.env.SIBYL_MEMORY_MODE = "fs";

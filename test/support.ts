@@ -9,6 +9,7 @@ import type { ChannelAdapter, SendMode } from "../src/gateway/adapter.ts";
 import { runTurn } from "../src/gateway/core.ts";
 import type { Channel } from "../memory/index.ts";
 import { resetAcpProvider } from "../src/acp/index.ts";
+import { resetCatalog } from "../src/execution/catalog.ts";
 import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
 import type { StubWalletProvider } from "../src/wallet/stub.ts";
 import { resetBackend } from "../memory/backend.ts";
@@ -26,6 +27,11 @@ export async function hermeticSetup(): Promise<void> {
   process.env.WARD_MEMORY_DIR = tmpDir;
   process.env.SIBYL_MEMORY_MODE = "fs";
   process.env.TELEGRAM_BOT_TOKEN = "test-token";
+  // The bundled catalogue describes REAL endpoints: they go down and they change
+  // price, and neither should ever read as a broken test. Graph tests run against a
+  // fixture instead — `scripts/x402-verify.ts` is what checks the real one.
+  process.env.WARD_X402_CATALOG = path.join(import.meta.dir, "fixtures", "x402-catalog.json");
+  resetCatalog();
   delete process.env.OPENAI_API_KEY;
   delete process.env.CDP_API_KEY_ID;
   delete process.env.ACP_MODE;
@@ -40,6 +46,8 @@ export async function hermeticTeardown(): Promise<void> {
   resetAcpProvider();
   delete process.env.WARD_MEMORY_DIR;
   delete process.env.SIBYL_MEMORY_MODE;
+  delete process.env.WARD_X402_CATALOG;
+  resetCatalog();
   if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   tmpDir = "";
 }

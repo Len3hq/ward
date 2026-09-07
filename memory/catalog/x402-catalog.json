@@ -1,24 +1,18 @@
 {
-  "_note": "x402 endpoint catalog. Discovery is substring/keyword match over `name`, `description`, `tags`. `method` is GET or POST (case-insensitive). For POST/PUT/PATCH, `body_template` is sent as an application/json body. `{subject}` / `{token}` in `url` or in any string value of `body_template` is replaced with the token the user asked about. `cost_usd` is the expected price shown at confirmation; the real price comes from the 402 response and is capped at `cost_usd * 1.5`. VERIFY each endpoint's method + body shape against its live 402 challenge before a real-money demo — these were sourced from the CDP x402 Bazaar (via x402scan) and their contracts can change. Shortlist: https://claude.ai/code/artifact/5da48412-58af-44cf-98f8-5c6af952b35d — see X402.md.",
+  "_note": "x402 endpoint catalog. Discovery is substring/keyword match over `name`, `description`, `tags`. `method` is GET or POST (case-insensitive). For POST/PUT/PATCH, `body_template` is sent as an application/json body. `{subject}` / `{token}` in `url` or in any string value of `body_template` is replaced with the token the user asked about. `cost_usd` is the expected price shown at confirmation; the REAL price is read from the endpoint's own 402 before anything is pulled, and is capped at `cost_usd * 1.5`. RUN `bun run scripts/x402-verify.ts` BEFORE ANY REAL-MONEY DEMO — it probes every entry's live 402 for free and is how the dead `token-risk` endpoint (502 from its own nginx) and the 50x-overstated Heurist prices were found. Sourced from the CDP x402 Bazaar (via x402scan) — see X402.md.",
   "endpoints": [
-    {
-      "id": "token-risk",
-      "name": "Token Risk Score",
-      "description": "Rug-pull and honeypot risk assessment for an ERC-20 on Base: mint authority, LP lock, holder concentration, transfer tax, sniper wallets.",
-      "url": "https://x402.elizaos.ai/api/analytics/analyze_token",
-      "method": "POST",
-      "body_template": { "token_address": "{subject}", "depth": "full" },
-      "cost_usd": 0.05,
-      "tags": ["risk", "rug", "scam", "safety", "honeypot", "token", "audit", "sniper"]
-    },
     {
       "id": "whale-flows",
       "name": "Whale Flows",
       "description": "Recent large transfers and net accumulation/distribution for a token, by wallet cohort, plus holder and market context.",
       "url": "https://mesh.heurist.xyz/x402/agents/AIXBTProjectInfoAgent/search_projects",
       "method": "POST",
-      "body_template": { "ticker": "{subject}", "chain": "base", "limit": 5 },
-      "cost_usd": 0.05,
+      "body_template": {
+        "ticker": "{subject}",
+        "chain": "base",
+        "limit": 5
+      },
+      "cost_usd": 0.001,
       "tags": ["whale", "flows", "accumulation", "distribution", "large transfers", "holder"]
     },
     {
@@ -27,19 +21,25 @@
       "description": "What consistently-profitable wallets are buying and selling right now on Base, plus market-wide news and macro context.",
       "url": "https://mesh.heurist.xyz/x402/agents/AIXBTProjectInfoAgent/get_market_summary",
       "method": "POST",
-      "body_template": { "lookback_days": 7 },
-      "cost_usd": 0.05,
+      "body_template": {
+        "lookback_days": 7
+      },
+      "cost_usd": 0.001,
       "tags": ["smart money", "profitable wallets", "positioning", "alpha", "market"]
     },
     {
       "id": "token-price",
-      "name": "Token Price & Liquidity",
-      "description": "Spot price, 24h volume, and pool liquidity depth for a Base token.",
+      "name": "Token Analysis",
+      "description": "Spot price, 24h volume, pool liquidity depth and a written analysis of a Base token — the closest thing in the catalogue to a safety read on a ticker.",
       "url": "https://x402.lucyos.ai/x402/tools/analyze_token",
       "method": "POST",
-      "body_template": { "chain": "base", "token": "{subject}", "language": "en" },
+      "body_template": {
+        "chain": "base",
+        "token": "{subject}",
+        "language": "en"
+      },
       "cost_usd": 0.01,
-      "tags": ["price", "liquidity", "volume", "quote"]
+      "tags": ["price", "liquidity", "volume", "quote", "token", "analysis", "assess", "risk"]
     }
   ]
 }

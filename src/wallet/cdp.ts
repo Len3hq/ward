@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { CdpClient, parseUnits } from "@coinbase/cdp-sdk";
 import { formatUnits } from "viem";
+import { toAccount } from "viem/accounts";
 import { wrapFetchWithPayment } from "x402-fetch";
 
 import type { CdpConfig } from "../config.ts";
@@ -46,6 +47,60 @@ const AGENT_SPENDER_NAME = "ward-agent-spender";
 
 /** Waiting for a block is not the same as waiting for an answer — see `#settle`. */
 const SETTLEMENT_BUDGET = 4;
+
+/**
+ * A CDP account, as `x402-fetch` needs to see it.
+ *
+ * x402 duck-types its signer: a viem `LocalAccount` must have `address`, `sign`,
+ * `signMessage`, `signTransaction`, `signTypedData` **and `type`**. A CDP server
+ * account has every one of those methods, with viem-compatible shapes, and no
+ * `type` — so passing it straight through (which is what the old cast did) fails
+ * the check and throws "Invalid wallet client provided does not support
+ * signTypedData" before any request is made. `toAccount` adds `type: "local"` and
+ * changes nothing else; it is the adapter CDP's own x402 guide uses.
+ */
+export function x402Signer(account: {
+  address: string;
+  sign?: unknown;
+  signMessage: unknown;
+  signTransaction: unknown;
+  signTypedData: unknown;
+}): Parameters<typeof wrapFetchWithPayment>[1] {
+  return toAccount(account as unknown as Parameters<typeof toAccount>[0]) as unknown as Parameters<
+    typeof wrapFetchWithPayment
+  >[1];
+}
+
+/** One offer in a 402 challenge — what the endpoint will accept as payment. */
+interface X402Offer {
+  scheme?: string;
+  network?: string;
+  asset?: string;
+  maxAmountRequired?: string;
+}
+
+/**
+ * The USD price an endpoint is asking, from its own 402 body — or `null` when it
+ * wants something Ward cannot pay.
+ *
+ * Ward's authority is a USDC Spend Permission on one network, so an offer in another
+ * asset or on another chain is not a cheaper option, it is an impossible one. The
+ * catalogue price is only ever an estimate shown at confirmation; this is the number
+ * that gets pulled from the user.
+ */
+export function x402QuoteUsd(body: unknown, network: string, usdcAddress: string): number | null {
+  const offers = (body as { accepts?: X402Offer[] } | null)?.accepts ?? [];
+  const offer = offers.find(
+    (a) =>
+      a.scheme === "exact" &&
+      a.network === network &&
+      a.asset?.toLowerCase() === usdcAddress.toLowerCase() &&
+      a.maxAmountRequired !== undefined,
+  );
+  if (!offer) return null;
+  const price = Number(offer.maxAmountRequired) / 10 ** USDC_DECIMALS;
+  return Number.isFinite(price) && price >= 0 ? price : null;
+}
 
 /**
  * Run `work` with a deadline, and name what timed out.
@@ -308,36 +363,61 @@ export class CdpWalletProvider implements WalletProvider {
   }
 
   /**
-   * VERIFY LIVE. Pull `maxUsd` USDC from the user's smart account within the Spend
-   * Permission, then pay the endpoint via `x402-fetch` (EIP-3009). The CDP account
-   * is passed to `wrapFetchWithPayment` as the signer — confirm it satisfies the
-   * x402 `Signer` shape, or wrap it with viem's `toAccount`.
+   * Buy from an x402 endpoint, paying in USDC from the user's Spend Permission.
    *
-   * GET endpoints send no body; POST/PUT/PATCH endpoints send `request.body` as
+   * Three things here were wrong, and the first made every purchase impossible:
+   *
+   * 1. **The signer.** `wrapFetchWithPayment` accepts a viem wallet client or a viem
+   *    `LocalAccount`, and decides which by duck-typing: a `LocalAccount` must carry
+   *    `address`, `sign`, `signMessage`, `signTransaction`, `signTypedData` — **and a
+   *    `type` field**. A CDP server account has every method but no `type`, so the
+   *    cast this code used to do left x402 throwing "Invalid wallet client provided
+   *    does not support signTypedData" before a single byte hit the network. Every
+   *    "Buy … Confirm? yes" ended there. `toAccount()` is the documented adapter and
+   *    the one CDP's own x402 guide uses; CDP's method shapes already match viem's.
+   *
+   * 2. **The amount.** It pulled `maxUsd` — the 1.5× cap — before knowing the price,
+   *    and never returned the difference. At a real price of $0.001 against a $0.05
+   *    catalogue estimate that leaves ~$0.074 of the user's money in the SHARED agent
+   *    spender, and burns 75× the allowance it needed. The price is now read from the
+   *    endpoint's own 402 challenge first, and exactly that is pulled.
+   *
+   * 3. **The cap.** `maxUsd` was enforced only inside x402's own check. A quote above
+   *    what the user approved now refuses before anything is pulled, and says so.
+   *
+   * GET endpoints send no body; POST/PUT/PATCH send `request.body` as
    * `application/json` (the catalog's `body_template`, with `{subject}` filled).
    */
   async payX402(accountKey: string, request: X402Request): Promise<X402Result> {
-    const spender = await this.#agentSpender();
-    const permission = await this.#requirePermission(accountKey);
-    await spender.useSpendPermission({
-      spendPermission: permission,
-      value: parseUnits(String(request.maxUsd), USDC_DECIMALS),
-      network: this.#network,
-    });
-
-    const maxValue = parseUnits(String(request.maxUsd), USDC_DECIMALS);
-    const pay = wrapFetchWithPayment(
-      fetch,
-      spender as unknown as Parameters<typeof wrapFetchWithPayment>[1],
-      maxValue,
-    );
-
     const method = request.method.toUpperCase();
     const init: RequestInit = { method };
     if (request.body !== undefined && method !== "GET" && method !== "HEAD") {
       init.headers = { "content-type": "application/json" };
       init.body = JSON.stringify(request.body);
     }
+
+    // What does it actually charge? A 402 serves nothing and costs nothing.
+    const quotedUsd = await this.#quoteX402(request.url, init);
+    const priceUsd = quotedUsd ?? request.expectedUsd;
+    if (priceUsd > request.maxUsd) {
+      throw new Error(
+        `the endpoint asks $${priceUsd} USDC, over the $${request.maxUsd} cap you approved — nothing was paid`,
+      );
+    }
+
+    const spender = await this.#agentSpender();
+    const permission = await this.#requirePermission(accountKey);
+    await spender.useSpendPermission({
+      spendPermission: permission,
+      value: parseUnits(String(priceUsd), USDC_DECIMALS),
+      network: this.#network,
+    });
+
+    const pay = wrapFetchWithPayment(
+      fetch,
+      x402Signer(spender),
+      parseUnits(String(request.maxUsd), USDC_DECIMALS),
+    );
 
     const response = await pay(request.url, init);
     if (!response.ok) throw new Error(`x402 endpoint returned ${response.status}`);
@@ -348,8 +428,29 @@ export class CdpWalletProvider implements WalletProvider {
     return {
       data,
       txHash: decoded.txHash ?? "0x",
-      amountUsd: decoded.amountUsd ?? request.expectedUsd,
+      // What was authorized, not what the catalogue guessed: the ledger has to match
+      // the USDC that actually left the user's wallet.
+      amountUsd: decoded.amountUsd ?? priceUsd,
     };
+  }
+
+  /**
+   * The endpoint's own price, in USD, from an unpaid request — or `null` if it did
+   * not answer with a usable 402 (then the catalogue estimate stands, still capped).
+   *
+   * Only USDC on Ward's network counts: the Spend Permission is a USDC allowance, so
+   * an endpoint wanting anything else is one Ward cannot pay by any route.
+   */
+  async #quoteX402(url: string, init: RequestInit): Promise<number | null> {
+    try {
+      const response = await fetch(url, init);
+      if (response.status !== 402) return null;
+      return x402QuoteUsd(await response.json(), this.#network, this.#token("USDC"));
+    } catch {
+      // A quote is an optimisation, never a gate: fall back to the catalogue price,
+      // which x402's own `maxValue` still caps.
+      return null;
+    }
   }
 
   /**

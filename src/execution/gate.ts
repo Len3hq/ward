@@ -48,11 +48,18 @@ function autoApproveUsd(): number {
 }
 
 /**
- * Below this, the action is not worth broadcasting: USDC carries six decimals, and a
- * dust swap costs more in gas than it moves — "$0.0001" reached a confirmation
- * prompt and would have gone on chain as 100 units of USDC.
+ * Below this, an action Ward *initiates* is not worth broadcasting: USDC carries six
+ * decimals, and a dust swap costs more in gas than it moves — "$0.0001" reached a
+ * confirmation prompt and would have gone on chain as 100 units of USDC.
+ *
+ * It applies to the amounts a USER names, never to a price a COUNTERPARTY sets.
+ * Real x402 endpoints charge $0.001 (the two Heurist ones in the catalogue do), and
+ * a floor that rejected them would block the whole product to prevent a typo.
  */
 export const MIN_SPEND_USD = 0.01;
+
+/** Actions whose amount the user chose, and can therefore get wrong. */
+const USER_SIZED: ReadonlySet<ActionType> = new Set<ActionType>(["swap", "send"]);
 
 export function evaluateGate(input: GateInput): GateResult {
   const { record, actionType, amountUsd, spentTodayUsd, revoked, onchainAllowanceUsd } = input;
@@ -64,7 +71,7 @@ export function evaluateGate(input: GateInput): GateResult {
     );
   }
 
-  if (amountUsd < MIN_SPEND_USD) {
+  if (USER_SIZED.has(actionType) && amountUsd < MIN_SPEND_USD) {
     return deny(`$${amountUsd} is below the $${MIN_SPEND_USD} minimum I can move on Base.`);
   }
 
