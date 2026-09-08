@@ -5,12 +5,12 @@ import { BRAND } from "../config.ts";
  *
  * Telegram and Discord each carried their own identical copy of the help text, and
  * both listed the same thing: eleven commands, nine of them account plumbing, with
- * the actual product — swaps, sends, paid data, hiring an agent — in one sentence at
- * the bottom. A stranger opening the bot learned that it could be unlinked.
+ * the actual product — paid on-chain data, hiring an agent — in one sentence at the
+ * bottom. A stranger opening the bot learned that it could be unlinked.
  *
  * So capabilities lead here and the plumbing follows, and every capability is written
  * as the sentence that starts it. Naming the phrase is the whole point: there is no
- * button for "swap $20 of USDC into ETH", and a user who does not know the words
+ * button for "what's the risk score for PEPE", and a user who does not know the words
  * cannot reach the feature.
  */
 
@@ -52,7 +52,6 @@ export const welcome = (channel: ChatChannel): string =>
     "any time.",
     "",
     "**What I can do**",
-    '· **Swap and send** — "swap $20 of USDC into ETH" · "send $10 to 0x…"',
     "· **Buy on-chain data** — paid per call over x402. No subscription, no API key.",
     "· **Hire another AI agent** — a second opinion on a token, escrowed and settled on Base",
     "",
@@ -88,17 +87,13 @@ export const HELP = [
   '  · "what\'s the risk score for PEPE"',
   '  · "hire an agent to assess AERO" — I pick one from the Virtuals directory',
   "",
-  "Move money",
-  '  · "swap $20 of USDC into ETH"',
-  '  · "send $10 to 0x…" — USDC to any Base address',
-  "",
   "Buy on-chain data",
   '  · "what data can I buy?" — the full menu, and what each one costs',
   "",
   "Your wallet and your limits",
   '  · "generate my wallet" · "what am I allowed to do?" · "what\'s my balance?"',
   '  · "grant a $50 daily permission" — a revocable on-chain allowance',
-  '  · "pause swaps" · "revoke my permission" · "what have I spent?"',
+  '  · "pause data purchases" · "revoke my permission" · "what have I spent?"',
   "",
   "Every one of those is checked against your limits before anything moves, and",
   "shown to you to confirm first.",
@@ -131,8 +126,8 @@ export const HELP = [
  * that has to earn the tap. Telegram caps it at 512 characters.
  */
 export const BOT_DESCRIPTION = [
-  `${BRAND.name} moves money on Base for you: swap and send USDC, buy premium on-chain`,
-  "data, and hire other AI agents to assess a token before you touch it.",
+  `${BRAND.name} works on Base for you: buy premium on-chain data over x402, and hire`,
+  "other AI agents to assess a token before you touch it.",
   "",
   "What I am allowed to do is written down in memory — spend caps, paused actions, a",
   "revocable on-chain allowance — and I check it before every single action. I cannot",

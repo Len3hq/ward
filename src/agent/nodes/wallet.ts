@@ -121,7 +121,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       text: [
         `Grant an on-chain spend permission: $${allowance} USDC per day, spender ${wallet.agent_spender}.`,
         `This is a transaction on ${provider.network()} and costs gas.`,
-        `It lets me move up to that much USDC without asking again — swaps, x402 data and ACP hires all draw on it.`,
+        `It lets me move up to that much USDC without asking again — x402 data and ACP hires draw on it.`,
         `Confirm? (yes / no)`,
       ].join("\n"),
     }) as { approved: boolean };

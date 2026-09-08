@@ -124,7 +124,7 @@ So each channel carries a tier, and the tier decides what a turn may do:
 | **MCP**      | a bearer token in the client config   | yes         | yes           | **no — bounced to a human channel** |
 
 An MCP client can ask "what am I authorized for?", can read the ledger, and can _propose_
-a swap — but the confirmation interrupt is delivered to the user's primary human channel
+a spend — but the confirmation interrupt is delivered to the user's primary human channel
 and must be answered there. A leaked MCP token with no execution grant therefore
 cannot move money on its own — see [`PHASE-16.md`](./PHASE-16.md) for what a grant
 changes.

@@ -21,9 +21,9 @@ On Telegram, in one loop:
 2. **Connects a wallet** — a Coinbase CDP smart account for you, a CDP Server
    Account as the agent spender, and a **revocable on-chain USDC Spend Permission**
    scoped to your daily limit.
-3. **Acts within `min(memory cap, on-chain allowance)`** — a capped swap on Base, or
-   an [x402](https://www.x402.org/) payment for premium on-chain data, or hiring
-   another agent via [Virtuals ACP](https://virtuals.io/) to assess a token — all on
+3. **Acts within `min(memory cap, on-chain allowance)`** — an
+   [x402](https://www.x402.org/) payment for premium on-chain data, or hiring
+   another agent via [Virtuals ACP](https://virtuals.io/) to assess a token — both on
    **one spending ledger**, every one confirmed with the real numbers.
 4. **Remembers** — every spend, every revocation, and whether each counterparty was
    worth trusting. A fresh session recalls all of it.
@@ -44,7 +44,7 @@ A second app is not a second allowance — that is asserted in
 | `ward.authorization/<id>` (the record)                                                 | [`memory/store.ts` `read()`](./memory/store.ts) — `src/agent/nodes/router.ts`, `execute.ts`, `confirm.ts` | exists? → proceed · missing? → **refuse, explain why**                               | every action request is refused; no scope, no budget, no trust (user-triggerable: `/forget_me`) |
 | `standing_caps.per_action_limit_usd`                                                   | [`src/execution/gate.ts`](./src/execution/gate.ts) `evaluateGate`                                         | amount over it → blocked before any confirmation                                     | —                                                                                               |
 | `standing_caps.daily_limit_usd`                                                        | `gate.ts`, via `spentToday()`                                                                             | `sum(spent_ledger, today) + amount > cap` → blocked                                  | —                                                                                               |
-| `spent_ledger[]` (append-only)                                                         | `spentToday()` — sums swap + x402 + acp_job for the current UTC day                                       | one number, one cap, across every action type                                        | the cap is unbounded (but there's no record, so it refuses first)                               |
+| `spent_ledger[]` (append-only)                                                         | `spentToday()` — sums x402 + acp_job for the current UTC day                                              | one number, one cap, across every action type                                        | the cap is unbounded (but there's no record, so it refuses first)                               |
 | `revocation_log[]` (append-only)                                                       | `isRevoked()` — **fresh read before every action**                                                        | a revoked `action_type` blocks that path immediately, mid-session                    | —                                                                                               |
 | `acp_job_history[]` (append-only)                                                      | `trustScore()` — read **before** choosing a counterparty                                                  | a low-trust counterparty is flagged; the agent narrates `0.56 → 0.60` after each job | the agent has no memory of who it trusts                                                        |
 | `x402_ledger[]` (append-only)                                                          | `endpointTrust()`                                                                                         | per-endpoint success/failure feeds a derived trust score                             | —                                                                                               |
@@ -60,7 +60,7 @@ The tier map, the exact JSON shape, and which function touches which field are i
 | Property                                                                                                                                                                | Proof                                 |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | **One daily cap, shared.** Spend $8 of $10 on Telegram, and Discord is refused the next $9 — with nothing broadcast.                                                    | `test/identity.cross-channel.test.ts` |
-| **Revocation is instant everywhere.** `isRevoked()` re-reads before every action, so pausing swaps on Discord refuses the next Telegram swap mid-session.               | same                                  |
+| **Revocation is instant everywhere.** `isRevoked()` re-reads before every action, so pausing data purchases on Discord refuses the next Telegram purchase mid-session.  | same                                  |
 | **The deletion gate crosses channels.** Delete `ward.authorization/<id>` and Telegram, Discord and MCP all refuse — and MCP cannot queue a proposal to route around it. | same                                  |
 | **Identity survives deletion.** Only authority was deleted: the user is still known on every channel, and still refused on every channel.                               | same                                  |
 
@@ -73,8 +73,8 @@ for a confirmation — never in what the user is allowed to do.
 _recall → decide → pay/hire → execute — and none of it works without Sibyl Memory._
 
 Fresh-session recall (timestamped) → the memory-gated refusal → one x402 payment on
-Base → one capped swap on Base → revoke the Spend Permission on-chain → an ACP hire
-with trust write-back. Full script: [DEMO.md](./DEMO.md).
+Base → revoke the Spend Permission on-chain → an ACP hire with trust write-back.
+Full script: [DEMO.md](./DEMO.md).
 
 ## Architecture
 
@@ -90,8 +90,10 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
 - **Wallet** — CDP smart account + CDP Server Account spender + on-chain Spend
   Permission · [`src/wallet/`](./src/wallet/), [WALLET.md](./WALLET.md).
 - **Base execution** — the shared gate + a keyword-matched x402 catalog (GET or
-  POST-with-body, `{subject}`-templated) + the x402 / swap / ACP paths ·
-  [`src/execution/`](./src/execution/), [X402.md](./X402.md).
+  POST-with-body, `{subject}`-templated) + the x402 / ACP paths ·
+  [`src/execution/`](./src/execution/), [X402.md](./X402.md). (A capped swap and a
+  USDC transfer are built but switched off — [`src/agent/transfers.ts`](./src/agent/transfers.ts) —
+  until their on-chain paths are verified.)
 - **Counterparty market** — Virtuals ACP hire with trust write-back ·
   [`src/acp/`](./src/acp/), [ACP.md](./ACP.md).
 - **Interface** — Telegram (Telegraf; streamed edits, HTML, 4096-split, typed
@@ -154,8 +156,8 @@ The judges' own tests, as first-class CI test files:
 
 | File                                                           | Asserts                                                                                                                                 |
 | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test/deletion-gate.test.ts`](./test/deletion-gate.test.ts)   | with the record a swap executes; remove `ward.authorization` from Sibyl Memory → the same request refuses, **no transaction broadcast** |
-| [`test/revocation.test.ts`](./test/revocation.test.ts)         | pause `swap` mid-session → the next swap in that session is refused (fresh `revocation_log` read)                                       |
+| [`test/deletion-gate.test.ts`](./test/deletion-gate.test.ts)   | with the record a spend executes; remove `ward.authorization` from Sibyl Memory → the same request refuses, **no transaction broadcast** |
+| [`test/revocation.test.ts`](./test/revocation.test.ts)         | pause an action type mid-session → the next spend of that type in the session is refused (fresh `revocation_log` read)                  |
 | [`test/onchain-revoke.test.ts`](./test/onchain-revoke.test.ts) | revoke the Spend Permission on-chain → the next spend refuses even with memory intact                                                   |
 | [`test/daily-cap.test.ts`](./test/daily-cap.test.ts)           | `spent_ledger` sum at/over `daily_limit_usd` → the next action of either type is blocked                                                |
 | [`test/forget-me.test.ts`](./test/forget-me.test.ts)           | the user deletes their own record with `/forget_me` → the same refusal; the wallet, the links and the journal survive it                |
@@ -172,13 +174,17 @@ bun test          # 574 pass on the fs backend
 
 ## Partner stacks (Base + Virtuals → ×1.25 cap)
 
-**Base** — three of the four qualifying actions from the rules:
+**Base** — two qualifying actions from the rules:
 
 | Action                                                 | Path                                                                         | Status                                                                             |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Contract interaction — Spend Permission grant / revoke | `src/wallet/cdp.ts` `createSpendPermission` / `revokeSpendPermission`        | code-complete; CDP field names from SDK types, **verify live** (`WARD_CDP_TEST=1`) |
 | x402 payment                                           | `src/wallet/cdp.ts` `payX402` (`x402-fetch`, EIP-3009, Coinbase facilitator) | code-complete; **verify live**                                                     |
-| Wallet operation — capped swap                         | `src/wallet/cdp.ts` `swap` (CDP swap API, pull-within-permission)            | code-complete; **verify live**                                                     |
+
+A capped swap (`src/wallet/cdp.ts` `swap`) and a USDC transfer (`sendUsdc`) are also
+built, but **switched off** ([`src/agent/transfers.ts`](./src/agent/transfers.ts))
+until their on-chain paths are live-verified — Ward declines a swap or send request
+and neither appears in `/start` or `/help`.
 
 **Virtuals ACP** — `hire an agent to assess PEPE` → job → escrow (settles on Base) →
 `validateExternalData` on the result → `appendAcpJob({…, trust_delta})` → the next
@@ -257,11 +263,11 @@ Ward writes one `key=value` line per event, so a Railway log shows who is talkin
 it and where a slow turn went:
 
 ```
-… ward event=msg.in     channel=telegram account=706456243 chat=706456243 chars=21 text="swap $20 usdc for eth"
-… ward event=turn.start channel=telegram account=706456243 thread=telegram:706456243:1 chars=21 …
-… ward event=intent     action=swap source=table ms=0.6
+… ward event=msg.in     channel=telegram account=706456243 chat=706456243 chars=24 text="risk score on PEPE"
+… ward event=turn.start channel=telegram account=706456243 thread=telegram:706456243:1 chars=24 …
+… ward event=intent     action=x402_data_purchase source=table ms=0.6
 … ward event=model.call model=gpt-4o-mini ms=1294.6 turns=1 tool_calls=0
-… ward event=confirm.ask channel=telegram text="Swap $20 USDC → ETH. $0.00 of your $100 daily cap used …"
+… ward event=confirm.ask channel=telegram text="Buy 'Token Risk Score' (~$0.05). $0.00 of your $100 daily cap used …"
 … ward event=confirm.answer answer=yes ms=8214.0
 … ward event=turn.done  channel=telegram ms=11602.3 chars=134 …
 ```

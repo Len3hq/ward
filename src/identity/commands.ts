@@ -405,7 +405,7 @@ async function proposeGrantCommand(
 
   const actionTypes = parseActionTypes(actions);
   if (actionTypes === null) {
-    return 'I didn\'t recognise those actions. Use x402, swap, acp, or "all".';
+    return `I didn't recognise those actions. Use ${ACTION_WORDS}, or "all".`;
   }
 
   const request = {

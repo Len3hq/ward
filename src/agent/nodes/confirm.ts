@@ -137,6 +137,8 @@ export async function confirmNode(
     acpConsidered = choice.considered;
     amountUsd = intent.amount_usd ?? loadConfig().acpBudgetUsd;
   } else if (action === "send") {
+    // Unreachable: "send" (and "swap" below) are disabled at `nodes/router.ts`
+    // (DISABLED_ACTIONS) and never routed to `confirm`. Kept intact for re-enabling.
     destination = intent.token;
     if (!destination || !/^0x[a-fA-F0-9]{40}$/.test(destination)) {
       return {

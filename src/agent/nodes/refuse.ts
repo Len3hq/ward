@@ -1,6 +1,7 @@
 import { AIMessage } from "@langchain/core/messages";
 
 import { read } from "../../../memory/index.ts";
+import { transfersEnabled } from "../transfers.ts";
 import type { WardStateType } from "../state.ts";
 
 /**
@@ -11,6 +12,20 @@ export async function refuseNode(state: WardStateType): Promise<Partial<WardStat
   // Guard may have already added its own refusal message.
   const last = state.messages.at(-1);
   if (last instanceof AIMessage) return {};
+
+  // Swap / send are recognised but switched off (see `agent/transfers.ts`). Give
+  // them a specific, neutral line rather than the generic refusal.
+  const action = state.parsedIntent?.action_type;
+  if (!transfersEnabled() && (action === "swap" || action === "send")) {
+    return {
+      messages: [
+        new AIMessage(
+          "I can't move tokens between wallets that way right now. I can buy on-chain " +
+            "data, hire another agent to assess a token, and manage your wallet and limits.",
+        ),
+      ],
+    };
+  }
 
   const hadRecord = (await read(state.userId)) !== null;
   const message = hadRecord

@@ -73,11 +73,16 @@ option for an EOA transaction.
 generate my wallet           → creates the smart account + spender, writes ward.wallet
 grant a $100 daily permission → asks yes/no, then the on-chain Spend Permission,
                                 ward.wallet.spend_permission = active
-swap $40 usdc for eth        → pull → swap → **sweep the proceeds to your smart account**
-send $10 to 0xAbC…            → pull → transfer USDC to any Base address
+get me a risk score on PEPE  → pull → x402 payment → the data
+hire an agent to assess PEPE  → pull → ACP escrow → the report + trust write-back
 revoke my permission         → on-chain revoke + pauses every spend action in memory
-pause swaps                   → memory-only revocation of one action type
+pause data purchases          → memory-only revocation of one action type
 ```
+
+> **Swap and send are switched off.** The two sections below document code that is
+> intact but disabled (`src/agent/transfers.ts`): Ward declines a `swap …` / `send …`
+> request with a neutral line and neither appears in `/start` or `/help`. Re-enabling
+> is a one-line change once the on-chain paths are live-verified.
 
 `generate_wallet` / `grant_permission` / `revoke` are deterministic (the `wallet`
 node), not LLM tool calls — they work without `OPENAI_API_KEY`.
@@ -88,7 +93,7 @@ ever takes authority away and fails safe, so it stays immediate. Questions never
 reach any of them — "how do I grant a permission?" is classified `read_only` and
 answered, not executed (`ASKS_ABOUT_AN_ACTION` in `src/agent/intent.ts`).
 
-## Swap, in full
+## Swap, in full (disabled — see the note above)
 
 ```
 useSpendPermission(user's smart account → agent spender, $N USDC)
@@ -108,7 +113,7 @@ otherwise would have no reason to go looking.
 **Tokens are a fixed map** — `USDC`, `WETH`, `ETH`, `CBETH` on Base mainnet. Anything
 else fails with `unknown token X on base`. This is not a general DEX interface.
 
-## Send
+## Send (disabled — see the note above)
 
 `send $10 to 0x…` moves USDC from the user's smart account to any Base address, in
 two steps: pull within the Spend Permission, then transfer from the spender. The pull

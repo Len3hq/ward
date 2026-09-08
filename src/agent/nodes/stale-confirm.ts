@@ -9,7 +9,7 @@ import type { WardStateType } from "../state.ts";
  * message — so whatever the user was answering is gone: the process restarted, the
  * prompt timed out, or a redeploy took the checkpoint with it. Before this existed
  * the message fell through to the conversational model, which replied "It seems like
- * you might be looking for assistance" to a "Yes" that was meant to approve a swap.
+ * you might be looking for assistance" to a "Yes" that was meant to approve a spend.
  *
  * The user has to be told two things, in this order: nothing was done, and how to
  * get back to where they were. Anything else — including a friendly non-answer — is
@@ -23,7 +23,7 @@ export function staleConfirmNode(): Partial<WardStateType> {
           "I don't have anything waiting for a yes or no, so nothing has been done.",
           "",
           "If you were approving an action, tell me again what you want and I'll put the",
-          'confirmation back in front of you — for example: "swap $10 USDC into ETH".',
+          'confirmation back in front of you — for example: "get me a risk score on PEPE".',
         ].join("\n"),
       ),
     ],

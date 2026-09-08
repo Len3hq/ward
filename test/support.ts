@@ -32,6 +32,11 @@ export async function hermeticSetup(): Promise<void> {
   // fixture instead — `scripts/x402-verify.ts` is what checks the real one.
   process.env.WARD_X402_CATALOG = path.join(import.meta.dir, "fixtures", "x402-catalog.json");
   resetCatalog();
+  // Swap / send are switched off in production (src/agent/transfers.ts). The gate,
+  // cap and revocation suites use a swap as their variable-amount spend, so the
+  // hermetic harness turns transfers on; `test/transfers-disabled.test.ts` is what
+  // covers the production-default (off) behaviour.
+  process.env.WARD_TRANSFERS_ENABLED = "1";
   delete process.env.OPENAI_API_KEY;
   delete process.env.CDP_API_KEY_ID;
   delete process.env.ACP_MODE;
@@ -47,6 +52,7 @@ export async function hermeticTeardown(): Promise<void> {
   delete process.env.WARD_MEMORY_DIR;
   delete process.env.SIBYL_MEMORY_MODE;
   delete process.env.WARD_X402_CATALOG;
+  delete process.env.WARD_TRANSFERS_ENABLED;
   resetCatalog();
   if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   tmpDir = "";

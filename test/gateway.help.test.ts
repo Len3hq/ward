@@ -127,12 +127,10 @@ describe("the phrases the help promises", () => {
   const promised: Array<[string, IntentAction, string]> = [
     ["what's the risk score for PEPE", "x402_data_purchase", "risk score for PEPE"],
     ["hire an agent to assess AERO", "acp_job", "hire an agent to assess AERO"],
-    ["swap $20 of USDC into ETH", "swap", "swap $20 of USDC into ETH"],
-    // The help shows an elided address, so only the leading words are quoted.
-    ["send $10 to 0x4200000000000000000000000000000000000006", "send", "send $10 to 0x"],
+    // swap / send are disabled — the help no longer promises them.
     ["generate my wallet", "generate_wallet", "generate my wallet"],
     ["grant a $50 daily permission", "grant_permission", "grant a $50 daily permission"],
-    ["pause swaps", "revoke", "pause swaps"],
+    ["pause data purchases", "revoke", "pause data purchases"],
     ["revoke my permission", "revoke", "revoke my permission"],
     ["what's my balance?", "balance", "what's my balance?"],
   ];
@@ -212,7 +210,7 @@ describe("the welcome names the other ways in", () => {
     expect(text).toMatch(/revocable/i);
     expect(text).toMatch(/remember/i);
     // And it still says what Ward does, in words someone could repeat back.
-    expect(text).toContain("swap $20 of USDC into ETH");
+    expect(text).toContain("Buy on-chain data");
   });
 
   test("the risk-tolerance question stays the last thing asked", () => {

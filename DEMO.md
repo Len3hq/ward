@@ -66,7 +66,7 @@ ward: Deleted. I have no authorization on file for you any more, so I won't move
 Then, the same request as before:
 
 ```
-you: swap $20 usdc for eth
+you: get me a risk score on PEPE
 ward: I have no authorization on file for you in Sibyl Memory, so I won't move any
       funds — not even within what the chain would allow. Say "set me up" …
 ```
@@ -87,8 +87,8 @@ ward: Wallet generated on base-sepolia. Your smart account: 0x… Agent spender:
 you: grant a $100 daily permission
 ward: Grant an on-chain spend permission: $100 USDC per day, spender 0x….
       This is a transaction on base-sepolia and costs gas.
-      It lets me move up to that much USDC without asking again — swaps, x402 data
-      and ACP hires all draw on it. Confirm? (yes / no)
+      It lets me move up to that much USDC without asking again — x402 data and ACP
+      hires draw on it. Confirm? (yes / no)
 you: yes
 ward: Granted an on-chain spend permission: $100 USDC per 1 day … tx 0x…
       I now act within min(your $100 memory cap, this $100 on-chain allowance).
@@ -125,22 +125,24 @@ ward: Paid $0.05 for "Token Risk Score". https://sepolia.basescan.org/tx/0x…
 
 Open the tx. Say: _the spend just went on the same ledger as everything else._
 
-## Beat 5 — one capped swap on Base (≈30s)
+## Beat 5 — the shared ledger (≈25s)
+
+A second purchase, a different endpoint — to show the running total, not the price:
 
 ```
-you: swap $40 usdc for eth
-ward: Swap $40 USDC → ETH. $0.05 of your $100 daily cap used, $99.95 left;
-      on-chain allowance $99.95 remaining. Confirm?
+you: what are whales doing in AERO
+ward: Buy "Whale Flows" (~$0.001). $0.05 of your $100 daily cap used … Confirm?
 you: yes
-ward: Swapped $40 USDC → ETH (~0.011 ETH). https://sepolia.basescan.org/tx/0x…
+ward: Paid $0.001 for "Whale Flows". https://sepolia.basescan.org/tx/0x…
 ```
 
-Then hit a limit on camera:
+Say: _every action type — data, hires — sums into one number against one cap. The
+per-action and daily limits are enforced the same way on all of them
+([`test/daily-cap.test.ts`](../test/daily-cap.test.ts))._
 
-```
-you: swap $70 usdc for eth
-ward: That's $70, over your $50 per-action limit. Lower the amount, or raise the cap.
-```
+> Swap and USDC transfer are built but switched off right now
+> ([`src/agent/transfers.ts`](../src/agent/transfers.ts)) — a `swap …` request is
+> declined and neither shows up in `/start`. Don't demo them.
 
 ## Beat 5b — the same cap, from a different app (≈35s) — THE multi-channel moment
 
@@ -171,16 +173,17 @@ _it tells the original account, so a stolen link can't be used quietly._
 > `/link` for a code and redeem it with `/link WARD-4K7M-2XQP` in the Discord DM.
 > Same result, one more step on camera.
 
-Now, still on Discord, ask for more than what Beat 5 left:
+Now, still on Discord, ask what you're allowed to do:
 
 ```
-you:  swap $70 usdc for eth
-ward: Can't do that — that would take you past your $100 daily cap ($40.05 used,
-      $59.95 left).
+you:  what am I allowed to do?
+ward: Risk profile: moderate · Caps: $50 per action · $100 per day
+      Spent today: $0.05 of $100 — the two purchases you made on Telegram.
 ```
 
-Say: _I never told Discord my limits. It read the same record. A second app is not a
-second allowance._
+Say: _I never told Discord my limits or my spend history. It read the same record.
+A second app is not a second allowance — one cap, one ledger._ (For a breach on
+camera, onboard with a `$1` daily cap so a third purchase is refused here.)
 
 Optionally revoke here and switch back to Telegram to show it refuse — the same point
 as Beat 6, made across two apps.
@@ -235,8 +238,8 @@ it ended the moment you said so.
 you: revoke my permission, I'm done for the day
 ward: Revoked your spend permission and paused every spend action.
       On-chain revocation tx 0x… I can't move funds until you grant a new permission.
-you: swap $10 usdc for eth
-ward: You've paused swap. I won't do that until you lift the pause.
+you: get me a risk score on PEPE
+ward: You've paused data purchases. I won't do that until you lift the pause.
 ```
 
 Open the revoke tx. Say: _revoke on-chain, the agent can't spend — instantly,

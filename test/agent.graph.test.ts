@@ -27,6 +27,9 @@ beforeEach(async () => {
   process.env.WARD_MEMORY_DIR = dir;
   process.env.SIBYL_MEMORY_MODE = "fs";
   process.env.TELEGRAM_BOT_TOKEN = "test-token";
+  // Swap is this file's variable-amount spend; transfers are off by default in prod
+  // (src/agent/transfers.ts), so turn them on here. See test/transfers-disabled.test.ts.
+  process.env.WARD_TRANSFERS_ENABLED = "1";
   delete process.env.OPENAI_API_KEY;
   delete process.env.CDP_API_KEY_ID;
   delete process.env.ACP_MODE;
@@ -41,6 +44,7 @@ afterEach(async () => {
   resetAcpProvider();
   delete process.env.WARD_MEMORY_DIR;
   delete process.env.SIBYL_MEMORY_MODE;
+  delete process.env.WARD_TRANSFERS_ENABLED;
   await rm(dir, { recursive: true, force: true });
 });
 

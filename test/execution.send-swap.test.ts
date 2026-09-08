@@ -13,6 +13,10 @@ import { hermeticSetup, hermeticTeardown, walletCalls } from "./support.ts";
  * shared agent spender and never forwarded, so Ward reported a completed swap while
  * the user's smart account held nothing new. A swap is not done until the proceeds
  * are the user's.
+ *
+ * Swap / send are switched off in production (`src/agent/transfers.ts`); this file
+ * keeps the dormant execution path honest. `hermeticSetup` enables transfers, so
+ * these run — see `test/transfers-disabled.test.ts` for the shipped (off) behaviour.
  */
 
 const TG = "700100200";

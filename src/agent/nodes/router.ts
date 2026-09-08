@@ -3,6 +3,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { read } from "../../../memory/index.ts";
 import { isBareAnswer } from "../../gateway/answers.ts";
 import { SPEND_ACTIONS, type IntentAction } from "../intent.ts";
+import { transfersEnabled } from "../transfers.ts";
 import type { Route, WardStateType } from "../state.ts";
 
 const WALLET_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
@@ -11,6 +12,13 @@ const WALLET_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
   "revoke",
   "balance",
 ]);
+
+/**
+ * Recognised, but switched off unless `transfersEnabled()` — the on-chain swap /
+ * send paths are not reliable yet. While off, these route to `refuse`, which gives
+ * them a specific neutral decline (see `nodes/refuse.ts`).
+ */
+const TRANSFER_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>(["swap", "send"]);
 
 /**
  * Decides the turn's path from Sibyl Memory + the parsed intent:
@@ -44,6 +52,9 @@ export async function routerNode(state: WardStateType): Promise<Partial<WardStat
       return { route: "confirm" satisfies Route };
     }
 
+    if (intent && !transfersEnabled() && TRANSFER_ACTIONS.has(intent.action_type)) {
+      return { route: "refuse" satisfies Route };
+    }
     if (intent && SPEND_ACTIONS.has(intent.action_type)) {
       return { route: "confirm" satisfies Route };
     }

@@ -1,6 +1,6 @@
 # Ward — 5-minute demo video transcript
 
-**Format:** voiceover (VO) + on-screen action (SCREEN). Target 5:00. ~760 spoken words.
+**Format:** voiceover (VO) + on-screen action (SCREEN). Target 5:00. ~790 spoken words.
 Two terminals + Telegram visible. A clock/timestamp overlay is on-screen for the
 fresh-session beat.
 
@@ -10,39 +10,33 @@ fresh-session beat.
 
 ---
 
-## 0:00 – 0:40 · The problem, and who has it
+## 0:00 – 0:45 · The problem, and who has it
 
-**SCREEN:** Title card — "Ward". Then a scroll through a couple of real
-agent-trading forum threads (redacted), the phrase _"but the bot has my keys"_
-highlighted.
+**SCREEN:** Title card — "Ward". Then two panels side by side, each marked with a red
+✗: on the left, a wallet prompt reading _"Approve unlimited USDC"_; on the right, a
+stack of _"Approve this transaction?"_ pop-ups. Caption underneath: _"Your two
+options today."_
 
 **VO:**
-"If you've looked at letting an AI agent trade for you, you've hit the same wall
-everyone hits: to be useful, the agent needs to spend your money — and the moment it
-can spend your money, it can spend _all_ of your money. 'The agent has my keys' is
-the objection in every one of these threads. So people don't do it. The pain isn't
-that agents are bad at trading. It's that there's no way to hand one a _limited_
-amount of authority and trust that the limit holds."
+"hello, we are the Len3 team and we built WARD.[PAUSE] Say you want an AI agent to handle some crypto for you — pay for market
+data, hire another agent to research a coin. To do any of that on its own, it has to
+be able to spend from your wallet. And today that's an all-or-nothing situation. You
+either give it unlimited access or approve every transaction by hand — in which case it isn't really acting autonomously. One prompt injection, one leaked key, one bug in a loop, and there's nothing between the agent and your entire balance. There is no way to tell an agent _spend this much and not a dollar more_ and actually trust the limit will hold. So people don't give these agents real money — and the few who do, don't sleep well."
 
 ---
 
-## 0:40 – 1:10 · The product
+## 0:45 – 1:15 · The product
 
 **SCREEN:** Ward's landing page, then the Telegram chat. Onboarding exchange types
 through: `moderate` → `50` → `100` → Ward replies _"Locked in: moderate risk, $50
 per action, $100 per day."_
 
 **VO:**
-"Ward is a personal crypto agent on Telegram whose _memory_ is the authorization
-layer. You onboard once — a risk label, a per-action limit, a daily limit. That's it.
-From then on Ward acts only inside those limits, and it can never widen them on its
-own. The limits aren't in the code. They're a record in Sibyl Memory. And that
-distinction is the whole product: delete the record, and Ward has no basis for
-authority — it refuses to move a cent, even when the blockchain would still let it."
+"Ward is a personal crypto agent whose _memory_ is the authorization layer and it exist across channels (telegram, discord and MCP) with a persistent knowledge. You onboard once — a risk label, a per-action limit, a daily limit. That's it. From then on Ward acts only inside those limits, and it can never widen them on its own. The limits aren't in the code. They're a record in Sibyl Memory. And that distinction is the whole product: delete the record, and Ward has no basis for authority — it refuses to move a cent, even when the blockchain would still let it."
 
 ---
 
-## 1:10 – 1:45 · Fresh-session recall ⏱ (clock visible)
+## 1:15 – 1:45 · Fresh-session recall ⏱ (clock visible)
 
 **SCREEN:** Point at the on-screen clock. Type `/newsession`. New empty thread.
 Then: `what am I allowed to do?`
@@ -63,14 +57,14 @@ them the same as a warm one."
 
 **SCREEN:** Terminal 2: `bun run scripts/forget-auth.ts <id>` → prints the full
 record, then `✓ Deleted. read(<id>) is now null.`
-Back in Telegram: `swap $20 usdc for eth`
+Back in Telegram: `get me a risk score on PEPE`
 Ward: _"I have no authorization on file for you in Sibyl Memory, so I won't move any
 funds — not even within what the chain would allow. Say 'set me up' to start over."_
 
 **VO:**
 "Now I delete the authorization record straight out of Sibyl Memory. Same agent, same
-wallet, still connected. I ask for a small swap — twenty dollars, well under every
-limit it had a minute ago. It refuses. Not 'I can't reach a server' — it _explains_:
+wallet, still connected. I ask for a five-cent data purchase — well under every limit
+it had a minute ago. It refuses. Not 'I can't reach a server' — it _explains_:
 there's no authorization on file, so it won't act. That's the gate. The agent's power
 is exactly the memory, and nothing else."
 
@@ -110,24 +104,23 @@ everything else Ward spends. One running total, every action type."
 
 ---
 
-## 3:30 – 4:05 · A capped swap, and a limit
+## 3:30 – 3:55 · One ledger, one cap
 
-**SCREEN:** `swap $40 usdc for eth`
-Ward: _"Swap $40 USDC → ETH. $0.05 of your $100 daily cap used, $99.95 left. Confirm?"_
-→ `yes` → tx link.
-Then: `swap $70 usdc for eth`
-Ward: _"That's $70, over your $50 per-action limit. Lower the amount, or raise the cap."_
+**SCREEN:** `what are whales doing in AERO`
+Ward: _"Buy 'Whale Flows' (~$0.001). $0.05 of your $100 daily cap used. Confirm?"_
+→ `yes` → tx link. Then: `what am I allowed to do?` → the readout now shows
+_"Spent today: $0.051 of $100."_
 
 **VO:**
-"A forty-dollar swap goes through — confirmed with the real remaining balance, read
-from memory and from chain, not guessed by the model. Then I ask for seventy in one
-shot. Over the fifty-dollar per-action limit I set at the start. Blocked before it
-ever reaches a confirmation screen. The cap I typed once, three sessions ago, is
-still the cap."
+"A second purchase, a different endpoint. Notice the daily-cap line — it already
+knows about the first one. Every action type Ward can take, data and agent hires,
+sums into a single number checked against a single cap. The per-action and daily
+limits I set at the start bind every one of them, the same way, before anything is
+confirmed."
 
 ---
 
-## 4:05 – 4:40 · Hiring another agent, and remembering the outcome
+## 3:55 – 4:40 · Hiring another agent, and remembering the outcome
 
 **SCREEN:** `hire an agent to assess WOOF`
 Ward: _"Hire agent://0x… (trust 0.72, 1 prior job) to assess WOOF for ~$0.50. Confirm?"_
@@ -146,7 +139,7 @@ picks who to hire. Memory as a reputation ledger for agent-to-agent commerce."
 
 **SCREEN:** `revoke my permission, I'm done for the day` →
 _"Revoked … on-chain revocation tx 0x… I can't move funds until you grant a new
-permission."_ Then `swap $10 usdc for eth` → _"You've paused swap."_
+permission."_ Then `get me a risk score on PEPE` → _"You've paused data purchases."_
 Cut to the deleted-record refusal from beat 3. Final card: **"The memory is the
 authorization."**
 
@@ -162,12 +155,12 @@ execute — and not one step of it works without the memory. That's Ward."
 
 | Time | Beat                     | Key on-screen proof                                           |
 | ---- | ------------------------ | ------------------------------------------------------------- |
-| 0:00 | Problem                  | real forum threads, "the bot has my keys"                     |
-| 0:40 | Product                  | onboarding: `moderate / 50 / 100`                             |
-| 1:10 | **Fresh-session recall** | visible clock · `/newsession` · caps + trust from memory      |
+| 0:00 | Problem                  | two-panel ✗: "Approve unlimited USDC" vs endless approval pop-ups |
+| 0:45 | Product                  | onboarding: `moderate / 50 / 100`                             |
+| 1:15 | **Fresh-session recall** | visible clock · `/newsession` · caps + trust from memory      |
 | 1:45 | Deletion refusal         | `forget-auth.ts` → `read() is now null` → refusal with reason |
 | 2:25 | Grant                    | basescan tx · `min(memory cap, on-chain allowance)`           |
 | 2:55 | x402                     | basescan tx · "same ledger"                                   |
-| 3:30 | Swap + limit             | basescan tx · `$70 over your $50 per-action limit`            |
-| 4:05 | ACP hire                 | `trust 0.72 → 0.78` write-back                                |
-| 4:40 | Close                    | on-chain revoke tx · paused-swap refusal                      |
+| 3:30 | One ledger, one cap      | 2nd purchase · `Spent today: $0.051 of $100` carries across   |
+| 3:55 | ACP hire                 | `trust 0.72 → 0.78` write-back                                |
+| 4:40 | Close                    | on-chain revoke tx · paused-purchase refusal                  |

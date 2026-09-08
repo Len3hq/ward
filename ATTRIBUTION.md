@@ -43,7 +43,7 @@ Design references that informed new code with nothing carried over:
 - **Sibyl Memory** — `sibyl-memory-cli`, `sibyl-memory-mcp`, `sibyl-memory-client`.
   The persistence layer, used over MCP as an external dependency. See
   [SIBYL-MEMORY.md](./SIBYL-MEMORY.md).
-- **Coinbase CDP** — `@coinbase/cdp-sdk` (wallets, Spend Permissions, swaps).
+- **Coinbase CDP** — `@coinbase/cdp-sdk` (wallets, Spend Permissions).
 - **x402** — `x402`, `x402-fetch`.
 - **Virtuals ACP** — `@virtuals-protocol/acp-node-v2` (loaded only for the real
   counterparty spike). See [ACP.md](./ACP.md).

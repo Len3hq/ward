@@ -26,7 +26,7 @@ hire an agent to assess PEPE
   → evaluateGate(acp_job, budget)      same gate as every spend
   → provider.hire(...)                 job: created → escrowed → fulfilled → paid
   → validateExternalData(result)       counterparty output is UNTRUSTED
-  → appendSpend(acp_job, …)            one ledger with swap + x402
+  → appendSpend(acp_job, …)            one ledger, shared with x402
   → appendAcpJob({ …, trust_delta })   WRITE the outcome
   → next hire reads the re-derived trustScore and narrates it
 ```
@@ -43,7 +43,7 @@ bun run scripts/seed-acp.ts <telegram_id>
 ## Who pays
 
 An ACP job is **the user's spend, from the user's wallet** — the same money path
-as a swap or an x402 purchase, not a Ward-funded perk:
+as an x402 purchase, not a Ward-funded perk:
 
 ```
 evaluateGate(acp_job, budget)              memory cap ∧ on-chain allowance

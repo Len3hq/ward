@@ -194,6 +194,9 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
       };
     }
 
+    // NOTE: the "swap" and "send" branches are currently unreachable — both actions
+    // are disabled at `src/agent/nodes/router.ts` (DISABLED_ACTIONS) and cannot be
+    // put on an MCP grant. Kept intact so re-enabling is a routing change only.
     if (request.actionType === "swap") {
       // No defaulting: a pair that cannot be honoured is refused, never guessed at.
       // `"ETH"` alone used to become sell ETH → buy ETH, and selling anything but

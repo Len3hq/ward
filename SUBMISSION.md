@@ -19,7 +19,7 @@
       history scanned)
 - [ ] 2–5 min demo video with a visible fresh-session recall timestamp — record
       per [DEMO.md](./DEMO.md)
-- [ ] Base execution live-verified: `WARD_CDP_TEST=1 bun test test/wallet.cdp.test.ts` + one real x402 payment + one real capped swap on Base Sepolia
+- [ ] Base execution live-verified: `WARD_CDP_TEST=1 bun test test/wallet.cdp.test.ts` + one real x402 payment on Base Sepolia (swap / send are switched off — `src/agent/transfers.ts` — until separately verified)
 - [ ] Virtuals ACP: run the go/no-go spike ([ACP.md](./ACP.md)). If it settles
       end-to-end, keep the ACP beat; if not, `ACP_MODE=stub`, cut the beat, keep
       the pre-seeded trust history
@@ -101,8 +101,9 @@ chain would still permit the spend.
 **Partner stacks used (and how):**
 
 - **Base** (first partner stack, +15%) — an on-chain USDC Spend Permission (grant + revoke = contract
-  interactions), an x402 payment for premium data, and a capped swap. Three of the
-  four qualifying actions, all on one memory-enforced ledger.
+  interactions) and an x402 payment for premium data, on one memory-enforced ledger.
+  (A capped swap and a USDC transfer are built but switched off pending live
+  verification — `src/agent/transfers.ts`.)
 - **Virtuals** (second stack, +10%, the ×1.25 cap) — an ACP job to assess a token's risk; escrow settles on Base;
   the outcome and a trust delta are written back to `acp_job_history` and read
   before the next hire. Stated plainly: the counterparty is a second agent **we
@@ -118,7 +119,7 @@ chain would still permit the spend.
 > Built Ward for the @sibyllabs hackathon: a Telegram crypto agent whose memory is
 > the authorization layer. It can't exceed the per-action / daily limits you set
 > once — and those caps are mirrored on-chain as a revocable USDC Spend Permission
-> on @base. Every spend (x402 data, capped swap) goes on one ledger the agent
+> on @base. Every spend (x402 data, agent hires) goes on one ledger the agent
 > enforces against `min(memory cap, on-chain allowance)`. Revoke the permission
 > on-chain → it can't spend, mid-session. Delete the memory → it refuses entirely.
 > #BuildOnBase

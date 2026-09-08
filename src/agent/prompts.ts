@@ -34,16 +34,18 @@ export const BASE_SYSTEM = `You are ${BRAND.name}, a personal crypto agent on Ba
 Money movement. You never execute these yourself. You name the phrase that starts
 one; Ward then checks it against the caps in Sibyl Memory and the on-chain allowance
 and shows the user a confirmation with the real numbers.
-  · Swap tokens on Base — "swap $20 of USDC into ETH"
-  · Send USDC to any Base address — "send $10 to 0x…"
   · Buy premium on-chain data over x402 — "what's the risk score for PEPE".
     Call \`discover_x402_endpoints\` for what is actually for sale and what it costs.
   · Hire an agent on Virtuals ACP to assess a token — "hire an agent to assess PEPE"
 
+You do NOT swap or send tokens between wallets. If the user asks for a swap or a
+transfer, say that isn't something you can do right now, and point them at what you
+can — on-chain data, hiring an agent, and managing their wallet and limits.
+
 Wallet and authority:
   · Generate the user's Coinbase CDP smart account — "generate my wallet"
   · Grant a revocable on-chain USDC spend permission — "grant a $50 daily permission"
-  · Pause one action type, or revoke the permission on-chain — "pause swaps", "revoke my permission"
+  · Pause one action type, or revoke the permission on-chain — "pause data purchases", "revoke my permission"
   · Caps, spent-so-far, wallet status, counterparty trust — \`read_authorization\`
   · Live on-chain USDC and ETH — \`read_wallet_balance\`
   · What has actually been spent, bought and hired — \`recent_activity\`
@@ -101,7 +103,7 @@ export const ONBOARDING_ORDER: readonly OnboardingField[] = [
 
 export const ONBOARDING_QUESTIONS: Record<OnboardingField, string> = {
   risk_label:
-    "Let's set your authorization. First — how would you describe your risk tolerance for autonomous trades: conservative, moderate, or aggressive?",
+    "Let's set your authorization. First — how would you describe your risk tolerance for autonomous spending: conservative, moderate, or aggressive?",
   per_action_limit_usd:
     "What's the most I should ever move in a single action, in USD? (for example: 50)",
   daily_limit_usd: "And the most in a single day, across every action combined? (for example: 100)",

@@ -88,20 +88,18 @@ async function grant(args: string): Promise<string> {
 describe("parsing", () => {
   test("accepts the short aliases people actually type", () => {
     expect(parseActionTypes("x402")).toEqual(["x402_data_purchase"]);
-    expect(parseActionTypes("swap,acp")).toEqual(["swap", "acp_job"]);
-    expect(parseActionTypes("send")).toEqual(["send"]);
-    expect(parseActionTypes("all")?.sort()).toEqual([
-      "acp_job",
-      "send",
-      "swap",
-      "x402_data_purchase",
-    ]);
+    expect(parseActionTypes("data,acp")).toEqual(["x402_data_purchase", "acp_job"]);
+    expect(parseActionTypes("hire")).toEqual(["acp_job"]);
+    expect(parseActionTypes("all")?.sort()).toEqual(["acp_job", "x402_data_purchase"]);
   });
 
   test("refuses what it does not understand rather than guessing", () => {
     expect(parseActionTypes("everything")).toBeNull();
     expect(parseActionTypes("")).toBeNull();
     expect(parseActionTypes("x402,nonsense")).toBeNull();
+    // swap / send are disabled — not grantable to a client either.
+    expect(parseActionTypes("swap")).toBeNull();
+    expect(parseActionTypes("send")).toBeNull();
   });
 });
 

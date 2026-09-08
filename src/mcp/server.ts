@@ -322,7 +322,7 @@ export function createMcpServer(
           .min(3)
           .max(500)
           .describe(
-            'What to propose, phrased as the user would say it, e.g. "swap $20 USDC for ETH"',
+            'What to propose, phrased as the user would say it, e.g. "get me a risk score on PEPE"',
           ),
       },
     },

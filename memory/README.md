@@ -65,15 +65,15 @@ opaque JSON documents. Swapping storage never touches `store.ts`.
     // append-only; sum current-UTC-day rows for the daily cap
     {
       "ts": "2026-09-05T14:02:11.000Z",
-      "amount_usd": 30,
-      "action_type": "swap",
+      "amount_usd": 0.05,
+      "action_type": "x402_data_purchase",
       "tx_hash": "0x…",
       "idempotency_key": "…",
     },
   ],
   "revocation_log": [
     // append-only; checked fresh before every action
-    { "ts": "2026-09-05T16:00:00.000Z", "action_type": "swap", "reason": "user paused trading" },
+    { "ts": "2026-09-05T16:00:00.000Z", "action_type": "x402_data_purchase", "reason": "user paused data purchases" },
   ],
   "acp_job_history": [
     // append-only; appended after every ACP job resolves
@@ -88,8 +88,10 @@ opaque JSON documents. Swapping storage never touches `store.ts`.
 }
 ```
 
-`action_type` ∈ `swap` | `x402_data_purchase` | `acp_job` — one enum for the spend
-ledger and the revocation log.
+`action_type` ∈ `swap` | `send` | `x402_data_purchase` | `acp_job` — one enum for the
+spend ledger and the revocation log. `swap` / `send` remain in the enum (stored rows
+may carry them) but are switched off at the routing layer — see
+[`../src/agent/transfers.ts`](../src/agent/transfers.ts).
 
 **No `trust_score` is stored.** It is derived from `acp_job_history` on every read
 (`trustScore()` / `computeTrustScore()`). Persisting it would let a hand-edited

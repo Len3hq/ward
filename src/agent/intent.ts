@@ -23,7 +23,13 @@ export const INTENT_ACTIONS = [
 ] as const;
 export type IntentAction = (typeof INTENT_ACTIONS)[number];
 
-/** Actions that move money and therefore need the confirmation + gate. */
+/**
+ * Actions that move money and therefore need the confirmation + gate.
+ *
+ * `swap` and `send` are listed, but currently switched off one layer up — see
+ * `src/agent/transfers.ts`. `routerNode` diverts them to a neutral decline before
+ * this set is consulted while transfers are disabled.
+ */
 export const SPEND_ACTIONS: ReadonlySet<IntentAction> = new Set<IntentAction>([
   "swap",
   "send",

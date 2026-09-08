@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
+import { transfersEnabled } from "../agent/transfers.ts";
 import {
-  ACTION_TYPES,
   appendJournalEvent,
   forgetMcpGrant,
   read,
@@ -43,6 +43,17 @@ export const CONFIRM_TTL_MS = 5 * 60 * 1000;
  */
 export function tokenRef(tokenHash: string): string {
   return tokenHash.slice(0, 8);
+}
+
+/**
+ * The action types a grant may cover. While `transfersEnabled()` is false, `swap` /
+ * `send` are excluded — a client cannot be granted an action a human cannot trigger
+ * either (see `src/agent/transfers.ts`).
+ */
+function grantableActions(): readonly ActionType[] {
+  return transfersEnabled()
+    ? ["x402_data_purchase", "acp_job", "swap", "send"]
+    : ["x402_data_purchase", "acp_job"];
 }
 
 /** Short aliases, because `x402_data_purchase` is not a thing anyone types twice. */
@@ -87,8 +98,11 @@ export function usd(amount: number): string {
   return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
 }
 
-/** The words a user may type for actions, in the order the help lists them. */
-export const ACTION_WORDS = "data, swap, send, hire";
+/**
+ * The words a user may type for actions, in the order the help lists them.
+ * `swap, send` are omitted while transfers are off (see `src/agent/transfers.ts`).
+ */
+export const ACTION_WORDS = "data, hire";
 
 export function parseActionTypes(input: string): ActionType[] | null {
   const parts = input
@@ -97,14 +111,17 @@ export function parseActionTypes(input: string): ActionType[] | null {
     .filter(Boolean);
   if (parts.length === 0) return null;
 
+  const grantable = new Set<ActionType>(grantableActions());
   const out = new Set<ActionType>();
   for (const part of parts) {
     if (part === "all") {
-      for (const a of ACTION_TYPES) out.add(a);
+      for (const a of grantable) out.add(a);
       continue;
     }
     const mapped = ALIASES[part];
-    if (!mapped) return null;
+    // An unknown word, or an action that is not currently grantable (swap / send
+    // while transfers are off), is refused rather than silently dropped.
+    if (!mapped || !grantable.has(mapped)) return null;
     out.add(mapped);
   }
   return [...out];

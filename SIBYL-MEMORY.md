@@ -77,11 +77,11 @@ If a call breaks, fix only the `TOOL` map + arg keys in `sibyl-mcp.ts`.
 
 The eligibility test runs against this layer:
 
-1. Onboard a user → the `ward.authorization/<id>` entity exists → a swap request
-   succeeds.
+1. Onboard a user → the `ward.authorization/<id>` entity exists → a spend request
+   (an x402 data purchase) succeeds.
 2. `memory_forget` that entity (or wipe `~/.sibyl-memory/memory.db`).
-3. The same swap request → `read()` returns `null` → the agent refuses and
-   explains why. No transaction is broadcast.
+3. The same request → `read()` returns `null` → the agent refuses and explains why.
+   No transaction is broadcast.
 
 `test/memory.sibyl-mcp.test.ts` covers step 1→3 at the store level today;
 `deletion-gate.test.ts` + `scripts/demo-deletion.sh` (Phase 7) do it on the
