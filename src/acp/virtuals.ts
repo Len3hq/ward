@@ -260,6 +260,16 @@ export class VirtualsAcpProvider implements AcpProvider {
       /** The counterparty's raw output, captured off `job.submitted`. */
       let deliverable: string | null = null;
 
+      /**
+       * The on-chain transfer that funded this job's escrow, when there was one.
+       *
+       * The receipt used to end at "job completed" with no way to check it, because
+       * the SDK settles escrow internally and hands back no hash. This is the hash
+       * Ward does hold: its own USDC transfer to the address escrow draws on, same
+       * chain and same money, which is what makes the spend verifiable at all.
+       */
+      let fundingTx: string | null = null;
+
       const settled = await new Promise<AcpJobResult>((resolve) => {
         let done = false;
         const finish = (result: AcpJobResult) => {
@@ -318,7 +328,10 @@ export class VirtualsAcpProvider implements AcpProvider {
               ({ pulledUsd } = await wallet.fundAgentFromUser(accountKey, asked));
               const spender = (await wallet.connect(accountKey)).agentSpender;
               if (spender.toLowerCase() !== buyerAddress.toLowerCase()) {
-                await wallet.transferUsdcFromSpender(buyerAddress, pulledUsd);
+                ({ txHash: fundingTx } = await wallet.transferUsdcFromSpender(
+                  buyerAddress,
+                  pulledUsd,
+                ));
               }
               await session.fund(); // draws `funded`, which the gate already capped at `budget`
             } else if (entry.event.type === "job.submitted") {
@@ -340,6 +353,11 @@ export class VirtualsAcpProvider implements AcpProvider {
                 // What the job actually cost, not the ceiling — this is the number
                 // that reaches the spend ledger and the user's daily cap.
                 amountUsd: funded || budget,
+                // Both were already known here and both were dropped on the floor:
+                // the ledger recorded `tx_hash: "0x"` for every hire, and the reply
+                // named neither the job nor a transaction anyone could look up.
+                ...(fundingTx === null ? {} : { txHash: fundingTx }),
+                ...(ourJobId === null ? {} : { jobId: ourJobId }),
               });
               await agent.stop();
             } else if (entry.event.type === "job.rejected" || entry.event.type === "job.expired") {

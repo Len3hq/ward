@@ -126,7 +126,14 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
    */
   registerChannel("telegram", {
     async notify(accountId, text) {
-      await bot.telegram.sendMessage(accountId, text);
+      // Rendered, like every other finished message. These are not fragments: a spend
+      // announcement carries the same receipt the conversation shows, links included,
+      // and sending it plain printed the markdown at the user instead of formatting
+      // it. Discord needs no equivalent — markdown is native there.
+      await bot.telegram.sendMessage(accountId, render(text), {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
     },
     async adapterFor(accountId) {
       // In a DM the chat id and the user id are the same, so an account id is
@@ -156,7 +163,12 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       args: payload.length > 0,
     });
     if (payload.length === 0) {
-      await ctx.reply(welcome("telegram"));
+      // Rendered, not plain: the welcome is markdown, and sending it raw is what put
+      // literal asterisks on the first screen anyone sees.
+      await ctx.reply(render(welcome("telegram")), {
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      });
       return;
     }
 

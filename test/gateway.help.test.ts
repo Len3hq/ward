@@ -8,6 +8,7 @@ import { type IntentAction, parseIntent } from "../src/agent/intent.ts";
 
 import { BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION, HELP, welcome } from "../src/gateway/help.ts";
 import { BOT_COMMANDS, isIdentityCommand, resolveCommand } from "../src/gateway/commands.ts";
+import { render } from "../src/telegram/gateway.ts";
 import { publishProfile } from "../src/telegram/gateway.ts";
 
 /**
@@ -171,6 +172,47 @@ describe("the welcome names the other ways in", () => {
     expect(text).toContain("/link_telegram");
     expect(text).toContain("Claude Code or Cursor");
     expect(text).not.toContain("/link_discord");
+  });
+
+  /**
+   * The welcome is markdown now, and Telegram only renders markup when the reply asks
+   * for HTML. Sent plain, the first screen anyone sees is full of literal asterisks.
+   */
+  test("Telegram sends the welcome rendered, not raw", () => {
+    const source = readFileSync("src/telegram/gateway.ts", "utf8");
+    expect(source).toMatch(/render\(welcome\("telegram"\)\)/);
+    expect(source).toMatch(/parse_mode: "HTML"/);
+  });
+
+  test("it survives the markdown-to-HTML pass with its emphasis intact", () => {
+    const html = render(welcome("telegram"));
+    expect(html).toContain("<b>Ward</b>");
+    expect(html).toContain("<b>What I can do</b>");
+    // Nothing may be left for Telegram to show as literal markup.
+    expect(html).not.toContain("**");
+  });
+
+  /**
+   * Telegram links a bare `/command` into something you tap to run. Wrapping one in
+   * backticks turns it into a `<code>` span — copyable and inert — on the one screen
+   * whose whole job is getting a new user to the next step.
+   */
+  test("the commands it names stay tappable", () => {
+    for (const channel of ["telegram", "discord"] as const) {
+      const html = render(welcome(channel));
+      expect(html).toContain("/link_mcp");
+      expect(html).not.toMatch(/<code>\/[a-z_]+<\/code>/);
+    }
+  });
+
+  test("it makes the case before it asks the question", () => {
+    const text = welcome("telegram");
+    // The three things that are actually unusual here.
+    expect(text).toContain("Sibyl Memory");
+    expect(text).toMatch(/revocable/i);
+    expect(text).toMatch(/remember/i);
+    // And it still says what Ward does, in words someone could repeat back.
+    expect(text).toContain("swap $20 of USDC into ETH");
   });
 
   test("the risk-tolerance question stays the last thing asked", () => {

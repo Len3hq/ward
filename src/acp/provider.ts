@@ -54,8 +54,22 @@ export interface AcpJobResult {
   rawResult: unknown;
   /** true only when the job settled end-to-end. */
   settled: boolean;
-  /** Escrow settlement tx on Base. */
+  /**
+   * The on-chain USDC movement this job caused, on Base.
+   *
+   * Escrow itself settles inside the SDK, which does not hand back a hash — what Ward
+   * can prove is the transfer it made to fund that escrow, and that is a real
+   * transaction on the same chain for the same money. Absent when nothing moved, or
+   * when the funding path did not need a transfer.
+   */
   txHash?: string;
+  /**
+   * The ACP job id — the marketplace's own handle for this hire, and the number the
+   * counterparty, the escrow contract and Virtuals all key it by.
+   *
+   * Carried so the receipt can name the job even when there is no transfer to link.
+   */
+  jobId?: string;
   amountUsd: number;
 }
 

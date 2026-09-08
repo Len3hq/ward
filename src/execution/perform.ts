@@ -11,7 +11,7 @@ import { loadConfig } from "../config.ts";
 import { log, logError } from "../log.ts";
 import { walletProvider } from "../wallet/index.ts";
 import { runAcpJob } from "./acp.ts";
-import { txUrl } from "./explorer.ts";
+import { txLink } from "./explorer.ts";
 import { evaluateGate } from "./gate.ts";
 import { resolveSwapPair } from "./swap.ts";
 
@@ -187,7 +187,10 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         ok: true,
         txHash: result.txHash,
         amountUsd: result.amountUsd,
-        message: `Paid $${result.amountUsd} for "${endpoint.name}". ${txUrl(result.txHash, network)}\n\n${preview(result.data)}`,
+        message:
+          [`Paid $${result.amountUsd} for "${endpoint.name}".`, txLink(result.txHash, network)]
+            .filter(Boolean)
+            .join(" ") + `\n\n${preview(result.data)}`,
       };
     }
 
@@ -214,7 +217,7 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
       // output is still sitting in the agent spender is not a completed swap, and
       // reporting it as one would be the most misleading thing Ward could say.
       const landed = result.sweepTx
-        ? `Sent to your smart account: ${txUrl(result.sweepTx, network)}`
+        ? `Sent to your smart account. ${txLink(result.sweepTx, network, "View the transfer")}`
         : "⚠️ The bought token could not be moved to your smart account — it is still " +
           "held by the agent spender. Nothing further will happen automatically.";
       log("spend.ok", {
@@ -231,8 +234,13 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         txHash: result.txHash,
         amountUsd: result.sellUsd,
         message:
-          `Swapped $${result.sellUsd} ${sell.toUpperCase()} → ${buy.toUpperCase()} ` +
-          `(${result.buyDisplay}). ${txUrl(result.txHash, network)}\n${landed}`,
+          [
+            `Swapped $${result.sellUsd} ${sell.toUpperCase()} → ${buy.toUpperCase()} ` +
+              `(${result.buyDisplay}).`,
+            txLink(result.txHash, network, "View the swap"),
+          ]
+            .filter(Boolean)
+            .join(" ") + `\n${landed}`,
       };
     }
 
@@ -264,7 +272,9 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
         ok: true,
         txHash: result.txHash,
         amountUsd: result.amountUsd,
-        message: `Sent $${result.amountUsd} USDC to ${to}. ${txUrl(result.txHash, network)}`,
+        message: [`Sent $${result.amountUsd} USDC to ${to}.`, txLink(result.txHash, network)]
+          .filter(Boolean)
+          .join(" "),
       };
     }
 
@@ -279,7 +289,10 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
       });
       return {
         ok: run.ok,
-        txHash: "0x",
+        // Was hardcoded to the placeholder, so a hire's outcome carried no hash even
+        // once one existed. `runAcpJob` returns the funding transfer when there was
+        // one; the placeholder stays only for the case where nothing moved on chain.
+        txHash: run.txHash ?? "0x",
         amountUsd: request.amountUsd,
         message: run.message,
       } as SpendOutcome;

@@ -1,4 +1,6 @@
 import { appendAcpJob, appendSpend, trustScore } from "../../memory/index.ts";
+import { loadConfig } from "../config.ts";
+import { txLink } from "./explorer.ts";
 import { acpProvider, jobTrustDelta } from "../acp/index.ts";
 import { validateExternalData } from "../agent/guardrails.ts";
 import { renderAcpReport } from "./acp-report.ts";
@@ -30,6 +32,10 @@ export interface AcpRunOutput {
   counterpartyId: string;
   trustBefore: number;
   trustAfter: number;
+  /** The on-chain transfer that funded escrow, when there was one. */
+  txHash?: string;
+  /** The ACP job id, for the receipt. */
+  jobId?: string;
 }
 
 /** How many of the directory's listings to weigh before choosing. */
@@ -126,6 +132,17 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
   // rendered as data, never interpreted, and `validated.flagged` still warns.
   const report = result.settled ? renderAcpReport(result.rawResult) : null;
 
+  // What the user can check for themselves. The job id is the marketplace's handle
+  // for the hire and the transfer is the money leaving their wallet — a receipt that
+  // names neither is a claim the user has no way to verify.
+  const network = loadConfig().baseNetwork;
+  const receipt = [
+    result.jobId === undefined ? "" : `ACP job ${result.jobId}.`,
+    txLink(result.txHash, network, "View the escrow transaction"),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   const message = result.settled
     ? [
         `Hired ${result.counterpartyId} to assess ${input.subject}.`,
@@ -133,6 +150,7 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
         report ?? "",
         validated.flagged ? "(the result failed input validation — treat it with caution)" : "",
         `Trust in this counterparty: ${trustBefore.toFixed(2)} → ${trustAfter.toFixed(2)}.`,
+        receipt,
       ]
         .filter(Boolean)
         .join("\n")
@@ -147,5 +165,7 @@ export async function runAcpJob(input: AcpRunInput): Promise<AcpRunOutput> {
     counterpartyId: result.counterpartyId,
     trustBefore,
     trustAfter,
+    ...(result.txHash === undefined ? {} : { txHash: result.txHash }),
+    ...(result.jobId === undefined ? {} : { jobId: result.jobId }),
   };
 }

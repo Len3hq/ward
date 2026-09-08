@@ -27,7 +27,7 @@ export class StubAcpProvider implements AcpProvider {
     return [{ id: COUNTERPARTY, name: "simulated token-risk seller" }];
   }
 
-  async hire(accountKey: string | null, job: AcpJobRequest): Promise<AcpJobResult> {
+  async hire(_accountKey: string | null, job: AcpJobRequest): Promise<AcpJobResult> {
     this.calls.push("hire");
     // A deterministic, plausible token-risk assessment.
     const seed = parseInt(createHash("sha256").update(job.subject).digest("hex").slice(0, 8), 16);
@@ -50,7 +50,10 @@ export class StubAcpProvider implements AcpProvider {
       outcomeSummary: `risk ${rawResult.band} (${score}/100)${flags.length ? `, flags: ${flags.join("; ")}` : ""}`,
       rawResult,
       settled: true,
-      txHash: `0x${createHash("sha256").update(`acp-${accountKey}-${job.subject}-${Date.now()}`).digest("hex")}`,
+      // No `txHash`, deliberately. It used to return a well-formed sha256 that looked
+      // exactly like a Base transaction and referred to nothing — harmless while it
+      // only reached the ledger, and dishonest the moment receipts started linking
+      // hashes to Basescan. The simulation moves no money, so it has no transaction.
       amountUsd: job.maxUsd,
     };
   }

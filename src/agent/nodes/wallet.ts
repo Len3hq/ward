@@ -9,6 +9,8 @@ import {
   writeWallet,
   type ActionType,
 } from "../../../memory/index.ts";
+import { loadConfig } from "../../config.ts";
+import { txLink } from "../../execution/explorer.ts";
 import { balanceReport } from "../../wallet/balances.ts";
 import { walletProvider } from "../../wallet/index.ts";
 import type { RevokeScope } from "../intent.ts";
@@ -178,7 +180,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
 
   if (scope === "permission") {
     const wallet = await readWallet(state.userId);
-    let txLine = "";
+    let txNote = "";
     if (wallet?.spend_permission && wallet.spend_permission.status === "active") {
       try {
         const { txHash } = await provider.revokeSpendPermission(wallet.account_key);
@@ -186,13 +188,15 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
           ...wallet,
           spend_permission: { ...wallet.spend_permission, status: "revoked" },
         });
-        txLine = `\nOn-chain revocation tx ${txHash}.`;
+        // Was a bare hash printed into the sentence — 66 characters nobody reads and
+        // nothing to tap. Same treatment as every other receipt.
+        txNote = `\nRevoked on chain. ${txLink(txHash, loadConfig().baseNetwork, "View the revocation")}`;
       } catch (error) {
         if (!isGasShortfall(error)) throw error;
         // Fail closed. The memory revocation below still stops every spend, and
         // Ward is the only spender — but say plainly that the chain side did not
         // land, rather than reporting a revocation that only half happened.
-        txLine =
+        txNote =
           `\n⚠️ The on-chain revocation did NOT land: ${gasFundingHelp(wallet.smart_account)}\n` +
           "The permission is still live on-chain. I've paused every spend action in memory, so I won't use it.";
       }
@@ -203,7 +207,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
     return {
       messages: [
         new AIMessage(
-          `Revoked your spend permission and paused every spend action.${txLine}\nI can't move funds until you grant a new permission.`,
+          `Revoked your spend permission and paused every spend action.${txNote}\nI can't move funds until you grant a new permission.`,
         ),
       ],
     };

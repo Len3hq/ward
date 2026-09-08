@@ -20,44 +20,60 @@ const RISK_WORDS = "conservative, moderate or aggressive";
 /** The chat apps a person can actually type `/start` into. */
 type ChatChannel = "telegram" | "discord";
 
-/** For "you can also reach me from —": whichever chat app this one is not. */
+/** For "reach me anywhere": whichever chat app this one is not. */
 const OTHER_APP: Record<ChatChannel, string> = {
   telegram: "Discord",
   discord: "Telegram",
 };
 
 /**
- * `/start`, and the first thing anyone ever reads. Says what Ward is, shows three
- * things to try, names the other ways in, then asks the one question onboarding
- * actually needs.
+ * `/start`, and the first thing anyone ever reads.
  *
- * The other ways in are here because they were nowhere else: `/link` and `/mcp` sat
- * in the command menu described as "another app", which tells a new user nothing, and
- * the words "Discord" and "Cursor" appeared only after you had already tapped a
- * command you had no reason to tap. One account reachable from three places is the
- * interesting part of the product, so it is said on the first screen, by name.
+ * Written in markdown and rendered per channel — Telegram converts it to HTML on the
+ * way out, Discord renders markdown natively. The previous version was sent as flat
+ * text, which is why it read like a config dump: no emphasis, no structure, three
+ * quoted phrases and a question. It described the mechanism and never made the case.
  *
- * Channel-aware because this copy is shared: offering Discord to someone already in
- * Discord is the kind of small wrongness that makes a bot feel unattended.
+ * What it says now is what is actually unusual here, in the order someone decides in:
+ * what this thing does, why it is safe to leave running, that it gets better at
+ * choosing counterparties, and where else it works. The safety paragraph is the
+ * product — limits that live in memory rather than in code, checked before every
+ * action, backed a second time on chain, and revocable by deleting the record — so it
+ * gets its own heading rather than a clause in the opening sentence.
+ *
+ * Channel-aware because the copy is shared: offering Discord to someone already
+ * standing in Discord is the kind of small wrongness that makes a bot feel unattended.
  */
 export const welcome = (channel: ChatChannel): string =>
   [
-    `${BRAND.name} — ${BRAND.tagline}.`,
+    `**${BRAND.name}** — ${BRAND.tagline}.`,
     "",
-    "I move money on Base for you — swaps, USDC sends, paid on-chain data — and I can",
-    "hire other AI agents to assess a token. What I may do is written in your Sibyl",
-    "Memory record. I check it before every action and I cannot exceed it.",
+    "I move real money on Base for you, inside limits you set once and can take back at",
+    "any time.",
     "",
-    "Try:",
-    '  · "what am I allowed to do?"',
-    '  · "what data can I buy?"',
-    '  · "what\'s the risk score for PEPE"',
+    "**What I can do**",
+    '· **Swap and send** — "swap $20 of USDC into ETH" · "send $10 to 0x…"',
+    "· **Buy on-chain data** — paid per call over x402. No subscription, no API key.",
+    "· **Hire another AI agent** — a second opinion on a token, escrowed and settled on Base",
     "",
-    `This is not the only way to reach me. /link_${OTHER_APP[channel].toLowerCase()} picks me up`,
-    `in ${OTHER_APP[channel]}, and /link_mcp hands me to Claude Code or Cursor — same limits,`,
-    "same memory, one account.",
+    "**Why you can leave me running**",
+    "Your limits live in Sibyl Memory, not in my code. I read them before every single",
+    "action and I cannot raise them. A revocable on-chain spend permission caps me again,",
+    "independently. Delete the memory and I refuse to act at all — even where the chain",
+    "would still let me.",
     "",
-    `To get started, tell me your risk tolerance — ${RISK_WORDS}.`,
+    "I also remember who delivered. Every agent I hire for you is scored on what it",
+    "actually returned, so the next hire is a better one.",
+    "",
+    "**Reach me anywhere**",
+    // Bare, never in backticks. Telegram turns a plain `/command` into something you
+    // tap to run; wrapping it in `<code>` makes it copyable and dead instead, which
+    // on the one screen meant to get someone moving is the wrong trade.
+    `· /link_${OTHER_APP[channel].toLowerCase()} — the same Ward, in ${OTHER_APP[channel]}`,
+    "· /link_mcp — the same Ward, inside Claude Code or Cursor",
+    "One account, one set of limits, one spend history.",
+    "",
+    `**To begin**, tell me your risk tolerance — ${RISK_WORDS}.`,
   ].join("\n");
 
 /**
