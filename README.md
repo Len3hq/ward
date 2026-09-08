@@ -132,7 +132,7 @@ real `sibyl-mcp` backend under `SIBYL_MEMORY_MCP_TEST=1`
 [`scripts/demo-deletion.sh`](./scripts/demo-deletion.sh) does it live on Telegram.
 
 ```sh
-bun test          # 519 pass on the fs backend
+bun test          # 554 pass on the fs backend
 ```
 
 ## Partner stacks (Base + Virtuals → ×1.25 cap)
