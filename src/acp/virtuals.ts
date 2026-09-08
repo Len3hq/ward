@@ -29,10 +29,15 @@ import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
  * every ACP job would be Ward paying while the ledger recorded a user spend. So
  * each job moves the user's own money through it and leaves it flat:
  *
- *   pull budget from ward-user-<accountKey>   (their Spend Permission) → CDP spender
+ *   pull the SELLER'S PRICE from ward-user-<accountKey>  (Spend Permission) → spender
  *   forward CDP spender → buyerAddress  (skipped if they're the same address)
- *   session.fund()                      escrow draws on buyerAddress
- *   refund buyerAddress → user          whatever the job didn't consume
+ *   session.fund()                      escrow draws exactly that, on buyerAddress
+ *
+ * There is deliberately no refund step. Moving `job.maxUsd` and returning the change
+ * cannot work: Virtuals policy-gates transfers out of the ACP wallet, denying them
+ * with "RPC request denied due to policy violation" and asking a human to approve
+ * each one. So every job — successful ones included — stranded its change in a
+ * wallet nothing could empty. Funding the price the seller named leaves no change.
  *
  * `buyerAddress` is whatever `agent.getAddress()` reports, so this is correct
  * regardless of which wallet backs the adapter.
@@ -188,7 +193,10 @@ export class VirtualsAcpProvider implements AcpProvider {
       }
 
       const chainId = CHAIN_ID;
+      /** The ceiling the user approved. Nothing above this is paid. */
       const budget = job.maxUsd;
+      /** What the seller actually asked for, once they name it. */
+      let funded = 0;
 
       /** The counterparty's raw output, captured off `job.submitted`. */
       let deliverable: string | null = null;
@@ -206,15 +214,37 @@ export class VirtualsAcpProvider implements AcpProvider {
           if (entry.kind !== "system") return;
           try {
             if (entry.event.type === "budget.set") {
-              // The user's money, not Ward's: pull the budget through *this user's*
-              // Spend Permission, then forward it to the address escrow will draw
-              // on. Throws if they have no active permission — the job never funds.
-              ({ pulledUsd } = await wallet.fundAgentFromUser(accountKey, budget));
+              // Move what the seller ASKED for, not Ward's ceiling.
+              //
+              // This used to pull `job.maxUsd` — $0.50 — for a job priced at $0.01,
+              // then try to refund the ~$0.49 difference out of the ACP wallet. That
+              // refund cannot work: Virtuals policy-gates transfers out of that
+              // wallet ("RPC request denied due to policy violation") and asks a
+              // human to approve each one. So every job, including a successful one,
+              // stranded the change. Funding the actual price leaves nothing to
+              // refund and nothing to strand.
+              //
+              // `maxUsd` goes back to being what it should always have been: a cap to
+              // refuse against, not the amount to move. It also stops a $0.01 purchase
+              // reserving $0.50 of the user's daily allowance.
+              const asked = Number(entry.event.amount);
+              if (!Number.isFinite(asked) || asked <= 0) {
+                throw new Error(
+                  `the seller set an unusable budget (${String(entry.event.amount)})`,
+                );
+              }
+              if (asked > budget) {
+                throw new Error(
+                  `the seller asks $${asked}, over the $${budget} you approved — nothing was paid`,
+                );
+              }
+              funded = asked;
+              ({ pulledUsd } = await wallet.fundAgentFromUser(accountKey, asked));
               const spender = (await wallet.connect(accountKey)).agentSpender;
               if (spender.toLowerCase() !== buyerAddress.toLowerCase()) {
                 await wallet.transferUsdcFromSpender(buyerAddress, pulledUsd);
               }
-              await session.fund(); // AssetToken.usdc(budget, chainId) — cap enforced by our gate
+              await session.fund(); // draws `funded`, which the gate already capped at `budget`
             } else if (entry.event.type === "job.submitted") {
               // `JobSubmittedEvent.deliverable` is the counterparty's output, carried
               // on the event itself — NOT a `contentType: "deliverable"` message. An
@@ -231,7 +261,9 @@ export class VirtualsAcpProvider implements AcpProvider {
                 outcomeSummary: "job completed",
                 rawResult: parseDeliverable(deliverable),
                 settled: true,
-                amountUsd: budget,
+                // What the job actually cost, not the ceiling — this is the number
+                // that reaches the spend ledger and the user's daily cap.
+                amountUsd: funded || budget,
               });
               await agent.stop();
             } else if (entry.event.type === "job.rejected" || entry.event.type === "job.expired") {
