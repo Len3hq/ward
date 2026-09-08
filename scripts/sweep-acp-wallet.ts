@@ -43,7 +43,7 @@ if (loadConfig().acpMode !== "virtuals") {
   process.exit(1);
 }
 
-const userId = user ?? (await resolveExisting("telegram", telegram!))?.userId;
+const userId = user ?? (await resolveExisting("telegram", telegram!));
 if (!userId) {
   console.error(`no Ward user for telegram:${telegram}`);
   process.exit(1);
