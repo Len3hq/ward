@@ -239,8 +239,28 @@ export class VirtualsAcpProvider implements AcpProvider {
       if (unspent > 0) {
         try {
           const { smartAccount } = await wallet.connect(accountKey);
-          const sent = await refundFromBuyer(adapter, chainId, buyerAddress, smartAccount, unspent);
-          const short = round6(unspent - sent);
+          let sent = await refundFromBuyer(adapter, chainId, buyerAddress, smartAccount, unspent);
+          let short = round6(unspent - sent);
+
+          // The money is only at `buyerAddress` if escrow ever released it. When the
+          // job fails BEFORE funding — the forward reverting, the seller never
+          // pricing — it is still in the CDP spender, one hop earlier, and looking
+          // only at the buyer reports "$0.50 owed to user" while the $0.50 sits in a
+          // wallet nobody checked. Follow the money back down the path it took.
+          if (short > DUST_USD) {
+            try {
+              const { txHash } = await wallet.refundUser(accountKey, short);
+              console.log(`ACP refund of $${short} from the agent spender: ${txHash}`);
+              sent = round6(sent + short);
+              short = 0;
+            } catch (spenderErr) {
+              console.error(
+                `ACP fallback refund from the spender failed: ` +
+                  `${spenderErr instanceof Error ? spenderErr.message : String(spenderErr)}`,
+              );
+            }
+          }
+
           if (short > DUST_USD) {
             // Base gas is sub-cent, so a gap this size is a real discrepancy, not
             // the paymaster — surface it instead of quietly keeping the money.

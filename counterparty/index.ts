@@ -39,6 +39,18 @@ import { sellerAction } from "./lifecycle.ts";
 const CHAIN_ID = 8453; // Base
 
 /**
+ * Which build is actually running.
+ *
+ * Three separate fixes were deployed and none of them reached the container: builds
+ * ran, images were pushed, and the process kept printing the log format of the code
+ * that predates all of them. Debugging a job with no way to tell which version is
+ * answering wastes a round trip per attempt, so the banner says it outright. Bump
+ * `HANDLER_VERSION` whenever the handler changes; if the log shows an older one, the
+ * deploy did not land and nothing else about the run is worth reading.
+ */
+const HANDLER_VERSION = "4-requirement-triggers-price";
+
+/**
  * What this agent charges, in USDC.
  *
  * The seller names the price: ACP has no negotiation step here, so whatever is set
@@ -178,7 +190,11 @@ async function main(): Promise<void> {
 
   await agent.start();
   const address = await agent.getAddress();
-  console.log(`counterparty listening as ${address} on chain ${CHAIN_ID}`);
+  const sha = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) ?? "(no git sha — CLI upload)";
+  console.log(
+    `counterparty listening as ${address} on chain ${CHAIN_ID} ` +
+      `[handler ${HANDLER_VERSION}, commit ${sha}, price $${PRICE_USD}]`,
+  );
 }
 
 main().catch((err: unknown) => {

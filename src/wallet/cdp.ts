@@ -648,7 +648,28 @@ export class CdpWalletProvider implements WalletProvider {
     });
 
     const hash = (result as { transactionHash?: Hex }).transactionHash;
-    if (hash) await this.#waitForPull(hash);
+    if (hash) {
+      // A mined receipt is authoritative and cheap to trust.
+      await this.#waitForPull(hash);
+      return { heldBefore };
+    }
+
+    // No hash, so nothing was waited for at all — and that is how the money raced its
+    // own spender. x402 survived it because a paid HTTP request takes seconds; ACP
+    // forwards immediately and lost, throwing `ERC20: transfer amount exceeds balance`
+    // against a spender that visibly held the money moments later, stranding $0.50.
+    //
+    // Balance is the fallback rather than the rule because the spender is SHARED: a
+    // concurrent spend could mask an arrival that really happened, and calling that a
+    // failed pull would be its own bug. Receipt when there is one, balance when there
+    // is not.
+    const heldNow = await this.#spenderUsdcSettled(heldBefore, amountUsd);
+    if (!pullWasUnspent(heldBefore, heldNow, amountUsd)) {
+      throw new Error(
+        `the $${amountUsd} USDC pull did not reach the agent wallet within ` +
+          `${(UNWIND_BALANCE_ATTEMPTS * UNWIND_BALANCE_INTERVAL_MS) / 1000}s — nothing was spent`,
+      );
+    }
     return { heldBefore };
   }
 
