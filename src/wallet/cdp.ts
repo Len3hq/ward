@@ -648,21 +648,24 @@ export class CdpWalletProvider implements WalletProvider {
     });
 
     const hash = (result as { transactionHash?: Hex }).transactionHash;
-    if (hash) {
-      // A mined receipt is authoritative and cheap to trust.
-      await this.#waitForPull(hash);
-      return { heldBefore };
-    }
+    if (hash) await this.#waitForPull(hash);
 
-    // No hash, so nothing was waited for at all — and that is how the money raced its
-    // own spender. x402 survived it because a paid HTTP request takes seconds; ACP
-    // forwards immediately and lost, throwing `ERC20: transfer amount exceeds balance`
-    // against a spender that visibly held the money moments later, stranding $0.50.
+    // And then confirm by BALANCE, always — not only when there was no hash to wait
+    // for. A receipt is not the thing callers depend on.
     //
-    // Balance is the fallback rather than the rule because the spender is SHARED: a
-    // concurrent spend could mask an arrival that really happened, and calling that a
-    // failed pull would be its own bug. Receipt when there is one, balance when there
-    // is not.
+    // The previous attempt gated this on `!hash`, reasoning that a mined receipt was
+    // authoritative. It is not: `useSpendPermission` on a Server Account settles
+    // through a bundle, and `waitForTransactionReceipt` resolves on that bundle
+    // before the USDC inside it lands in the spender's balance. So the receipt came
+    // back, the wait returned instantly, the forward fired, and it reverted with
+    // `ERC20: transfer amount exceeds balance` against money that arrived moments
+    // later. Measured: the whole failure took ~7s, well inside the poll budget that
+    // was skipped.
+    //
+    // The concurrency caveat stands — the spender is shared, so another spend could
+    // mask an arrival — but a false "pull did not land" refunds the user and costs a
+    // retry, while a false "it landed" spends into a balance that is not there. When
+    // one of two errors has to be possible, it should be the one that fails safe.
     const heldNow = await this.#spenderUsdcSettled(heldBefore, amountUsd);
     if (!pullWasUnspent(heldBefore, heldNow, amountUsd)) {
       throw new Error(
