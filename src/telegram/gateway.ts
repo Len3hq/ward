@@ -3,11 +3,17 @@ import { randomUUID } from "node:crypto";
 import { Context, Telegraf, type Telegram } from "telegraf";
 
 import type { WardGraph } from "../agent/graph.ts";
-import { BRAND } from "../config.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { readAnswer } from "../gateway/answers.ts";
 import { registerChannel } from "../gateway/channels.ts";
 import { markCopyable } from "../gateway/format.ts";
+import {
+  BOT_COMMANDS,
+  BOT_DESCRIPTION,
+  BOT_SHORT_DESCRIPTION,
+  HELP,
+  WELCOME,
+} from "../gateway/help.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
 import {
   announceLink,
@@ -154,9 +160,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       args: payload.length > 0,
     });
     if (payload.length === 0) {
-      await ctx.reply(
-        `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`,
-      );
+      await ctx.reply(WELCOME);
       return;
     }
 
@@ -172,26 +176,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     );
   });
 
-  bot.help((ctx) =>
-    ctx.reply(
-      [
-        "/newsession — start a fresh conversation (your authorization in Sibyl Memory is unchanged)",
-        "/defaultsession — go back to your default conversation",
-        "",
-        "/link <channel> — one-click link to another app (telegram, discord)",
-        "/link wallet — verify a wallet you control, as a way back in if you lose this account",
-        "/link — get a code to type in by hand instead",
-        "/link <code> — redeem a code minted somewhere else",
-        "/unlink <channel> — detach an app from your Ward",
-        "/unlink wallet <address> — drop a verified wallet",
-        "/whoami — which accounts share your authorization",
-        "/mcp — MCP tokens and what each is allowed to do",
-        "",
-        "Otherwise just talk to me: onboarding, your limits, a swap, or",
-        '"send $10 to 0x…" to move USDC to any Base address.',
-      ].join("\n"),
-    ),
-  );
+  bot.help((ctx) => ctx.reply(HELP));
 
   bot.command("newsession", (ctx) => {
     const s = session(ctx.chat.id);
@@ -522,4 +507,29 @@ export function mdToHtml(md: string): string {
   s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<i>$2</i>");
   s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
   return s;
+}
+
+/**
+ * Publish the bot's own profile: the "/" command list, the Menu button beside the
+ * text box, and the two descriptions a stranger reads before pressing Start.
+ *
+ * All four were empty. Telegram will happily run a bot that has never called any of
+ * this — it simply autocompletes nothing and shows a blank chat — so the omission is
+ * invisible from the code and total from the outside.
+ *
+ * Idempotent, and deliberately non-fatal: this is cosmetic, and a bot that answers
+ * with a stale command list is strictly better than one that will not start. Every
+ * call is scoped to the default (all private chats), which is what a DM-only bot
+ * wants.
+ */
+export async function publishProfile(bot: Telegraf): Promise<void> {
+  const steps: Array<[string, () => Promise<unknown>]> = [
+    ["commands", () => bot.telegram.setMyCommands(BOT_COMMANDS)],
+    ["description", () => bot.telegram.setMyDescription(BOT_DESCRIPTION)],
+    ["short_description", () => bot.telegram.setMyShortDescription(BOT_SHORT_DESCRIPTION)],
+  ];
+  for (const [what, run] of steps) {
+    // One rejected field must not cost the other two, so each is awaited alone.
+    await run().catch((error: unknown) => logError("telegram.profile.failed", error, { what }));
+  }
 }

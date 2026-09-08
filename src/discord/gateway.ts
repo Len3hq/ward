@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
+import { HELP, WELCOME } from "../gateway/help.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel, registerDmLink } from "../gateway/channels.ts";
 import { markCopyable } from "../gateway/format.ts";
@@ -90,23 +91,6 @@ function firstContact(): string {
 interface ChatSession {
   seq: number;
 }
-
-const HELP = [
-  "/newsession — start a fresh conversation (your authorization in Sibyl Memory is unchanged)",
-  "/defaultsession — go back to your default conversation",
-  "",
-  "/link <channel> — one-click link to another app (telegram, discord)",
-  "/link wallet — verify a wallet you control, as a way back in if you lose this account",
-  "/link — get a code to type in by hand instead",
-  "/link <code> — redeem a code minted somewhere else",
-  "/unlink <channel> — detach an app from your Ward",
-  "/unlink wallet <address> — drop a verified wallet",
-  "/whoami — which accounts share your authorization",
-  "/mcp — MCP tokens and what each is allowed to do",
-  "",
-  "Otherwise just talk to me: onboarding, your limits, a swap, or",
-  '"send $10 to 0x…" to move USDC to any Base address.',
-].join("\n");
 
 export function createDiscordGateway(token: string, graph: WardGraph): Client {
   const client = new Client({
@@ -234,7 +218,7 @@ async function runCommand(
 ): Promise<string> {
   switch (word.toLowerCase()) {
     case "start":
-      return `${BRAND.name} — ${BRAND.tagline}.\n\nTell me your risk tolerance to get started, or send /help.`;
+      return WELCOME;
     case "help":
       return HELP;
     case "newsession":
@@ -300,7 +284,20 @@ export const SLASH_COMMANDS: ChatInputApplicationCommandData[] = [
     name: "defaultsession",
     description: "Go back to your default conversation",
   },
-  { type: ApplicationCommandType.ChatInput, name: "help", description: "What Ward can do" },
+  {
+    type: ApplicationCommandType.ChatInput,
+    name: "mcp",
+    description: "Let Claude Code or Cursor use your Ward",
+    options: [
+      {
+        name: "args",
+        description: "tokens, grants, grant, confirm, revoke or stop. Omit for the list.",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+    ],
+  },
+  { type: ApplicationCommandType.ChatInput, name: "help", description: "Everything Ward can do" },
 ];
 
 async function handleDirectMessage(

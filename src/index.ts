@@ -6,7 +6,7 @@ import { registerDmLink, registerStartLink } from "./gateway/channels.ts";
 import { startProposalWatcher } from "./gateway/proposals.ts";
 import { startLinkServer } from "./http/server.ts";
 import { installCdpProxy } from "./net.ts";
-import { createGateway } from "./telegram/gateway.ts";
+import { createGateway, publishProfile } from "./telegram/gateway.ts";
 
 /**
  * Ward entrypoint. Builds the graph once and starts every gateway that has a token.
@@ -37,6 +37,9 @@ async function main(): Promise<void> {
     // Discord needs a whole OAuth2 round trip for, with no server involved — so
     // this direction is available whenever Telegram is, with nothing to configure.
     registerStartLink("telegram", (state) => `https://t.me/${me.username}?start=${state}`);
+    // The "/" command list, the Menu button and the pre-Start description. Never
+    // throws — a cosmetic field Telegram rejected must not stop the bot coming up.
+    await publishProfile(bot);
     // `bot.launch()` never resolves while polling, so its rejection is the only
     // signal that polling died — and unhandled it takes the process down.
     //
