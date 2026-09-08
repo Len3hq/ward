@@ -238,6 +238,53 @@ free), `smalltalk` (nothing money-shaped, model call skipped), `llm` (one round 
 chain read. Slash-command arguments are never printed — a link code is a secret — and
 `WARD_LOG_TEXT=0` drops message text entirely, keeping the lengths.
 
+## Pre-submission review (2026-09-08) — remove before submitting
+
+> Internal checklist from a repo + rules review against
+> [hack.sibyllabs.org/rules](https://hack.sibyllabs.org/rules). Each item has a way to
+> verify it. Deadline: **Sep 10, 23:59 UTC**. Delete this section once resolved.
+
+**Rubric as published:** memory load-bearing 40 · innovation 25 · technical 20 ·
+pitch 15 · PMF bonus +10 · multiplier: first partner stack +15%, second +10%, capped
+at ×1.25. Stacks not exercised in the demo lose the bonus. 365 teams registered.
+
+### Must fix — points at stake
+
+| #   | Finding                                                                                                                                                                                                                                                                         | Verify                                                                        | Fix                                                                                                                                                               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The partner table above still says "code-complete, **verify live**" for every Base action and calls ACP "a go/no-go spike", while commits Sep 6–8 (`fix acp not settling`, `Fix funds reaching the ACP`, Nansen endpoints) are live fixes. Judges read the README, not the log. | `git log --oneline \| head -30`                                               | Replace the status column with basescan links for one grant, one x402 payment, one swap, one revoke, one ACP job. Decides the ×1.25 and half the execution score. |
+| 2   | Deployment is down: `https://ward.up.railway.app` returns Railway "Application not found". Base verification requires a deployment, and judges will tap "Try it on Telegram".                                                                                                   | `curl -s https://ward.up.railway.app/healthz`                                 | Bring it up on `SIBYL_MEMORY_MODE=sibyl-mcp` with the `/data` volume mounted; put the bot handle on the landing page.                                             |
+| 3   | No **Prior Work** section. The rules list "a Prior Work declaration" as a required README item; we have "Attribution".                                                                                                                                                          | `grep -in 'prior work' README.md`                                             | Add a `## Prior work` heading: Len3 adaptation, Sep 2 start, same-team counterparty.                                                                              |
+| 4   | Multiplier stated wrong: "Base ×1.15, Virtuals ×1.25". Rules: +15% first, +10% second, cap ×1.25.                                                                                                                                                                               | `grep -n '1.25' README.md SUBMISSION.md`                                      | Write "Base + Virtuals → ×1.25 cap".                                                                                                                              |
+| 5   | Post drafts in `SUBMISSION.md` tag `@sibyllabs`. Rules require **`@sibylcap`** on the demo post and at least one build-log post.                                                                                                                                                | `grep -n '@sibyl' SUBMISSION.md`                                              | Change the handle.                                                                                                                                                |
+| 6   | `memory/README.md` claims a `memory_search` (FTS5) row for "what did I buy?", but nothing calls it — `recent_activity` reads the ledgers. Judges locate memory calls in under 2 minutes and will grep.                                                                          | `grep -rn memory_search memory src \| grep -v '^\s*\*'` — only comments match | Wire a real `recall_history` tool over `memory_search`, or delete the row.                                                                                        |
+| 7   | Stale test count: README, `SUBMISSION.md` and the landing page say 317; it is 519.                                                                                                                                                                                              | `bun install && bun test`                                                     | Update the number.                                                                                                                                                |
+
+### Should add — scoring upside
+
+- **Demo: four beats, one changed decision.** The rules' passing example is "recalls a
+  past dispute and changes the offer". Ours is the ACP hire: prior trust changes
+  _which_ counterparty Ward picks and how it narrates. Order: hire-with-trust →
+  deletion refusal → one on-chain action → fresh-session recall with a visible clock.
+  Keep Discord / MCP beats in the README, out of the video (current script runs > 5 min).
+- **Real `memory_search`.** A `recall_history` tool over the COLD journal answers
+  "what did I pay Nansen for last week" and puts a second Sibyl tier on the critical
+  path. Small change; turns finding 6 into a scoring point.
+- **PMF artifact.** +10 is on the table and we claim 0. A waitlist form with a public
+  count, or two named design partners quoted on the landing page, is "verifiable in
+  5 minutes". Never invent numbers — fabricated PMF is a disqualification.
+- **Use `endpointTrust` in endpoint choice.** `x402_ledger` feeds a trust score but
+  `searchCatalog` is keyword-only. Deprioritising an endpoint that failed last time is
+  another memory-changed-the-decision moment.
+
+### Open questions (owner: team)
+
+1. Which live actions have settled — mainnet or Sepolia — and what are the tx hashes?
+2. Where is Ward deployed now, and is `sibyl init` done on that box?
+3. Telegram bot handle for the landing page?
+4. Video recorded? Either post published?
+5. Any real users / testers / design partners citable for PMF?
+
 ## Attribution
 
 Ward adapts a small, named set of components from the **Len3** production system,
