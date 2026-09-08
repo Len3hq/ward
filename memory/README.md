@@ -19,12 +19,10 @@ to act. Setup and the MCP wire contract are in
 | principal → its channel accounts (Phase 9)               | WARM entity  | `memory_remember` / `memory_recall`     | `ward.accounts` / `<ward_user_id>`         |
 | every mutation (onboard, spend, revoke, ACP job, wallet) | COLD journal | `memory_record_event`                   | category `ward.<kind>`                     |
 | conversation summary (Phase 7)                           | HOT state    | `memory_set_state` / `memory_get_state` | `ward.conversation.<ward_user_id>`         |
-| agent chat recall ("what did I buy?")                    | FTS5         | `memory_search`                         | —                                          |
 
 The **WARM entity is the source of truth** for every gate decision — one point
 read, always consistent. The **COLD journal** is the append-only narrative judges
-look for ("dynamic-storage patterns top the band") and the audit trail
-`memory_search` indexes. Both are load-bearing.
+look for ("dynamic-storage patterns top the band") and the audit trail. Both are load-bearing.
 
 ## Identity: what the entity name is
 

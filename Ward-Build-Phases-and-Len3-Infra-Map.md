@@ -181,7 +181,6 @@ The accumulating store on **Sibyl Memory**, with the full read/write API the age
 | wallet record | WARM entity | `memory_remember` / `memory_recall` | `ward.wallet` / `<tg_id>` |
 | every mutation | COLD journal | `memory_record_event` | category `ward.<kind>` |
 | conversation summary (Phase 7) | HOT state | `memory_set_state` / `memory_get_state` | `ward.conversation.<tg_id>` |
-| agent chat recall | FTS5 | `memory_search` | — |
 
 The WARM entity is the source of truth for every gate decision; the COLD journal is the append-only narrative ("dynamic-storage patterns top the band").
 

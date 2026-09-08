@@ -322,7 +322,7 @@ export type X402Input = z.input<typeof x402InputSchema>;
  * Appended (never mutated) to Sibyl Memory's COLD journal on every write. The
  * WARM entity is the queryable source of truth for the gate; the journal is the
  * append-only narrative judges look for ("dynamic-storage patterns top the band")
- * and the audit trail `memory_search` indexes.
+ * and the audit trail.
  */
 export const JOURNAL_EVENT_KINDS = [
   "onboarded",

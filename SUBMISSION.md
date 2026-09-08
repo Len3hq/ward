@@ -13,6 +13,8 @@
 - [x] Deletion demo scripted: [`DEMO.md`](./DEMO.md) beat 2 +
       [`scripts/demo-deletion.sh`](./scripts/demo-deletion.sh)
 - [x] `ATTRIBUTION.md` — the adapted Len3 components by file, Len3hq sign-off noted
+- [x] README **Prior work** declaration (required by the rules) — what is new for the
+      hackathon vs. the adapted Len3 patterns
 - [x] No secrets in history (`.env` git-ignored; only `.env.example` tracked;
       history scanned)
 - [ ] 2–5 min demo video with a visible fresh-session recall timestamp — record
@@ -24,6 +26,39 @@
 - [ ] Two build-in-public posts (drafts below), tagging Base and Virtuals
 - [ ] PMF section — honest, in [README.md](./README.md#product-market-fit); do not
       add numbers
+
+## Pre-submission review (2026-09-08)
+
+> Internal checklist from a repo + rules review against
+> [hack.sibyllabs.org/rules](https://hack.sibyllabs.org/rules). Each item has a way to
+> verify it. Deadline: **Sep 10, 23:59 UTC**.
+
+**Rubric as published:** memory load-bearing 40 · innovation 25 · technical 20 ·
+pitch 15 · PMF bonus +10 · multiplier: first partner stack +15%, second +10%, capped
+at ×1.25. Stacks not exercised in the demo lose the bonus. 365 teams registered.
+
+**Must-fix findings:** all applied or dropped as of 2026-09-08 — see `git log`.
+
+### Should add — scoring upside
+
+- **Demo: four beats, one changed decision.** The rules' passing example is "recalls a
+  past dispute and changes the offer". Ours is the ACP hire: prior trust changes
+  _which_ counterparty Ward picks and how it narrates. Order: hire-with-trust →
+  deletion refusal → one on-chain action → fresh-session recall with a visible clock.
+  Keep Discord / MCP beats in the README, out of the video (current script runs > 5 min).
+
+- **PMF artifact.** +10 is on the table and we claim 0. A waitlist form with a public
+  count, or two named design partners quoted on the landing page, is "verifiable in
+  5 minutes". Never invent numbers — fabricated PMF is a disqualification.
+- **Use `endpointTrust` in endpoint choice.** `x402_ledger` feeds a trust score but
+  `searchCatalog` is keyword-only. Deprioritising an endpoint that failed last time is
+  another memory-changed-the-decision moment.
+
+### Open questions (owner: team)
+
+1. Telegram bot handle for the landing page?
+2. Video recorded? Either post published?
+3. Any real users / testers / design partners citable for PMF?
 
 ## Two questions for the organizers (before submitting)
 
@@ -65,10 +100,10 @@ chain would still permit the spend.
 
 **Partner stacks used (and how):**
 
-- **Base ×1.15** — an on-chain USDC Spend Permission (grant + revoke = contract
+- **Base** (first partner stack, +15%) — an on-chain USDC Spend Permission (grant + revoke = contract
   interactions), an x402 payment for premium data, and a capped swap. Three of the
   four qualifying actions, all on one memory-enforced ledger.
-- **Virtuals ×1.25** — an ACP job to assess a token's risk; escrow settles on Base;
+- **Virtuals** (second stack, +10%, the ×1.25 cap) — an ACP job to assess a token's risk; escrow settles on Base;
   the outcome and a trust delta are written back to `acp_job_history` and read
   before the next hire. Stated plainly: the counterparty is a second agent **we
   run** (own registration, wallet and key — not an independent third party), and
