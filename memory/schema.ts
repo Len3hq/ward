@@ -339,6 +339,7 @@ export const JOURNAL_EVENT_KINDS = [
   "owner_verified",
   "owner_revoked",
   "proposal",
+  "authorization_forgotten",
 ] as const;
 export const journalEventKindSchema = z.enum(JOURNAL_EVENT_KINDS);
 export type JournalEventKind = z.infer<typeof journalEventKindSchema>;

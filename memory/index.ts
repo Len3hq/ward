@@ -18,6 +18,7 @@ export {
 export {
   read,
   initialize,
+  forgetAuthorization,
   appendJournalEvent,
   readIdentity,
   readAccounts,
@@ -45,6 +46,7 @@ export {
   writeWallet,
   readConversation,
   writeConversation,
+  forgetConversation,
   readProposalQueue,
   writeProposalQueue,
   enqueueProposal,

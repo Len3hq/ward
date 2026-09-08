@@ -47,14 +47,23 @@ ago._
 
 ## Beat 2 — the memory-gated refusal (≈40s) — THE eligibility moment
 
-Terminal 2:
+Do it **in Telegram, on camera**. Cutting to a terminal to run a script invites the
+obvious question — is that thing really the same memory? — and `/forget_me` (Phase 17)
+answers it by never leaving the chat.
 
-```sh
-bun run scripts/forget-auth.ts <YOUR_TG_ID>
-# prints the full record, then: ✓ Deleted. read(<id>) is now null.
+```
+you:  /forget_me
+ward: This deletes the authorization record I act under …
+        · your limits — $50 per action, $100 per day (moderate)
+        · your spend history — 2 entries
+        …
+      To go ahead, send: /forget_me K7M2XQ
+you:  /forget_me K7M2XQ
+ward: Deleted. I have no authorization on file for you any more, so I won't move any
+      funds — not even where the chain would still allow it.
 ```
 
-Back in Telegram:
+Then, the same request as before:
 
 ```
 you: swap $20 usdc for eth
@@ -63,7 +72,12 @@ ward: I have no authorization on file for you in Sibyl Memory, so I won't move a
 ```
 
 Say it: _the agent is still running. It just has no basis for authority. That's the
-gate._ Then re-onboard (say "set me up", `moderate` / `50` / `100`) to continue.
+gate._ Worth adding: _the wallet is untouched — this deleted the policy, not the
+money._ Then re-onboard (say "set me up", `moderate` / `50` / `100`) to continue.
+
+> `bun run scripts/forget-auth.ts <YOUR_TG_ID>` still does the same delete from a
+> terminal, and it is the version a judge can run against the repo without a chat
+> account. Use it if the two-step is too slow for the cut you are making.
 
 ## Beat 3 — generate + grant on-chain (≈30s)
 

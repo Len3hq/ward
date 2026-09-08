@@ -4,6 +4,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { backend } from "../memory/backend.ts";
 import { initialize, read, readProposalQueue } from "../memory/index.ts";
+import { registerChannel } from "../src/gateway/channels.ts";
+import { forgetMeCommand } from "../src/identity/forget.ts";
 import { resolveUser } from "../src/identity/index.ts";
 import { mintLinkCode, redeemLinkCode } from "../src/identity/linking.ts";
 import { createMcpServer } from "../src/mcp/server.ts";
@@ -246,6 +248,50 @@ describe("the deletion gate crosses channels", () => {
     expect(text).toContain(`telegram:${TG}`);
     expect(text).toContain(`discord:${DISCORD}`);
     expect(text).toMatch(/Authorization: NONE/);
+    await s.mcp.close();
+  });
+
+  /**
+   * Phase 17 — the same gate, pulled by the user instead of an operator.
+   *
+   * The test above deletes the entity directly, which is what a judge does. This one
+   * goes through `/forget_me` on Telegram and asserts the identical outcome on the
+   * *other* channel, plus the thing the operator script cannot do: tell the accounts
+   * that were not in the room.
+   */
+  test("/forget_me on Telegram refuses the next Discord action, and Discord is told", async () => {
+    const s = await linkedUser();
+    const announced: string[] = [];
+    registerChannel("discord", {
+      async notify(_accountId: string, text: string) {
+        announced.push(text);
+      },
+      async adapterFor() {
+        return null;
+      },
+    });
+
+    s.tg.willAnswer(true);
+    expect(await onTelegram(s, "swap $10 usdc for eth")).toMatch(/swapped/i);
+    const callsBefore = walletCalls().length;
+
+    const readback = await forgetMeCommand({ channel: "telegram", accountId: TG }, "");
+    const code = readback.match(/\/forget_me ([2-9A-HJ-NP-TV-Z]{6})/)?.[1];
+    expect(code).toBeDefined();
+    expect(await forgetMeCommand({ channel: "telegram", accountId: TG }, code!)).toMatch(
+      /deleted/i,
+    );
+
+    expect(await read(s.userId)).toBeNull();
+
+    // The other app refuses, without ever having been told anything.
+    s.dc.willAnswer(true);
+    expect(await onDiscord(s, "swap $10 usdc for eth")).toMatch(/no authorization/i);
+    expect(walletCalls().length).toBe(callsBefore);
+
+    // And it heard about the deletion, which is the part a `railway ssh` cannot do.
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toMatch(/deleted/i);
     await s.mcp.close();
   });
 

@@ -472,6 +472,6 @@ describe("injection", () => {
     // Registration is table-driven now, so the property is that identity commands are
     // registered as Telegraf commands at all — never reached through the text handler.
     expect(gateway).toMatch(/bot\.command\(spec\.name, identity\(spec\)\)/);
-    expect(gateway).toMatch(/isIdentityCommand\(spec\.base\)/);
+    expect(gateway).toMatch(/isSlashOnlyCommand\(spec\.base\)/);
   });
 });

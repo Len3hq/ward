@@ -4,6 +4,29 @@ _Goal: every user can delete their own authorization record — the deletion the
 eligibility gate tests — from Telegram or Discord, without an operator running a
 script._
 
+**Status: built.** `/forget_me` ships in
+[`src/identity/forget.ts`](./src/identity/forget.ts), routed from both gateways
+through `isSlashOnlyCommand` / `runSlashCommand` in
+[`src/gateway/commands.ts`](./src/gateway/commands.ts) (§17.1 chose the rename over
+widening the old `isIdentityCommand`, because `/forget_me` resolves no identity and
+the list is really "handled outside the graph"). Both deletes now call
+`forgetAuthorization` in [`memory/store.ts`](./memory/store.ts), so the command and
+`scripts/forget-auth.ts` cannot drift. 19 assertions in
+[`test/forget-me.test.ts`](./test/forget-me.test.ts), one more in
+`identity.cross-channel.test.ts`, and two opt-in ones on the live backend.
+
+Two things the plan below did not anticipate, both resolved in the build:
+
+- **`forgetConversation` could not use `forgetEntity`.** The summary is HOT _state_,
+  keyed, not an entity addressed by `(category, name)` — and `sibyl-memory-mcp`
+  exposes no state-deletion tool at all. `MemoryBackend` gained `forgetState`, which
+  deletes the file on `fs` and writes a tombstone on `sibyl-mcp`; `readConversation`
+  now fails soft so either reads back as "no memory". The asymmetry is in the
+  interface comment rather than hidden.
+- **The rate limit got its own window** (`FORGETS_PER_HOUR`), not a share of
+  `MINTS_PER_HOUR` as open question 3 implied. Sharing it would have meant that
+  linking three clients in an hour blocked you from deleting your own record.
+
 Today the deletion gate is real but only an operator can pull it: `scripts/forget-auth.ts`
 over `railway ssh`. The property the hackathon judges ("delete the memory and the
 agent has no basis for authority") is asserted in CI and demoable, but a _user_ who

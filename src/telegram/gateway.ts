@@ -13,8 +13,8 @@ import {
   BOT_COMMANDS,
   COMMANDS,
   commandArgument,
-  isIdentityCommand,
-  runIdentityCommand,
+  isSlashOnlyCommand,
+  runSlashCommand,
 } from "../gateway/commands.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
 import { announceLink } from "../identity/commands.ts";
@@ -218,7 +218,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
         args: typed.length > 0,
       });
       try {
-        const reply = await runIdentityCommand(
+        const reply = await runSlashCommand(
           spec.base,
           { channel: "telegram", accountId: String(ctx.from?.id ?? "") },
           commandArgument(spec, typed),
@@ -235,7 +235,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
   // be subcommands — `/link_mcp` is `/link mcp`, registered so that Telegram will
   // offer it. Driven by the table so an advertised command cannot go unrouted.
   for (const spec of COMMANDS) {
-    if (isIdentityCommand(spec.base)) bot.command(spec.name, identity(spec));
+    if (isSlashOnlyCommand(spec.base)) bot.command(spec.name, identity(spec));
   }
 
   bot.on("text", async (ctx) => {

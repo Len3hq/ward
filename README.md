@@ -39,18 +39,18 @@ object seen from three places: one daily cap, one spend ledger, one revocation l
 A second app is not a second allowance — that is asserted in
 [`test/identity.cross-channel.test.ts`](./test/identity.cross-channel.test.ts).
 
-| Sibyl Memory field                                                                     | Where it's read                                                                                           | What it changes                                                                      | Deleted →                                                         |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `ward.authorization/<id>` (the record)                                                 | [`memory/store.ts` `read()`](./memory/store.ts) — `src/agent/nodes/router.ts`, `execute.ts`, `confirm.ts` | exists? → proceed · missing? → **refuse, explain why**                               | every action request is refused; no scope, no budget, no trust    |
-| `standing_caps.per_action_limit_usd`                                                   | [`src/execution/gate.ts`](./src/execution/gate.ts) `evaluateGate`                                         | amount over it → blocked before any confirmation                                     | —                                                                 |
-| `standing_caps.daily_limit_usd`                                                        | `gate.ts`, via `spentToday()`                                                                             | `sum(spent_ledger, today) + amount > cap` → blocked                                  | —                                                                 |
-| `spent_ledger[]` (append-only)                                                         | `spentToday()` — sums swap + x402 + acp_job for the current UTC day                                       | one number, one cap, across every action type                                        | the cap is unbounded (but there's no record, so it refuses first) |
-| `revocation_log[]` (append-only)                                                       | `isRevoked()` — **fresh read before every action**                                                        | a revoked `action_type` blocks that path immediately, mid-session                    | —                                                                 |
-| `acp_job_history[]` (append-only)                                                      | `trustScore()` — read **before** choosing a counterparty                                                  | a low-trust counterparty is flagged; the agent narrates `0.56 → 0.60` after each job | the agent has no memory of who it trusts                          |
-| `x402_ledger[]` (append-only)                                                          | `endpointTrust()`                                                                                         | per-endpoint success/failure feeds a derived trust score                             | —                                                                 |
-| `ward.wallet/<id>.spend_permission.status`                                             | `confirm.ts` / `execute.ts`                                                                               | `"revoked"` → refuse even with the memory record intact (the two-limit design)       | —                                                                 |
-| `ward.mcp_grant/<token_hash>` ([`src/mcp/grants.ts`](./src/mcp/grants.ts))             | `evaluateGate` via `execution/perform.ts`                                                                 | an MCP client may spend **without asking** — inside `min(grant, cap, allowance)`     | the client is back to propose-only; it can ask, never act         |
-| `ward.conversation.<id>` (HOT state, [`src/agent/summary.ts`](./src/agent/summary.ts)) | the `agent` node's system prompt                                                                          | a fresh session recalls the _conversation_, not just the caps                        | —                                                                 |
+| Sibyl Memory field                                                                     | Where it's read                                                                                           | What it changes                                                                      | Deleted →                                                                                       |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `ward.authorization/<id>` (the record)                                                 | [`memory/store.ts` `read()`](./memory/store.ts) — `src/agent/nodes/router.ts`, `execute.ts`, `confirm.ts` | exists? → proceed · missing? → **refuse, explain why**                               | every action request is refused; no scope, no budget, no trust (user-triggerable: `/forget_me`) |
+| `standing_caps.per_action_limit_usd`                                                   | [`src/execution/gate.ts`](./src/execution/gate.ts) `evaluateGate`                                         | amount over it → blocked before any confirmation                                     | —                                                                                               |
+| `standing_caps.daily_limit_usd`                                                        | `gate.ts`, via `spentToday()`                                                                             | `sum(spent_ledger, today) + amount > cap` → blocked                                  | —                                                                                               |
+| `spent_ledger[]` (append-only)                                                         | `spentToday()` — sums swap + x402 + acp_job for the current UTC day                                       | one number, one cap, across every action type                                        | the cap is unbounded (but there's no record, so it refuses first)                               |
+| `revocation_log[]` (append-only)                                                       | `isRevoked()` — **fresh read before every action**                                                        | a revoked `action_type` blocks that path immediately, mid-session                    | —                                                                                               |
+| `acp_job_history[]` (append-only)                                                      | `trustScore()` — read **before** choosing a counterparty                                                  | a low-trust counterparty is flagged; the agent narrates `0.56 → 0.60` after each job | the agent has no memory of who it trusts                                                        |
+| `x402_ledger[]` (append-only)                                                          | `endpointTrust()`                                                                                         | per-endpoint success/failure feeds a derived trust score                             | —                                                                                               |
+| `ward.wallet/<id>.spend_permission.status`                                             | `confirm.ts` / `execute.ts`                                                                               | `"revoked"` → refuse even with the memory record intact (the two-limit design)       | —                                                                                               |
+| `ward.mcp_grant/<token_hash>` ([`src/mcp/grants.ts`](./src/mcp/grants.ts))             | `evaluateGate` via `execution/perform.ts`                                                                 | an MCP client may spend **without asking** — inside `min(grant, cap, allowance)`     | the client is back to propose-only; it can ask, never act                                       |
+| `ward.conversation.<id>` (HOT state, [`src/agent/summary.ts`](./src/agent/summary.ts)) | the `agent` node's system prompt                                                                          | a fresh session recalls the _conversation_, not just the caps                        | —                                                                                               |
 
 The tier map, the exact JSON shape, and which function touches which field are in
 [`memory/README.md`](./memory/README.md).
@@ -114,6 +114,40 @@ One Bun + TypeScript process. No backend, no database of our own, no vector stor
 
 Build history and every design decision: [Ward-Build-Phases-and-Len3-Infra-Map.md](./Ward-Build-Phases-and-Len3-Infra-Map.md).
 
+## Deleting your data
+
+The deletion the gate tests is not an operator-only trick — it is a command:
+
+```
+/forget_me            → reads back exactly what will go, and hands you a code
+/forget_me <code>     → applies it
+```
+
+It removes the `ward.authorization` record (the caps and all four ledgers) and the
+episodic conversation summary. Ward then refuses every action, on every channel,
+until you set new limits — **even where your on-chain allowance would still permit
+the spend.**
+
+What it deliberately keeps, and why:
+
+| Kept                              | Why                                                                                                                               |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ward.wallet/<id>`                | `account_key` is what the smart-account address is derived from. Re-onboarding puts you back on the **same address and funds**.   |
+| `ward.identity` / `ward.accounts` | Deleting these would mint a fresh principal, a fresh `account_key`, and strand your funds at an address nothing points to.        |
+| The COLD journal                  | The audit trail of your own actions, including the deletion. Never read onto the critical path or into a prompt.                  |
+| The on-chain Spend Permission     | A memory operation should not depend on a gas transaction that can fail. `revoke my permission` is the separate, explicit action. |
+
+It is two steps, single-use and principal-bound; it is read off the slash-command
+text and routed outside the graph, so no injected text can trigger it; it is refused
+for MCP clients, because a bearer token is a process rather than a person; and it
+announces itself to every other linked account, so a hijacked session cannot wipe a
+policy quietly. [`test/forget-me.test.ts`](./test/forget-me.test.ts) asserts each of
+those. Design notes: [PHASE-17.md](./PHASE-17.md).
+
+`scripts/forget-auth.ts` is the same delete from a terminal — the operator path, and
+the one a judge can run against the repo without a chat account. Both call
+`forgetAuthorization` in [`memory/store.ts`](./memory/store.ts), so they cannot drift.
+
 ## Eligibility gate — checkable from the repo
 
 The judges' own tests, as first-class CI test files:
@@ -124,6 +158,7 @@ The judges' own tests, as first-class CI test files:
 | [`test/revocation.test.ts`](./test/revocation.test.ts)         | pause `swap` mid-session → the next swap in that session is refused (fresh `revocation_log` read)                                       |
 | [`test/onchain-revoke.test.ts`](./test/onchain-revoke.test.ts) | revoke the Spend Permission on-chain → the next spend refuses even with memory intact                                                   |
 | [`test/daily-cap.test.ts`](./test/daily-cap.test.ts)           | `spent_ledger` sum at/over `daily_limit_usd` → the next action of either type is blocked                                                |
+| [`test/forget-me.test.ts`](./test/forget-me.test.ts)           | the user deletes their own record with `/forget_me` → the same refusal; the wallet, the links and the journal survive it                |
 
 The stub wallet / ACP providers log every call, so "no transaction broadcast" is an
 assertion, not a comment. `deletion-gate` runs on the `fs` backend in CI and on the
@@ -132,7 +167,7 @@ real `sibyl-mcp` backend under `SIBYL_MEMORY_MCP_TEST=1`
 [`scripts/demo-deletion.sh`](./scripts/demo-deletion.sh) does it live on Telegram.
 
 ```sh
-bun test          # 554 pass on the fs backend
+bun test          # 574 pass on the fs backend
 ```
 
 ## Partner stacks (Base + Virtuals → ×1.25 cap)

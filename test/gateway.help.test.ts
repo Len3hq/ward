@@ -7,7 +7,7 @@ import type { Telegraf } from "telegraf";
 import { type IntentAction, parseIntent } from "../src/agent/intent.ts";
 
 import { BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION, HELP, welcome } from "../src/gateway/help.ts";
-import { BOT_COMMANDS, isIdentityCommand, resolveCommand } from "../src/gateway/commands.ts";
+import { BOT_COMMANDS, isSlashOnlyCommand, resolveCommand } from "../src/gateway/commands.ts";
 import { render } from "../src/telegram/gateway.ts";
 import { publishProfile } from "../src/telegram/gateway.ts";
 
@@ -65,7 +65,7 @@ test("every advertised command is actually wired up", () => {
   for (const { command } of BOT_COMMANDS) {
     const spec = resolveCommand(command);
     expect(spec, `/${command} is advertised but is not in the table`).toBeDefined();
-    if (isIdentityCommand(spec!.base)) continue;
+    if (isSlashOnlyCommand(spec!.base)) continue;
     // Whitespace-tolerant: prettier wraps the longer registrations across lines.
     const registered =
       new RegExp(String.raw`bot\.command\(\s*"${command}"`).test(source) ||

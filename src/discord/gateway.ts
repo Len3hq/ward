@@ -21,9 +21,9 @@ import { HELP, welcome } from "../gateway/help.ts";
 import {
   DISCORD_COMMANDS,
   commandArgument,
-  isIdentityCommand,
+  isSlashOnlyCommand,
   resolveCommand,
-  runIdentityCommand,
+  runSlashCommand,
 } from "../gateway/commands.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel, registerDmLink } from "../gateway/channels.ts";
@@ -228,8 +228,8 @@ async function runCommand(
 
   // The one-word aliases route here too: `/link_mcp` resolves to the `link` handler
   // with "mcp" already in front of whatever the user typed.
-  if (isIdentityCommand(spec.base)) {
-    return runIdentityCommand(spec.base, ctx, commandArgument(spec, argument));
+  if (isSlashOnlyCommand(spec.base)) {
+    return runSlashCommand(spec.base, ctx, commandArgument(spec, argument));
   }
 
   switch (spec.base) {

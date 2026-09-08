@@ -5,7 +5,7 @@ import {
   BOT_COMMANDS,
   COMMANDS,
   commandArgument,
-  isIdentityCommand,
+  isSlashOnlyCommand,
   resolveCommand,
 } from "../src/gateway/commands.ts";
 import { HELP, welcome } from "../src/gateway/help.ts";
@@ -167,7 +167,13 @@ test("every command quoted in the help and the welcome actually exists", () => {
   }
 });
 
-test("the identity commands are exactly the four that resolve a principal", () => {
-  const identity = COMMANDS.filter((c) => isIdentityCommand(c.base)).map((c) => c.base);
-  expect(new Set(identity)).toEqual(new Set(["link", "mcp", "unlink", "whoami"]));
+/**
+ * The list that must never grow by accident. Everything on it takes an argument that
+ * is a credential — a link code, a grant confirmation, a deletion confirmation — so a
+ * base that reaches the graph instead would turn a prompt injection into an account
+ * takeover or a wiped authorization. Adding a row here is a deliberate act.
+ */
+test("the slash-only commands are exactly the ones handled outside the graph", () => {
+  const slashOnly = COMMANDS.filter((c) => isSlashOnlyCommand(c.base)).map((c) => c.base);
+  expect(new Set(slashOnly)).toEqual(new Set(["link", "mcp", "unlink", "whoami", "forget"]));
 });

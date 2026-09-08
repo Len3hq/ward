@@ -609,6 +609,6 @@ export async function whoamiCommand(ctx: CommandContext): Promise<string> {
       : []),
     "",
     "All of them share one authorization record — one set of limits, one daily cap, " +
-      "one spend history. Add another with /link.",
+      "one spend history. Add another with /link, or delete it with /forget_me.",
   ].join("\n");
 }

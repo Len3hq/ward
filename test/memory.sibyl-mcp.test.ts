@@ -7,7 +7,17 @@ import { HumanMessage } from "@langchain/core/messages";
 
 import { buildGraph } from "../src/agent/graph.ts";
 import { backend, resetBackend } from "../memory/backend.ts";
-import { appendSpend, initialize, isRevoked, read, spentToday } from "../memory/store.ts";
+import {
+  appendSpend,
+  forgetAuthorization,
+  forgetConversation,
+  initialize,
+  isRevoked,
+  read,
+  readConversation,
+  spentToday,
+  writeConversation,
+} from "../memory/store.ts";
 
 /**
  * Live check against the real Sibyl Memory MCP server.
@@ -113,6 +123,60 @@ describe.skipIf(!enabled)("Sibyl Memory MCP backend", () => {
     const reply = (result.messages.at(-1) as { content?: unknown }).content;
     expect(String(reply)).toMatch(/no authorization/i);
     expect(await read(USER)).toBeNull();
+  });
+
+  /**
+   * Phase 17's go/no-go. `/forget_me` is only safe to offer if a user can come back
+   * afterwards, and on this backend `forgetEntity` *archives* the entity rather than
+   * dropping it — so re-onboarding writes `memory_remember` over a name Sibyl has
+   * already retired. If that round trip does not work, the command strands people.
+   *
+   * The `fs` backend cannot catch this: it deletes a file, and writing the file again
+   * always works.
+   */
+  test("a name Sibyl has archived can be onboarded again, and reads back fresh", async () => {
+    await initialize(USER, {
+      risk_label: "aggressive",
+      per_action_limit_usd: 25,
+      daily_limit_usd: 60,
+    });
+    await appendSpend(USER, {
+      amount_usd: 5,
+      action_type: "swap",
+      tx_hash: "0xarchive",
+      idempotency_key: "sibyl-archive-1",
+    });
+
+    await forgetAuthorization(USER, "phase 17 round-trip");
+    await resetBackend();
+    expect(await read(USER)).toBeNull();
+
+    // The re-onboard the user does thirty seconds later.
+    await initialize(USER, {
+      risk_label: "conservative",
+      per_action_limit_usd: 5,
+      daily_limit_usd: 10,
+    });
+    await resetBackend();
+
+    const record = await read(USER);
+    expect(record?.standing_caps.daily_limit_usd).toBe(10);
+    expect(record?.risk_label).toBe("conservative");
+    // The archived ledger must not come back with it.
+    expect(record?.spent_ledger).toHaveLength(0);
+    expect(await spentToday(USER)).toBe(0);
+  });
+
+  test("forgetConversation leaves the summary unreadable on the real backend", async () => {
+    await writeConversation(USER, "a summary that must not survive", 4);
+    await resetBackend();
+    expect(await readConversation(USER)).not.toBeNull();
+
+    await forgetConversation(USER);
+    await resetBackend();
+    // The server exposes no state deletion, so this is a tombstone overwrite — the
+    // property that matters is that nothing readable is left behind.
+    expect(await readConversation(USER)).toBeNull();
   });
 });
 

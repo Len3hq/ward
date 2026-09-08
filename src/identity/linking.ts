@@ -47,6 +47,14 @@ const CODE_LENGTH = 8;
 
 export const CODE_TTL_MS = 5 * 60 * 1000;
 export const MINTS_PER_HOUR = 3;
+/**
+ * Phase 17. Deliberately its own window rather than a share of `MINTS_PER_HOUR`:
+ * deleting your own authorization must not be blocked because you linked three
+ * clients this hour, and linking must not be blocked because you thought about
+ * deleting. What this limit is actually for is the announcement — a hijacked account
+ * should not be able to spray a user's other channels with deletion notices.
+ */
+export const FORGETS_PER_HOUR = 3;
 export const REDEEM_ATTEMPTS_PER_HOUR = 5;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 
@@ -130,6 +138,7 @@ async function hitRateLimit(scope: string, limit: number, now: Date): Promise<bo
 }
 
 const mintScope = (userId: string) => `mint.${userId}`;
+const forgetScope = (userId: string) => `forget.${userId}`;
 
 /**
  * Spend one mint from this user's hourly allowance. Shared with MCP token issuing,
@@ -141,6 +150,18 @@ export async function consumeMintAllowance(
 ): Promise<boolean> {
   return !(await hitRateLimit(mintScope(userId), MINTS_PER_HOUR, now));
 }
+/**
+ * Spend one `/forget_me` proposal from this user's hourly allowance (Phase 17).
+ * Charged at proposal rather than at confirmation, so a refused attempt still costs
+ * the attacker something and a real user who confirms is never turned away.
+ */
+export async function consumeForgetAllowance(
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return !(await hitRateLimit(forgetScope(userId), FORGETS_PER_HOUR, now));
+}
+
 const redeemScope = (channel: Channel, accountId: string) => `redeem.${channel}_${accountId}`;
 
 // --- mint ---

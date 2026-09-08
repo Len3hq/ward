@@ -173,6 +173,22 @@ export async function read(userId: string): Promise<UserAuthorization | null> {
   return userAuthorizationSchema.parse(raw);
 }
 
+/**
+ * Remove the authorization record — the deletion the eligibility gate tests.
+ *
+ * The one implementation of it, deliberately: `scripts/forget-auth.ts` (the operator
+ * and demo path) and `/forget_me` (the user path) both land here, so the two cannot
+ * drift into deleting different things. Everything else the principal owns —
+ * the wallet, the channel links, the COLD journal — is left alone; see PHASE-17.md §2
+ * for why each one survives.
+ */
+export async function forgetAuthorization(
+  userId: string,
+  reason = "user requested deletion",
+): Promise<void> {
+  await backend().forgetEntity(AUTHORIZATION, normalizeUserId(userId), reason);
+}
+
 async function readOrThrow(userId: string): Promise<UserAuthorization> {
   const record = await read(userId);
   if (record === null) throw new Error(`no authorization record for ${normalizeUserId(userId)}`);
@@ -737,7 +753,26 @@ function conversationKey(userId: string): string {
 export async function readConversation(userId: string): Promise<ConversationMemory | null> {
   const raw = await backend().getState(conversationKey(userId));
   if (raw === null || raw === undefined) return null;
-  return conversationSchema.parse(raw);
+  // Anything that does not parse is treated as absent rather than thrown, because
+  // `forgetConversation` leaves a tombstone on the backend that cannot delete state
+  // (see `MemoryBackend.forgetState`). A summary is the one thing in Ward that is
+  // safe to lose: it is context, never authority, so failing soft here reads a
+  // forgotten conversation as no conversation instead of breaking the turn.
+  const parsed = conversationSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  return parsed.data.summary.trim() === "" ? null : parsed.data;
+}
+
+/**
+ * Destroy the episodic summary (Phase 17).
+ *
+ * `/forget_me` clears this alongside the authorization record: "delete my memory"
+ * that leaves last week's spend narrative in the system prompt is not what anyone
+ * means by it. The deletion gate asserts only that the *authorization* entity is
+ * gone, so clearing more cannot weaken it.
+ */
+export async function forgetConversation(userId: string): Promise<void> {
+  await backend().forgetState(conversationKey(userId));
 }
 
 export async function writeConversation(

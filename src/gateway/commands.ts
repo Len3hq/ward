@@ -1,5 +1,6 @@
 import { linkCommand, mcpCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
 import type { CommandContext } from "../identity/commands.ts";
+import { forgetMeCommand } from "../identity/forget.ts";
 
 /**
  * Every slash command Ward answers to, written once for both gateways.
@@ -26,7 +27,15 @@ export type ChatChannel = "telegram" | "discord";
 
 /** What actually runs. The first four are shared identity commands; the rest are the gateway's own. */
 export type CommandBase =
-  "link" | "mcp" | "unlink" | "whoami" | "help" | "start" | "newsession" | "defaultsession";
+  | "link"
+  | "mcp"
+  | "unlink"
+  | "whoami"
+  | "forget"
+  | "help"
+  | "start"
+  | "newsession"
+  | "defaultsession";
 
 export interface CommandSpec {
   /** The word after the slash. Underscores, never spaces. */
@@ -212,6 +221,17 @@ export const COMMANDS: readonly CommandSpec[] = [
     description: "Disconnect Telegram",
     menu: NONE,
   },
+  /**
+   * The deletion gate, in the user's own hands (Phase 17). Listed in both menus on
+   * purpose: an agent that says its limits are deletable and then hides the delete is
+   * making a claim the user cannot check.
+   */
+  {
+    name: "forget_me",
+    base: "forget",
+    description: "Delete your authorization from Sibyl Memory — I stop acting until you re-onboard",
+    menu: BOTH,
+  },
 
   // --- the conversation itself ---
   {
@@ -246,16 +266,30 @@ export function commandArgument(spec: CommandSpec, typed: string): string {
   return [spec.argument, typed.trim()].filter((part) => part && part.length > 0).join(" ");
 }
 
-/** The four commands that resolve an identity. Every gateway routes these the same way. */
-export function isIdentityCommand(base: CommandBase): boolean {
-  return base === "link" || base === "mcp" || base === "unlink" || base === "whoami";
+/**
+ * The commands that must be read off the slash-command text and run **outside the
+ * graph**, never from conversational input.
+ *
+ * That is a security property, not a layering preference: their arguments are link
+ * codes, grant confirmations and deletion confirmations, so anything that could reach
+ * them from model output, a tool result or a fetched document would turn a prompt
+ * injection into an account takeover or a wiped authorization.
+ *
+ * It was called `isIdentityCommand` until Phase 17, when `/forget_me` — which
+ * resolves no identity at all — needed exactly the same handling. The name now says
+ * what the list is actually for.
+ */
+export function isSlashOnlyCommand(base: CommandBase): boolean {
+  return (
+    base === "link" || base === "mcp" || base === "unlink" || base === "whoami" || base === "forget"
+  );
 }
 
 /**
- * Run one identity command. Kept here so a new channel cannot accidentally implement
- * its own — the argument must come from the command text and nothing else.
+ * Run one of them. Kept here so a new channel cannot accidentally implement its own —
+ * the argument must come from the command text and nothing else.
  */
-export function runIdentityCommand(
+export function runSlashCommand(
   base: CommandBase,
   ctx: CommandContext,
   argument: string,
@@ -269,8 +303,10 @@ export function runIdentityCommand(
       return unlinkCommand(ctx, argument);
     case "whoami":
       return whoamiCommand(ctx);
+    case "forget":
+      return forgetMeCommand(ctx, argument);
     default:
-      throw new Error(`${base} is not an identity command`);
+      throw new Error(`${base} is not a slash-only command`);
   }
 }
 

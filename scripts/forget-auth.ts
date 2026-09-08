@@ -15,9 +15,14 @@
  *
  * Uses whatever backend the env selects (SIBYL_MEMORY_MODE). For `sibyl-mcp` this
  * archives the entity (`memory_forget`); for `fs` it deletes the file.
+ *
+ * Since Phase 17 a user can do this themselves with `/forget_me` in Telegram or
+ * Discord, which is the same delete with a confirmation and an announcement around
+ * it. This script stays as the operator tool, the CI path, and the thing a judge can
+ * run without a chat account. One difference worth knowing when debugging: the
+ * command also clears the episodic conversation summary, and this does not.
  */
-import { backend } from "../memory/backend.ts";
-import { read } from "../memory/index.ts";
+import { forgetAuthorization, read } from "../memory/index.ts";
 import { accountsFor, resolveRef } from "../src/identity/index.ts";
 
 const [, , ref, flag] = process.argv;
@@ -57,7 +62,9 @@ console.log(JSON.stringify(before, null, 2));
 
 if (flag === "--check") process.exit(0);
 
-await backend().forgetEntity("ward.authorization", userId);
+// The same function `/forget_me` calls, so the operator path and the user path
+// cannot drift into deleting different things.
+await forgetAuthorization(userId, "operator script");
 
 const after = await read(userId);
 console.log(

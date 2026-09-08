@@ -57,6 +57,11 @@ export class FsBackend implements MemoryBackend {
     await atomicWrite(this.#statePath(key), serialize(body));
   }
 
+  /** A real delete — the file goes. `force` so forgetting twice is not an error. */
+  async forgetState(key: string): Promise<void> {
+    await rm(this.#statePath(key), { force: true });
+  }
+
   async close(): Promise<void> {
     // nothing to release
   }

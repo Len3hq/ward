@@ -23,6 +23,9 @@ the user deliberately gave it one, and until then nothing here can spend.
 | **Propose** a spend                                                    | yes                             |
 | **Approve** a spend on the user's behalf                               | **no — there is no such tool**  |
 | **Execute** a spend                                                    | only within a grant — see below |
+| Mint its own access (`/link_mcp`)                                      | **no — human channels only**    |
+| Grant itself authority (`/mcp_grant`)                                  | **no — human channels only**    |
+| **Delete the user's authorization** (`/forget_me`)                     | **no — human channels only**    |
 
 `ward_propose_action` does not execute. It queues the request; the main Ward process
 delivers it to the user on Telegram or Discord and **replays the request text through

@@ -86,3 +86,18 @@ The eligibility test runs against this layer:
 `test/memory.sibyl-mcp.test.ts` covers step 1→3 at the store level today;
 `deletion-gate.test.ts` + `scripts/demo-deletion.sh` (Phase 7) do it on the
 Telegram surface.
+
+Since Phase 17 step 2 is also reachable **from chat**: `/forget_me` in Telegram or
+Discord runs the same `memory_forget`, behind a readback and a single-use
+confirmation code, and clears the `ward.conversation.<id>` HOT state with it. So the
+gate is no longer a property only an operator can demonstrate — the person whose
+record it is can pull it, and every other account they have linked is told that they
+did. `test/forget-me.test.ts` covers it, and `memory.sibyl-mcp.test.ts` adds the one
+assertion the `fs` backend cannot make: that a name Sibyl has **archived** can be
+onboarded again, since `forgetEntity` here archives rather than drops.
+
+One asymmetry to know about: `memory_forget` addresses an entity by
+`(category, name)`, and HOT state is keyed, so the server offers no way to delete a
+state document. `MemoryBackend.forgetState` therefore deletes the file on `fs` and
+overwrites with a tombstone on `sibyl-mcp` — in both cases `readConversation` reads
+back `null`, but only one of them is a delete, and the interface says so.

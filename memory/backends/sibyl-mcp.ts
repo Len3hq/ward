@@ -149,6 +149,18 @@ export class SibylMcpBackend implements MemoryBackend {
     await this.#call(TOOL.forget, { category, name, reason: reason ?? null });
   }
 
+  /**
+   * Overwrite, not delete. `memory_forget` addresses an entity by `(category, name)`
+   * and HOT state is keyed instead, so the server offers no way to remove a state
+   * document — the closest honest thing is to destroy what it holds.
+   *
+   * The tombstone deliberately does not satisfy any Ward schema, so every reader
+   * fails to parse it and treats the state as absent (`store.ts` `readConversation`).
+   */
+  async forgetState(key: string): Promise<void> {
+    await this.setState(key, { forgotten_at: new Date().toISOString() });
+  }
+
   async close(): Promise<void> {
     const client = this.#client;
     this.#client = null;

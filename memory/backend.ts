@@ -30,6 +30,18 @@ export interface MemoryBackend {
   /** `null` when the state document does not exist. */
   getState(key: string): Promise<unknown | null>;
   setState(key: string, body: unknown): Promise<void>;
+  /**
+   * Destroy a state document's contents (Phase 17).
+   *
+   * Not symmetric with `forgetEntity`, because the two backends can offer different
+   * guarantees here: `fs` removes the file, while `sibyl-memory-mcp` exposes
+   * `memory_forget` for entities and **no state-deletion tool at all**, so it
+   * overwrites with a tombstone instead. Both leave `getState` returning something
+   * `store.ts` reads as "no memory", which is what "forget my conversation" means —
+   * but only one of them is a delete, and pretending otherwise in the interface would
+   * hide that from the next person.
+   */
+  forgetState(key: string): Promise<void>;
 
   /** Release any child process / handles. */
   close(): Promise<void>;

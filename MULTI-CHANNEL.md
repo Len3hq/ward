@@ -241,6 +241,13 @@ accountId)`. Codes in Sibyl HOT state (`ward.linkcode.<hash>`) so a restart does
 - Guarantees: 5-min TTL · single use · burn-on-redeem · rate limit (3 mints/user/hour,
   5 redeem attempts/account/hour) · constant-time compare · **origin-channel
   notification on success**.
+- `/forget_me` (Phase 17) is channel-agnostic policy in `src/identity/forget.ts`,
+  exactly like `/unlink`: Telegram and Discord both reach it through
+  `runSlashCommand`, and neither re-implements any of it. It deletes one principal's
+  authorization, so it deletes it for _every_ channel at once — and it announces
+  itself to the accounts that were not in the room, which is the one thing the
+  operator script cannot do. MCP is refused, for the same reason it cannot mint a
+  token or grant itself a budget.
 - Commands, channel-agnostic: `/link` (mint), `/link <code>` (redeem), `/unlink
 <channel>`, `/whoami` (list linked accounts + which is primary).
 - Refuse to redeem a code into an account that already resolves to a _different_

@@ -120,6 +120,8 @@ export const HELP = [
   "  /whoami — which accounts and clients can reach your Ward",
   "  /unlink <app> — detach an app · /unlink_wallet <address> — drop a wallet",
   "  /unlink_mcp — disconnect every coding client",
+  "  /forget_me — delete your limits and history from my memory. I stop acting until",
+  "     you set new ones; your wallet and its balance are untouched.",
   "  /newsession — a fresh conversation, your authorization unchanged",
   "  /defaultsession — go back to your default conversation",
 ].join("\n");
