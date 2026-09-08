@@ -738,6 +738,11 @@ export class CdpWalletProvider implements WalletProvider {
 
   async #spenderUsdc(): Promise<number> {
     const spender = await this.#agentSpender();
+    return this.#usdcOnChain(spender.address as Hex);
+  }
+
+  /** `balanceOf` at `latest` — the only reading that cannot lag a mined transfer. */
+  async #usdcOnChain(address: Hex): Promise<number> {
     const client = createPublicClient({
       chain: this.#network === "base" ? base : baseSepolia,
       transport: http(),
@@ -754,9 +759,29 @@ export class CdpWalletProvider implements WalletProvider {
         },
       ] as const,
       functionName: "balanceOf",
-      args: [spender.address as Hex],
+      args: [address],
     });
     return Number(formatUnits(raw, USDC_DECIMALS));
+  }
+
+  /**
+   * Block until `amountUsd` has actually arrived at `address`.
+   *
+   * The same discipline the pull got, for the hop after it. A CDP `transfer` resolves
+   * on SUBMIT, so `session.fund()` ran from Ward's ACP wallet while the money was
+   * still in flight to it and reverted with `ERC20: transfer amount exceeds balance`
+   * — the exact failure the pull fix had just eliminated one hop earlier, left in
+   * place here because I fixed the transfer I was looking at rather than the pattern.
+   */
+  async #waitForUsdcArrival(address: Hex, heldBefore: number, amountUsd: number): Promise<void> {
+    for (let attempt = 0; attempt < UNWIND_BALANCE_ATTEMPTS; attempt++) {
+      if (pullWasUnspent(heldBefore, await this.#usdcOnChain(address), amountUsd)) return;
+      await new Promise((resolve) => setTimeout(resolve, UNWIND_BALANCE_INTERVAL_MS));
+    }
+    throw new Error(
+      `$${amountUsd} USDC did not arrive at ${address} within ` +
+        `${(UNWIND_BALANCE_ATTEMPTS * UNWIND_BALANCE_INTERVAL_MS) / 1000}s — nothing was spent`,
+    );
   }
 
   /**
@@ -986,12 +1011,19 @@ export class CdpWalletProvider implements WalletProvider {
   /** VERIFY LIVE. Send USDC from the agent spender to any address. */
   async transferUsdcFromSpender(to: Hex, amountUsd: number): Promise<{ txHash: string }> {
     const spender = await this.#agentSpender();
+    // What the destination held first, so arrival is measurable rather than assumed.
+    const heldBefore = await this.#usdcOnChain(to);
     const result = await spender.transfer({
       to,
       amount: parseUnits(String(amountUsd), USDC_DECIMALS),
       token: "usdc",
       network: this.#network,
     });
+    // `transfer` resolves on SUBMIT. Every caller then immediately spends what it
+    // just sent — ACP funds escrow from the destination, `send` reports a completed
+    // transfer, `refundUser` tells the user their money is back — and all three were
+    // saying so while the transfer was still in flight.
+    await this.#waitForUsdcArrival(to, heldBefore, amountUsd);
     return { txHash: (result as { transactionHash?: string }).transactionHash ?? "0x" };
   }
 

@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi, parseUnits } from "viem";
+import { encodeFunctionData, erc20Abi, formatUnits, parseUnits } from "viem";
 
 import { loadConfig } from "../config.ts";
 import type { Hex } from "../wallet/index.ts";
@@ -125,6 +125,39 @@ export class VirtualsAcpProvider implements AcpProvider {
       return `agent://${chosen.walletAddress}`;
     } finally {
       await stop();
+    }
+  }
+
+  /**
+   * Return whatever is stranded in Ward's ACP wallet to the user's smart account.
+   *
+   * Escrow draws on that wallet, so a job that dies between the forward and
+   * settlement leaves the user's money there — one hop past the CDP spender, where
+   * `scripts/sweep-spender.ts` cannot reach it and only this adapter can sign. It
+   * happened: $0.50, after `session.fund()` reverted.
+   *
+   * The wallet is meant to rest at zero (see the note at the top of this file), so
+   * anything sitting in it belongs to whoever last had a job fail there — hence the
+   * caller names the user rather than this guessing.
+   */
+  async recoverStranded(accountKey: string): Promise<{ movedUsd: number; from: Hex; to: Hex }> {
+    const wallet = walletProvider();
+    const { agent, adapter, stop } = await this.#agent();
+    try {
+      const from = (await agent.getAddress()) as Hex;
+      const { smartAccount } = await wallet.connect(accountKey);
+      const to = smartAccount as Hex;
+      const raw = (await adapter.readContract(CHAIN_ID, {
+        address: USDC_BASE,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [from],
+      })) as bigint;
+      const heldUsd = Number(formatUnits(raw, USDC_DECIMALS));
+      if (heldUsd <= 0) return { movedUsd: 0, from, to };
+      return { movedUsd: await refundFromBuyer(adapter, CHAIN_ID, from, to, heldUsd), from, to };
+    } finally {
+      await stop().catch(() => undefined);
     }
   }
 
