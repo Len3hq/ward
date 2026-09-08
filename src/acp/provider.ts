@@ -28,6 +28,21 @@ export interface AcpJobRequest {
   subject: string;
   /** Escrow budget cap, in USD. */
   maxUsd: number;
+  /**
+   * Who to hire — chosen by `execution/acp.ts`, which can see the trust history.
+   *
+   * Passed in rather than re-selected here so the agent named in the confirmation
+   * is the agent actually hired. Selecting twice meant a directory that reordered
+   * between the two calls could hire someone the user never approved.
+   */
+  counterpartyId?: string;
+}
+
+/** One agent the directory offers for a job. */
+export interface AcpCandidate {
+  /** `agent://0x…` — the id trust is keyed by. */
+  id: string;
+  name?: string;
 }
 
 export interface AcpJobResult {
@@ -48,6 +63,14 @@ export interface AcpProvider {
   readonly kind: "virtuals" | "stub";
   /** The counterparty a hire would use — read its trust score BEFORE hiring. */
   preferredCounterparty(jobType: string): Promise<string>;
+  /**
+   * Everyone in the directory who sells this job, best-ranked first.
+   *
+   * Ranking here is the marketplace's own; Ward re-ranks by what it REMEMBERS about
+   * each of them (`execution/acp.ts`), which is the whole point of keeping a trust
+   * history. A provider with one fixed counterparty returns a single entry.
+   */
+  candidates(jobType: string, limit: number): Promise<AcpCandidate[]>;
   /**
    * Post a job and drive it to resolution. Never throws for a normal "did not
    * settle" — sets `settled: false`.

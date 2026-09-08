@@ -3,7 +3,7 @@ import { encodeFunctionData, erc20Abi, formatUnits, parseUnits } from "viem";
 import { loadConfig } from "../config.ts";
 import type { Hex } from "../wallet/index.ts";
 import { walletProvider } from "../wallet/index.ts";
-import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
+import type { AcpCandidate, AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
 
 /**
  * Real Virtuals ACP path — `@virtuals-protocol/acp-node-v2`.
@@ -134,6 +134,44 @@ export class VirtualsAcpProvider implements AcpProvider {
   }
 
   /**
+   * Everyone on Virtuals selling token-risk assessment, marketplace order.
+   *
+   * This is what opens Ward up beyond its own seller: `browseAgents` is the real
+   * directory, so a hire can reach any registered agent that offers the work. Agents
+   * with no offering are dropped — there is nothing to buy from them and no price
+   * for escrow to fund, so listing them would only produce a hire that fails.
+   *
+   * A pin (`ACP_COUNTERPARTY_WALLET`) short-circuits this to one agent, which is
+   * what a reproducible demo needs; unset it and Ward shops the whole directory.
+   */
+  async candidates(_jobType: string, limit: number): Promise<AcpCandidate[]> {
+    const { agent, stop } = await this.#agent();
+    try {
+      const pinned = pinnedCounterparty();
+      if (pinned !== null) {
+        const match = (await agent.getAgentByWalletAddress(pinned)) as {
+          walletAddress?: string;
+          name?: string;
+          offerings?: unknown[];
+        } | null;
+        if (!match?.offerings?.length) return [];
+        return [{ id: `agent://${match.walletAddress}`, name: match.name }];
+      }
+
+      const found = (await agent.browseAgents(OFFERING_KEYWORD, { topK: limit })) as Array<{
+        walletAddress?: string;
+        name?: string;
+        offerings?: unknown[];
+      }>;
+      return found
+        .filter((a) => typeof a.walletAddress === "string" && !!a.offerings?.length)
+        .map((a) => ({ id: `agent://${a.walletAddress}`, name: a.name }));
+    } finally {
+      await stop().catch(() => undefined);
+    }
+  }
+
+  /**
    * Return whatever is stranded in Ward's ACP wallet to the user's smart account.
    *
    * Escrow draws on that wallet, so a job that dies between the forward and
@@ -181,13 +219,34 @@ export class VirtualsAcpProvider implements AcpProvider {
       const buyerAddress = (await agent.getAddress()) as Hex;
       let provider: { walletAddress: string; offerings: Array<{ name: string }> };
       try {
-        provider = await selectCounterparty<{
-          walletAddress: string;
-          offerings: Array<{ name: string }>;
-        }>({
-          byWallet: (wallet) => agent.getAgentByWalletAddress(wallet),
-          browse: (keyword, opts) => agent.browseAgents(keyword, opts),
-        });
+        // Hire the agent the CALLER chose, when it chose one. Re-selecting here
+        // meant the confirmation and the hire were two independent lookups, so a
+        // directory that reordered in between could hire someone the user never
+        // approved — and the trust score they were shown belonged to a different
+        // agent. Fall back to selection only when nobody named one.
+        const named = job.counterpartyId?.replace(/^agent:\/\//, "").toLowerCase();
+        if (named && /^0x[a-f0-9]{40}$/.test(named)) {
+          const match = (await agent.getAgentByWalletAddress(named)) as {
+            walletAddress: string;
+            offerings?: Array<{ name: string }>;
+          } | null;
+          if (!match?.offerings?.length) {
+            return notSettled(
+              job,
+              `${named} is not a registered ACP agent with an offering`,
+              named,
+            );
+          }
+          provider = { walletAddress: match.walletAddress, offerings: match.offerings };
+        } else {
+          provider = await selectCounterparty<{
+            walletAddress: string;
+            offerings: Array<{ name: string }>;
+          }>({
+            byWallet: (wallet) => agent.getAgentByWalletAddress(wallet),
+            browse: (keyword, opts) => agent.browseAgents(keyword, opts),
+          });
+        }
       } catch (error) {
         return notSettled(job, error instanceof Error ? error.message : String(error));
       }

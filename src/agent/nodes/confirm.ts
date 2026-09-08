@@ -12,7 +12,7 @@ import {
   trustScore,
   type ActionType,
 } from "../../../memory/index.ts";
-import { acpProvider } from "../../acp/index.ts";
+import { chooseCounterparty } from "../../execution/acp.ts";
 import { loadConfig } from "../../config.ts";
 import { evaluateGate } from "../../execution/gate.ts";
 import {
@@ -69,6 +69,8 @@ export async function confirmNode(
   let acpSubject: string | undefined;
   let destination: string | undefined;
   let acpCounterparty: string | undefined;
+  /** How many agents the directory offered — worth saying when it was a real choice. */
+  let acpConsidered = 0;
   let amountUsd: number;
   /** The normalised `SELL/BUY` for a swap — what `execute` is handed, not the raw parse. */
   let swapPair: string | undefined;
@@ -127,7 +129,12 @@ export async function confirmNode(
     answered = true;
   } else if (action === "acp_job") {
     acpSubject = intent.token ?? intent.pair ?? "the token";
-    acpCounterparty = await acpProvider().preferredCounterparty("token_risk");
+    // The SAME choice the hire will make, so the agent named here is the agent hired
+    // — and the trust score shown belongs to that agent rather than to whoever the
+    // directory happened to rank first a moment earlier.
+    const choice = await chooseCounterparty(state.userId, "token_risk");
+    acpCounterparty = choice.counterpartyId;
+    acpConsidered = choice.considered;
     amountUsd = intent.amount_usd ?? loadConfig().acpBudgetUsd;
   } else if (action === "send") {
     destination = intent.token;
@@ -182,7 +189,8 @@ export async function confirmNode(
     const trust = await trustScore(state.userId, acpCounterparty);
     const seen = record.acp_job_history.filter((j) => j.counterparty_id === acpCounterparty).length;
     summary =
-      `Hire ${acpCounterparty} (trust ${trust.toFixed(2)}${seen ? `, ${seen} prior job(s)` : ", unproven"}) ` +
+      `Hire ${acpCounterparty} (trust ${trust.toFixed(2)}${seen ? `, ${seen} prior job(s)` : ", unproven"}` +
+      `${acpConsidered > 1 ? `, best of ${acpConsidered} on Virtuals` : ""}) ` +
       `to assess ${acpSubject} for ~$${amountUsd}`;
   } else if (action === "send" && destination) {
     // Name the destination in full, every time. An address is the one field a user

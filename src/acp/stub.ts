@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
+import type { AcpCandidate, AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
 
 /**
  * A **clearly-labelled simulation** of an ACP counterparty. Used by the trust-loop
@@ -20,6 +20,11 @@ export class StubAcpProvider implements AcpProvider {
 
   async preferredCounterparty(): Promise<string> {
     return COUNTERPARTY;
+  }
+
+  /** One simulated seller, so choosing is trivial but the shape matches the real path. */
+  async candidates(): Promise<AcpCandidate[]> {
+    return [{ id: COUNTERPARTY, name: "simulated token-risk seller" }];
   }
 
   async hire(accountKey: string | null, job: AcpJobRequest): Promise<AcpJobResult> {
