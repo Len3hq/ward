@@ -268,8 +268,25 @@ export class VirtualsAcpProvider implements AcpProvider {
           resolve(result);
         };
 
+        /**
+         * The job THIS hire created. Every event is filtered against it.
+         *
+         * The agent emits entries for every session it holds open, and the handler
+         * used to act on any of them: a stale job completing resolved whichever hire
+         * happened to be waiting, with that job's deliverable. Measured — a hire for
+         * AERO was resolved by an older VVV job finishing, and the user was charged
+         * for AERO, shown VVV's report, and the counterparty credited +0.07 trust for
+         * work on a different job. Only `resolved_by` in the deliverable made it
+         * visible at all.
+         */
+        let ourJobId: string | null = null;
+        /** Entries seen before the id is known — the job exists on chain before
+         * `createJobByOfferingName` resolves locally, so the seller can price it in
+         * that window. Dropping those would deadlock the very race this guards. */
+        const early: Array<[unknown, unknown]> = [];
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        agent.on("entry", async (session: any, entry: any) => {
+        const handleEntry = async (session: any, entry: any) => {
           if (entry.kind !== "system") return;
           try {
             if (entry.event.type === "budget.set") {
@@ -341,16 +358,32 @@ export class VirtualsAcpProvider implements AcpProvider {
             );
             await agent.stop().catch(() => undefined);
           }
+        };
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        agent.on("entry", (session: any, entry: any) => {
+          if (ourJobId === null) {
+            early.push([session, entry]);
+            return;
+          }
+          if (String(session.jobId) !== ourJobId) return;
+          void handleEntry(session, entry);
         });
 
         agent.start().then(async () => {
-          await agent.createJobByOfferingName(
+          const created = await agent.createJobByOfferingName(
             chainId,
             provider.offerings[0]!.name,
             provider.walletAddress,
             { ticker: job.subject },
             { evaluatorAddress: buyerAddress },
           );
+          ourJobId = String(created);
+          // Replay anything that arrived while the id was unknown, ours only.
+          for (const [session, entry] of early.splice(0)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (String((session as any).jobId) === ourJobId) void handleEntry(session, entry);
+          }
         });
 
         setTimeout(() => finish(notSettled(job, "timed out", provider.walletAddress)), 180_000);
