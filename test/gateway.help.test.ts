@@ -6,13 +6,8 @@ import type { Telegraf } from "telegraf";
 
 import { type IntentAction, parseIntent } from "../src/agent/intent.ts";
 
-import {
-  BOT_COMMANDS,
-  BOT_DESCRIPTION,
-  BOT_SHORT_DESCRIPTION,
-  HELP,
-  WELCOME,
-} from "../src/gateway/help.ts";
+import { BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION, HELP, welcome } from "../src/gateway/help.ts";
+import { BOT_COMMANDS, isIdentityCommand, resolveCommand } from "../src/gateway/commands.ts";
 import { publishProfile } from "../src/telegram/gateway.ts";
 
 /**
@@ -48,17 +43,28 @@ describe("what Telegram will actually accept", () => {
 
   test("help and welcome fit in one message", () => {
     expect(chars(HELP)).toBeLessThanOrEqual(4096);
-    expect(chars(WELCOME)).toBeLessThanOrEqual(4096);
+    expect(chars(welcome("telegram"))).toBeLessThanOrEqual(4096);
+    expect(chars(welcome("discord"))).toBeLessThanOrEqual(4096);
   });
 });
 
 /**
  * Autocompleting a command that nothing handles is worse than not advertising it:
  * the user types it, Telegram offered it, and Ward says nothing at all.
+ *
+ * Registration is table-driven now, so this checks the two halves that can still
+ * disagree: every advertised name must resolve to a row, and every row's handler must
+ * actually be reached — identity commands through the loop, the rest by name.
  */
 test("every advertised command is actually wired up", () => {
   const source = readFileSync("src/telegram/gateway.ts", "utf8");
+  // The loop that registers every identity row, including the one-word aliases.
+  expect(source).toMatch(/for \(const spec of COMMANDS\)/);
+
   for (const { command } of BOT_COMMANDS) {
+    const spec = resolveCommand(command);
+    expect(spec, `/${command} is advertised but is not in the table`).toBeDefined();
+    if (isIdentityCommand(spec!.base)) continue;
     // Whitespace-tolerant: prettier wraps the longer registrations across lines.
     const registered =
       new RegExp(String.raw`bot\.command\(\s*"${command}"`).test(source) ||
@@ -106,7 +112,8 @@ test("the help leads with what Ward does, not with account chores", () => {
   expect(HELP).toContain("hire an agent");
   expect(HELP).toContain("what data can I buy?");
   // Written for someone who has never heard the acronym.
-  expect(HELP).toContain("Claude Code or Cursor");
+  expect(HELP).toContain("Claude Code");
+  expect(HELP).not.toMatch(/\bMCP\b/);
 });
 
 /**
@@ -140,4 +147,43 @@ describe("the phrases the help promises", () => {
   test('"what data can I buy?" asks, it does not buy', async () => {
     expect((await parseIntent("what data can I buy?")).action_type).toBe("read_only");
   });
+});
+
+/**
+ * The reason `welcome` takes a channel at all. One account reachable from Telegram,
+ * Discord and an MCP client was invisible until you tapped a command described as
+ * "another app" — so the first screen now names them, and this is what stops that
+ * regressing to a generic phrase again. It also pins the bug the parameter exists to
+ * prevent: offering Discord to someone who is already standing in Discord.
+ */
+describe("the welcome names the other ways in", () => {
+  test("Telegram is pointed at Discord and at MCP clients", () => {
+    const text = welcome("telegram");
+    expect(text).toContain("Discord");
+    expect(text).toContain("/link_discord");
+    expect(text).toContain("Claude Code or Cursor");
+    expect(text).not.toContain("/link_telegram");
+  });
+
+  test("Discord is pointed at Telegram and at MCP clients", () => {
+    const text = welcome("discord");
+    expect(text).toContain("Telegram");
+    expect(text).toContain("/link_telegram");
+    expect(text).toContain("Claude Code or Cursor");
+    expect(text).not.toContain("/link_discord");
+  });
+
+  test("the risk-tolerance question stays the last thing asked", () => {
+    for (const channel of ["telegram", "discord"] as const) {
+      const lines = welcome(channel).trimEnd().split("\n");
+      expect(lines[lines.length - 1]).toContain("risk tolerance");
+    }
+  });
+});
+
+/** The command menu is read without tapping anything, so it names the apps by name. */
+test("the menu names Discord and the coding clients without being clicked", () => {
+  const menu = BOT_COMMANDS.map((c) => `${c.command} ${c.description}`).join("\n");
+  expect(menu).toContain("Discord");
+  expect(menu).toMatch(/Claude Code|Cursor/);
 });

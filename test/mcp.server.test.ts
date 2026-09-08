@@ -134,7 +134,7 @@ describe("token binding", () => {
     for (const name of ["ward_whoami", "ward_read_authorization", "ward_link_status"]) {
       const { text, isError } = await call(client, name);
       expect(isError).toBe(true);
-      expect(text).toMatch(/\/link mcp/);
+      expect(text).toMatch(/\/link_mcp/);
     }
     await client.close();
   });

@@ -10,7 +10,10 @@ import { issueToken, revokeAllTokens, tokenCount } from "../mcp/token.ts";
 import { accountsFor, resolveUser, unlink } from "./index.ts";
 import { ownersFor, revokeOwner } from "./wallet.ts";
 import {
+  ACTION_WORDS,
   DEFAULT_GRANT_DAYS,
+  MAX_GRANT_DAYS,
+  actionLabel,
   checkGrant,
   confirmGrant,
   describeGrant,
@@ -19,6 +22,7 @@ import {
   proposeGrant,
   revokeGrant,
   tokenRef,
+  usd,
 } from "../mcp/grants.ts";
 import {
   CODE_TTL_MS,
@@ -74,7 +78,13 @@ export async function linkCommand(ctx: CommandContext, argument: string): Promis
   // lowercase, so `/link discord` and `/link WARD-ABCD-EFGH` can never be confused.
   if (arg.toLowerCase() === "wallet") return mintOneClick(ctx, "wallet");
   const target = channelSchema.safeParse(arg.toLowerCase());
-  if (target.success && target.data !== ctx.channel && target.data !== "mcp") {
+  if (target.success && target.data !== "mcp") {
+    // `/link_discord` is in Discord's own command list, because Discord registers every
+    // row it can route. Saying so is better than falling through and trying to redeem
+    // the word "discord" as a link code.
+    if (target.data === ctx.channel) {
+      return `You're already talking to me on ${TITLE[target.data]}. /link_mcp connects a coding client, and /link_wallet verifies a wallet.`;
+    }
     return mintOneClick(ctx, target.data);
   }
   return arg.length > 0 ? redeem(ctx, arg) : mint(ctx);
@@ -144,9 +154,11 @@ async function mintMcpToken(ctx: CommandContext): Promise<string> {
     "That client can read your limits, your spend history and your wallet, and it can " +
       "*propose* a spend — every proposal comes back here for you to confirm. It cannot " +
       "approve one, and it cannot spend on its own until you give it a grant with " +
-      '"/mcp grant" — then only up to what that grant allows, until you revoke it. ' +
+      '"/mcp_grant" — then only up to what that grant allows, until you revoke it. ' +
       "With no grant, a stolen token can only ask.",
-    existing > 1 ? `\nYou now have ${existing} MCP tokens. "/unlink mcp" revokes all of them.` : "",
+    existing > 1
+      ? `\nYou now have ${existing} connected clients. "/unlink_mcp" disconnects all of them.`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -176,7 +188,7 @@ async function mint(ctx: CommandContext): Promise<string> {
       ...(oneClick.length > 0
         ? [
             `\nOr skip the typing entirely: ${oneClick
-              .map((c) => `"/link ${c}"`)
+              .map((c) => `"/link_${c}"`)
               .join(" or ")} gives you a one-click link.`,
           ]
         : []),
@@ -261,35 +273,102 @@ export async function mcpCommand(ctx: CommandContext, argument: string): Promise
     case "stop":
       return stopCommand(ctx, userId);
     default:
-      return MCP_HELP;
+      return overview(userId);
   }
 }
 
-const MCP_HELP = [
-  "/mcp tokens — your MCP tokens and what each one is allowed to do",
-  "/mcp grants — the execution grants currently live",
-  "/mcp grant <token> <actions> <per-action $> <daily $> [days] — propose a grant",
-  "/mcp confirm <code> — apply the grant you were just shown",
-  "/mcp revoke <token> — take an execution grant back",
-  "/mcp stop — revoke EVERY grant at once; clients can still read and propose",
+/**
+ * `/mcp` on its own — what someone sees when they tap the menu entry and send it with
+ * no argument, which is the overwhelmingly common way this command is used.
+ *
+ * It used to answer with six lines of syntax: `<token>`, `<actions>`, a five-argument
+ * positional example, and the word "x402". None of that says what an MCP client *is*,
+ * and none of it said how to get one — minting a token is `/link_mcp`, a different
+ * command, which the help for this one never mentioned. Someone who ran `/mcp` to find
+ * out what it was learned only that they did not have the vocabulary to ask.
+ *
+ * So this answers the question actually being asked — what is this, what do I have,
+ * what should I do next — and reaches syntax only when the user has asked for the one
+ * command that needs it.
+ */
+async function overview(userId: string): Promise<string> {
+  const tokens = (await accountsFor(userId)).filter((a) => a.channel === "mcp");
+  const live = await liveGrants(userId);
+
+  const state =
+    tokens.length === 0
+      ? ["Nothing is connected yet.", "", "Connect one with /link_mcp."]
+      : [
+          `${tokens.length} connected client${tokens.length === 1 ? "" : "s"}:`,
+          ...tokens.map((t) => {
+            const ref = tokenRef(t.account_id);
+            const grant = live.find((g) => g.ref === ref);
+            return grant
+              ? `  · ${ref} — can spend on its own: ${grant.grant.action_types.map(actionLabel).join(", ")}, ` +
+                  `up to ${usd(grant.grant.per_action_limit_usd)} per action and ` +
+                  `${usd(grant.grant.daily_limit_usd)} a day, until ${grant.grant.expires_at.slice(0, 10)}`
+              : `  · ${ref} — can ask, cannot spend`;
+          }),
+        ];
+
+  return [
+    "An MCP client is a coding assistant — Claude Code, Cursor, Zed — talking to this",
+    "same Ward, with the same limits and the same memory.",
+    "",
+    ...state,
+    "",
+    "What a connected client can always do:",
+    "  · read your limits, your balance and your spend history",
+    "  · propose a spend — it comes back here for you to approve",
+    "",
+    "What it cannot do until you say so:",
+    "  · spend anything on its own",
+    "",
+    "More:",
+    "  /mcp_grant — let one client spend on its own, up to a limit you set",
+    "  /mcp_grants — which clients can currently spend without asking",
+    "  /mcp_tokens — list connected clients",
+    "  /mcp_revoke — take one client's spending permission back",
+    "  /mcp_stop — stop every client spending, right now",
+    "  /unlink_mcp — disconnect every client entirely",
+  ].join("\n");
+}
+
+/**
+ * `/mcp_grant` with nothing after it — a menu tap, in other words, which is how most
+ * people will arrive here. Five positional arguments need a worked example far more
+ * than they need a syntax line, so they get both, and every placeholder is spelled out
+ * underneath in the words a user would have to guess otherwise.
+ */
+const GRANT_HELP = [
+  "Let one client spend on its own, without asking you each time.",
   "",
-  'Actions are any of: x402, swap, acp — or "all". Example:',
-  "    /mcp grant a3f9c2d1 x402 0.5 2 7",
+  "    /mcp_grant <client> <what> <per action $> <per day $> [days]",
   "",
-  "Without a grant a token can read and propose, never spend. That is the default.",
+  "For example — let client a3f9c2d1 buy data, at most $0.50 at a time and $2 a day,",
+  "for 7 days:",
+  "",
+  "    /mcp_grant a3f9c2d1 data 0.50 2 7",
+  "",
+  "  <client>  the 8-character id of a client, from /mcp_tokens",
+  `  <what>    ${ACTION_WORDS} — or "all". Separate several with spaces.`,
+  `  [days]    how long it lasts, up to ${MAX_GRANT_DAYS}. Leave it off for ${DEFAULT_GRANT_DAYS}.`,
+  "",
+  "I'll read it back to you in plain words and ask you to confirm before anything is",
+  "armed. Nothing is granted by this command alone.",
 ].join("\n");
 
 async function listTokens(userId: string): Promise<string> {
   const tokens = (await accountsFor(userId)).filter((a) => a.channel === "mcp");
-  if (tokens.length === 0) return 'You have no MCP tokens. Mint one with "/link mcp".';
+  if (tokens.length === 0) return 'No coding client is connected. Connect one with "/link_mcp".';
 
   const live = await liveGrants(userId);
   const lines = tokens.map((t) => {
     const ref = tokenRef(t.account_id);
     const grant = live.find((g) => g.ref === ref);
     return grant
-      ? `· ${ref} — ${grant.grant.action_types.join(", ")}, $${grant.grant.per_action_limit_usd}/action, ` +
-          `$${grant.grant.daily_limit_usd}/day, until ${grant.grant.expires_at.slice(0, 10)}`
+      ? `· ${ref} — ${grant.grant.action_types.map(actionLabel).join(", ")}, ${usd(grant.grant.per_action_limit_usd)}/action, ` +
+          `${usd(grant.grant.daily_limit_usd)}/day, until ${grant.grant.expires_at.slice(0, 10)}`
       : `· ${ref} — read and propose only`;
   });
   return [`${tokens.length} MCP token${tokens.length === 1 ? "" : "s"}:`, ...lines].join("\n");
@@ -304,11 +383,11 @@ async function listGrants(userId: string): Promise<string> {
     "Live execution grants:",
     ...live.map(
       (g) =>
-        `· ${g.ref} — ${g.grant.action_types.join(", ")}, $${g.grant.per_action_limit_usd}/action, ` +
-        `$${g.grant.daily_limit_usd}/day, expires ${g.grant.expires_at.slice(0, 10)}`,
+        `· ${g.ref} — ${g.grant.action_types.map(actionLabel).join(", ")}, ${usd(g.grant.per_action_limit_usd)}/action, ` +
+        `${usd(g.grant.daily_limit_usd)}/day, expires ${g.grant.expires_at.slice(0, 10)}`,
     ),
     "",
-    'Take one back with "/mcp revoke <token>".',
+    'Take one back with "/mcp_revoke <client>".',
   ].join("\n");
 }
 
@@ -318,11 +397,11 @@ async function proposeGrantCommand(
   args: string[],
 ): Promise<string> {
   const [ref, actions, perAction, daily, days] = args;
-  if (!ref || !actions || !perAction || !daily) return MCP_HELP;
+  if (!ref || !actions || !perAction || !daily) return GRANT_HELP;
 
   const tokens = (await accountsFor(userId)).filter((a) => a.channel === "mcp");
   const token = tokens.find((t) => tokenRef(t.account_id) === ref.toLowerCase());
-  if (!token) return `You have no MCP token ${ref}. "/mcp tokens" lists them.`;
+  if (!token) return `You have no client ${ref}. "/mcp_tokens" lists the ones you have.`;
 
   const actionTypes = parseActionTypes(actions);
   if (actionTypes === null) {
@@ -339,7 +418,7 @@ async function proposeGrantCommand(
     channel: ctx.channel,
   };
   if (!Number.isFinite(request.perActionUsd) || !Number.isFinite(request.dailyUsd)) {
-    return "Those limits need to be numbers, like: /mcp grant " + ref + " x402 0.5 2 7";
+    return `Those limits need to be numbers, like: /mcp_grant ${ref} data 0.50 2 7`;
   }
   if (!Number.isFinite(request.days)) return `"${days}" isn't a number of days.`;
 
@@ -350,7 +429,7 @@ async function proposeGrantCommand(
   return [
     describeGrant(request, ref),
     "",
-    `To apply it, send: /mcp confirm ${code}`,
+    `To apply it, send: /mcp_confirm ${code}`,
     "If that isn't what you meant, do nothing — it expires in 5 minutes.",
   ].join("\n");
 }
@@ -360,7 +439,7 @@ async function confirmGrantCommand(
   userId: string,
   code: string,
 ): Promise<string> {
-  if (!code) return 'Send "/mcp confirm <code>" with the code from the grant you were shown.';
+  if (!code) return 'Send "/mcp_confirm <code>" with the code from the grant you were shown.';
 
   const result = await confirmGrant(code, userId, ctx.channel);
   if (!result.ok) return result.message;
@@ -369,20 +448,20 @@ async function confirmGrantCommand(
   // moment a client stopped needing to ask.
   const news =
     `Token ${result.ref} can now spend on your Ward without asking: ` +
-    `${result.grant.action_types.join(", ")}, up to $${result.grant.per_action_limit_usd} per action ` +
-    `and $${result.grant.daily_limit_usd} per day, until ${result.grant.expires_at.slice(0, 10)}.` +
-    `\n\nIf that wasn't you, send "/mcp revoke ${result.ref}" now.`;
+    `${result.grant.action_types.map(actionLabel).join(", ")}, up to ${usd(result.grant.per_action_limit_usd)} per action ` +
+    `and ${usd(result.grant.daily_limit_usd)} per day, until ${result.grant.expires_at.slice(0, 10)}.` +
+    `\n\nIf that wasn't you, send "/mcp_revoke ${result.ref}" now.`;
   for (const account of await otherAccounts(userId, ctx.channel, ctx.accountId)) {
     await notifyAccount(account.channel, account.account_id, news);
   }
 
   return [
-    `Granted. Token ${result.ref} can spend ${result.grant.action_types.join(", ")} up to ` +
-      `$${result.grant.per_action_limit_usd} per action and $${result.grant.daily_limit_usd} per day, ` +
+    `Granted. Client ${result.ref} can now ${result.grant.action_types.map(actionLabel).join(", ")} up to ` +
+      `${usd(result.grant.per_action_limit_usd)} per action and ${usd(result.grant.daily_limit_usd)} per day, ` +
       `expiring ${result.grant.expires_at.slice(0, 10)}.`,
     "",
     "It still can't exceed your own caps or your on-chain allowance. Every spend will be " +
-      'announced here, and "/mcp revoke ' +
+      'announced here, and "/mcp_revoke ' +
       result.ref +
       '" ends it immediately.',
   ].join("\n");
@@ -405,7 +484,7 @@ async function stopCommand(ctx: CommandContext, userId: string): Promise<string>
       `${live.map((g) => g.ref).join(", ")}.`,
     "",
     "Those clients can still read your limits and propose spends for you to confirm — " +
-      'they just can\'t act on their own. "/unlink mcp" removes their access entirely.',
+      'they just can\'t act on their own. "/unlink_mcp" removes their access entirely.',
   ].join("\n");
 }
 
@@ -414,7 +493,7 @@ async function revokeGrantCommand(
   userId: string,
   ref: string,
 ): Promise<string> {
-  if (!ref) return 'Send "/mcp revoke <token>". "/mcp grants" lists them.';
+  if (!ref) return 'Send "/mcp_revoke <client>". "/mcp_grants" lists the ones that can spend.';
   const removed = await revokeGrant(userId, ref, ctx.channel);
   return removed
     ? `Revoked. Token ${ref} is back to read-and-propose only — it can ask you to spend, ` +
@@ -440,13 +519,13 @@ export async function unlinkCommand(ctx: CommandContext, argument: string): Prom
     const wallets = await ownersFor(userId);
     return wallets.length === 0
       ? "You have no verified wallets."
-      : `Which one? Say "/unlink wallet <address>". You have:\n${wallets.map((w) => `· ${w}`).join("\n")}`;
+      : `Which one? Say "/unlink_wallet <address>". You have:\n${wallets.map((w) => `· ${w}`).join("\n")}`;
   }
 
   const target = channelSchema.safeParse(argument.trim().toLowerCase());
   if (!target.success) {
     const linked = accounts.map((a) => a.channel).join(", ") || "none";
-    return `Which one? Say "/unlink <channel>". You currently have: ${linked}.`;
+    return `Which one? Say "/unlink <app>", or /unlink_mcp for coding clients. You currently have: ${linked}.`;
   }
 
   // MCP tokens go all at once: "revoke my MCP access" must not leave a second
@@ -522,10 +601,10 @@ export async function whoamiCommand(ctx: CommandContext): Promise<string> {
           "MCP clients that can spend WITHOUT asking you:",
           ...grants.map(
             (g) =>
-              `· ${g.ref} — ${g.grant.action_types.join(", ")}, $${g.grant.per_action_limit_usd}/action, ` +
-              `$${g.grant.daily_limit_usd}/day, until ${g.grant.expires_at.slice(0, 10)}`,
+              `· ${g.ref} — ${g.grant.action_types.map(actionLabel).join(", ")}, ${usd(g.grant.per_action_limit_usd)}/action, ` +
+              `${usd(g.grant.daily_limit_usd)}/day, until ${g.grant.expires_at.slice(0, 10)}`,
           ),
-          'Stop all of them at once with "/mcp stop".',
+          'Stop all of them at once with "/mcp_stop".',
         ]
       : []),
     "",

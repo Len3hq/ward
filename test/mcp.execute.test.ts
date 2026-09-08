@@ -83,7 +83,7 @@ const ctx = { channel: "telegram" as const, accountId: TG };
 
 async function grant(args: string): Promise<void> {
   const proposal = await mcpCommand(ctx, `grant ${args}`);
-  const code = /\/mcp confirm ([A-Z0-9]+)/.exec(proposal)?.[1];
+  const code = /\/mcp_confirm ([A-Z0-9]+)/.exec(proposal)?.[1];
   if (!code) throw new Error(`grant was refused: ${proposal}`);
   await mcpCommand(ctx, `confirm ${code}`);
   told = [];
@@ -199,7 +199,7 @@ describe("a spend inside the grant", () => {
     expect(told).toHaveLength(1);
     expect(told[0]).toContain("without asking");
     expect(told[0]).toContain("$10.00");
-    expect(told[0]).toContain(`/mcp revoke ${ref}`);
+    expect(told[0]).toContain(`/mcp_revoke ${ref}`);
   });
 
   test("the grant's daily limit binds before the user's own", async () => {
@@ -292,7 +292,7 @@ describe("seeing it and stopping it", () => {
     const after = await whoamiCommand(ctx);
     expect(after).toContain("WITHOUT asking");
     expect(after).toContain(ref);
-    expect(after).toContain("/mcp stop");
+    expect(after).toContain("/mcp_stop");
   });
 
   test("/mcp stop revokes every grant at once", async () => {

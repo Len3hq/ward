@@ -61,7 +61,7 @@ import { resolveToken } from "./token.ts";
 const NOT_LINKED = [
   "This MCP client isn't linked to a Ward user.",
   "",
-  'Send "/link mcp" to Ward on Telegram or Discord, then put the token it gives you',
+  'Send "/link_mcp" to Ward on Telegram or Discord, then put the token it gives you',
   "in this server's config as WARD_USER_TOKEN and restart the client.",
 ].join("\n");
 
@@ -298,7 +298,7 @@ export function createMcpServer(
             ? "No human channel is linked, so a proposal has nowhere to be confirmed."
             : `Proposals will be confirmed on: ${human.map((a) => a.channel).join(", ")}.`,
           record === null ? `\n${NO_AUTHORIZATION}` : "",
-          '\nRevoke this and every other MCP token with "/unlink mcp" on a human channel.',
+          '\nRevoke this and every other MCP token with "/unlink_mcp" on a human channel.',
         ]
           .filter(Boolean)
           .join("\n"),
@@ -482,7 +482,7 @@ async function describeOwnGrant(userId: string, token: string | undefined): Prom
   if (grant === null) {
     return [
       "This client:      read and propose only. It cannot spend.",
-      'The user can change that from Telegram or Discord with "/mcp grant".',
+      'The user can change that from Telegram or Discord with "/mcp_grant".',
     ];
   }
   const spent = await grantSpentToday(userId, grant.token_hash);

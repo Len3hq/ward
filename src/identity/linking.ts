@@ -341,7 +341,7 @@ async function redeemHashed(
       message:
         kind === "code"
           ? "That code has already been used. Link codes work exactly once — mint a new one."
-          : "That link has already been used. Ask for a fresh one with /link discord.",
+          : "That link has already been used. Ask for a fresh one with /link_discord.",
     };
   }
   if (Date.parse(record.expires_at) <= now.getTime()) {
@@ -351,7 +351,7 @@ async function redeemHashed(
       message:
         kind === "code"
           ? "That code has expired. Mint a fresh one with /link and use it within 5 minutes."
-          : "That link has expired. Ask for a fresh one with /link discord and use it within 5 minutes.",
+          : "That link has expired. Ask for a fresh one with /link_discord and use it within 5 minutes.",
     };
   }
 

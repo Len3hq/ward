@@ -106,7 +106,9 @@ describe("the system prompt tells the model what Ward can do", () => {
   test("it names each capability the user asked about and got refused on", () => {
     expect(BASE_SYSTEM).toContain("x402");
     expect(BASE_SYSTEM).toContain("discover_x402_endpoints");
-    expect(BASE_SYSTEM).toContain("/link discord");
+    expect(BASE_SYSTEM).toContain("/link_discord");
+    // The model has to be able to name the command that connects a coding client.
+    expect(BASE_SYSTEM).toContain("/link_mcp");
     expect(BASE_SYSTEM).toContain("/mcp");
     expect(BASE_SYSTEM).toContain("Virtuals ACP");
     expect(BASE_SYSTEM).toContain("read_wallet_balance");

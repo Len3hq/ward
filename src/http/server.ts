@@ -185,7 +185,7 @@ async function handleCallback(config: LinkServerConfig, url: URL): Promise<Respo
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!code || !state) {
-    return page("Not linked", "That link is incomplete. Ask for a fresh one with /link discord.");
+    return page("Not linked", "That link is incomplete. Ask for a fresh one with /link_discord.");
   }
 
   let account: { id: string; username: string };
@@ -195,7 +195,7 @@ async function handleCallback(config: LinkServerConfig, url: URL): Promise<Respo
     console.error("discord oauth exchange failed:", error);
     return page(
       "Not linked",
-      "I couldn't confirm that with Discord. Nothing changed — ask for a fresh link with /link discord.",
+      "I couldn't confirm that with Discord. Nothing changed — ask for a fresh link with /link_discord.",
     );
   }
 
@@ -281,7 +281,7 @@ async function handleWallet(state: string, request: Request): Promise<Response> 
   const short = `${result.address.slice(0, 6)}\u2026${result.address.slice(-4)}`;
   const news = result.enrolled
     ? `The wallet ${short} was just verified for your Ward. It can now reach this Ward even ` +
-      `without a chat account.\n\nIf that wasn't you, send "/unlink wallet ${result.address}" now.`
+      `without a chat account.\n\nIf that wasn't you, send "/unlink_wallet ${result.address}" now.`
     : `A ${result.mintedOn} account was just linked to your Ward with the wallet ${short}.` +
       `\n\nIf that wasn't you, send "/unlink ${result.mintedOn}" now.`;
   for (const account of await accountsFor(result.userId)) {

@@ -7,21 +7,17 @@ import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { readAnswer } from "../gateway/answers.ts";
 import { registerChannel } from "../gateway/channels.ts";
 import { markCopyable } from "../gateway/format.ts";
+import { BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION, HELP, welcome } from "../gateway/help.ts";
+import type { CommandSpec } from "../gateway/commands.ts";
 import {
   BOT_COMMANDS,
-  BOT_DESCRIPTION,
-  BOT_SHORT_DESCRIPTION,
-  HELP,
-  WELCOME,
-} from "../gateway/help.ts";
+  COMMANDS,
+  commandArgument,
+  isIdentityCommand,
+  runIdentityCommand,
+} from "../gateway/commands.ts";
 import { runTurn, splitMessage } from "../gateway/core.ts";
-import {
-  announceLink,
-  linkCommand,
-  mcpCommand,
-  unlinkCommand,
-  whoamiCommand,
-} from "../identity/commands.ts";
+import { announceLink } from "../identity/commands.ts";
 import { resolveUser } from "../identity/index.ts";
 import { log, logError, preview } from "../log.ts";
 import { redeemLinkState } from "../identity/linking.ts";
@@ -160,7 +156,7 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
       args: payload.length > 0,
     });
     if (payload.length === 0) {
-      await ctx.reply(WELCOME);
+      await ctx.reply(welcome("telegram"));
       return;
     }
 
@@ -199,22 +195,21 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
    * off the command text, so no model output or fetched content can ever reach
    * `redeemLinkCode`.
    */
-  const identity = (
-    handler: (ctx: { channel: "telegram"; accountId: string }, argument: string) => Promise<string>,
-  ) => {
+  const identity = (spec: CommandSpec) => {
     return async (ctx: Context & { message: { text: string } }) => {
-      const argument = ctx.message.text.replace(/^\/\S+\s*/, "");
+      const typed = ctx.message.text.replace(/^\/\S+\s*/, "");
       // The argument can be a link code, so it is counted, never printed.
       log("cmd", {
         channel: "telegram",
         account: String(ctx.from?.id ?? ""),
         command: ctx.message.text.split(/\s+/)[0],
-        args: argument.length > 0,
+        args: typed.length > 0,
       });
       try {
-        const reply = await handler(
+        const reply = await runIdentityCommand(
+          spec.base,
           { channel: "telegram", accountId: String(ctx.from?.id ?? "") },
-          argument,
+          commandArgument(spec, typed),
         );
         await ctx.reply(reply, { link_preview_options: { is_disabled: true } });
       } catch (error) {
@@ -224,13 +219,12 @@ export function createGateway(token: string, graph: WardGraph): Telegraf {
     };
   };
 
-  bot.command("link", identity(linkCommand));
-  bot.command("mcp", identity(mcpCommand));
-  bot.command("unlink", identity(unlinkCommand));
-  bot.command(
-    "whoami",
-    identity((ctx) => whoamiCommand(ctx)),
-  );
+  // Every identity row in the table, including the one-word aliases for what used to
+  // be subcommands — `/link_mcp` is `/link mcp`, registered so that Telegram will
+  // offer it. Driven by the table so an advertised command cannot go unrouted.
+  for (const spec of COMMANDS) {
+    if (isIdentityCommand(spec.base)) bot.command(spec.name, identity(spec));
+  }
 
   bot.on("text", async (ctx) => {
     const text = ctx.message.text;

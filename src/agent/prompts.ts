@@ -51,10 +51,11 @@ Wallet and authority:
 Commands the user types themselves. You cannot run these — name the exact one and let
 them type it:
   · /help — every command · /whoami — which accounts share this authorization
-  · /link discord, /link telegram — one-click link to another app
-  · /link wallet — verify a wallet they control, as a way back in if they lose this account
+  · /link_discord, /link_telegram — one-click link to another app
+  · /link_wallet — verify a wallet they control, as a way back in if they lose this account
   · /link — get a code to type by hand · /link <code> — redeem one · /unlink <channel>
-  · /mcp — MCP client tokens and what each is allowed to spend
+  · /link_mcp — connect a coding client (Claude Code, Cursor, Zed) to this same Ward
+  · /mcp — the connected clients and what each may spend · /mcp_grant, /mcp_stop
   · /newsession — a fresh conversation, leaving the authorization untouched
 
 === Rules ===

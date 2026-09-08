@@ -55,7 +55,40 @@ const ALIASES: Record<string, ActionType> = {
   transfer: "send",
   acp: "acp_job",
   acp_job: "acp_job",
+  hire: "acp_job",
 };
+
+/**
+ * What each action is called when Ward is speaking rather than storing.
+ *
+ * `x402_data_purchase` is the protocol's name for it, and it is the wrong thing to
+ * show someone who is deciding whether to hand a coding assistant their money. The
+ * readback of a grant is the sentence a user actually approves, so it says what the
+ * client would be doing, not which spec it does it under.
+ */
+const ACTION_LABEL: Record<ActionType, string> = {
+  swap: "swap tokens",
+  send: "send USDC",
+  x402_data_purchase: "buy on-chain data",
+  acp_job: "hire another AI agent",
+};
+
+/** The plain-language name for one action, for anything a user reads. */
+export function actionLabel(action: ActionType): string {
+  return ACTION_LABEL[action];
+}
+
+/**
+ * Money, written the way money is written. `$0.5` is what the number prints as and it
+ * reads like a bug in an app whose entire subject is dollars; whole amounts keep their
+ * plain form because "$2/day" is what a person would say.
+ */
+export function usd(amount: number): string {
+  return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
+}
+
+/** The words a user may type for actions, in the order the help lists them. */
+export const ACTION_WORDS = "data, swap, send, hire";
 
 export function parseActionTypes(input: string): ActionType[] | null {
   const parts = input
@@ -181,13 +214,13 @@ export async function checkGrant(request: GrantRequest): Promise<GrantCheck> {
 
 /** The plain-language readback. This is the sentence the user is actually approving. */
 export function describeGrant(request: GrantRequest, ref: string): string {
-  const actions = request.actionTypes.map((a) => a.replace(/_/g, " ")).join(", ");
+  const actions = request.actionTypes.map(actionLabel).join(", ");
   return [
     `Token ${ref} would be able to spend **without asking you first**:`,
     "",
     `· only these actions: ${actions}`,
-    `· at most $${request.perActionUsd} per action`,
-    `· at most $${request.dailyUsd} per day`,
+    `· at most ${usd(request.perActionUsd)} per action`,
+    `· at most ${usd(request.dailyUsd)} per day`,
     `· for ${request.days} day${request.days === 1 ? "" : "s"}, then it stops on its own`,
     "",
     "It still can't exceed your own caps or your on-chain allowance, every spend is " +

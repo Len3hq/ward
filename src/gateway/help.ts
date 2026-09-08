@@ -17,24 +17,48 @@ import { BRAND } from "../config.ts";
 /** Onboarding takes one of these, so the welcome asks for one by name. */
 const RISK_WORDS = "conservative, moderate or aggressive";
 
+/** The chat apps a person can actually type `/start` into. */
+type ChatChannel = "telegram" | "discord";
+
+/** For "you can also reach me from —": whichever chat app this one is not. */
+const OTHER_APP: Record<ChatChannel, string> = {
+  telegram: "Discord",
+  discord: "Telegram",
+};
+
 /**
  * `/start`, and the first thing anyone ever reads. Says what Ward is, shows three
- * things to try, then asks the one question onboarding actually needs.
+ * things to try, names the other ways in, then asks the one question onboarding
+ * actually needs.
+ *
+ * The other ways in are here because they were nowhere else: `/link` and `/mcp` sat
+ * in the command menu described as "another app", which tells a new user nothing, and
+ * the words "Discord" and "Cursor" appeared only after you had already tapped a
+ * command you had no reason to tap. One account reachable from three places is the
+ * interesting part of the product, so it is said on the first screen, by name.
+ *
+ * Channel-aware because this copy is shared: offering Discord to someone already in
+ * Discord is the kind of small wrongness that makes a bot feel unattended.
  */
-export const WELCOME = [
-  `${BRAND.name} — ${BRAND.tagline}.`,
-  "",
-  "I move money on Base for you — swaps, USDC sends, paid on-chain data — and I can",
-  "hire other AI agents to assess a token. What I may do is written in your Sibyl",
-  "Memory record. I check it before every action and I cannot exceed it.",
-  "",
-  "Try:",
-  '  · "what am I allowed to do?"',
-  '  · "what data can I buy?"',
-  '  · "what\'s the risk score for PEPE"',
-  "",
-  `To get started, tell me your risk tolerance — ${RISK_WORDS}.`,
-].join("\n");
+export const welcome = (channel: ChatChannel): string =>
+  [
+    `${BRAND.name} — ${BRAND.tagline}.`,
+    "",
+    "I move money on Base for you — swaps, USDC sends, paid on-chain data — and I can",
+    "hire other AI agents to assess a token. What I may do is written in your Sibyl",
+    "Memory record. I check it before every action and I cannot exceed it.",
+    "",
+    "Try:",
+    '  · "what am I allowed to do?"',
+    '  · "what data can I buy?"',
+    '  · "what\'s the risk score for PEPE"',
+    "",
+    `This is not the only way to reach me. /link_${OTHER_APP[channel].toLowerCase()} picks me up`,
+    `in ${OTHER_APP[channel]}, and /link_mcp hands me to Claude Code or Cursor — same limits,`,
+    "same memory, one account.",
+    "",
+    `To get started, tell me your risk tolerance — ${RISK_WORDS}.`,
+  ].join("\n");
 
 /**
  * `/help`. Two halves on purpose: what Ward can do, then the account chores. The
@@ -63,35 +87,26 @@ export const HELP = [
   "Every one of those is checked against your limits before anything moves, and",
   "shown to you to confirm first.",
   "",
+  "Reach this same Ward from somewhere else",
+  "  /link_discord · /link_telegram — one click, nothing to type",
+  "  /link_mcp — connect Claude Code, Cursor or Zed",
+  "  /link_wallet — verify a wallet, as a way back in if you lose this account",
+  "  /link_code — get a code to type in by hand · /link <code> — redeem one",
+  "",
+  "Coding clients, and what they may spend",
+  "  A connected client can read your limits and propose a spend — which comes back",
+  "  here for you to approve. It cannot spend on its own unless you allow it.",
+  "  /mcp — your clients, and what each one may spend",
+  "  /mcp_grant — let one spend on its own, up to a limit you set",
+  "  /mcp_stop — stop every client spending, right now",
+  "",
   "Account",
-  "  /whoami — which accounts share your authorization",
-  "  /link telegram · /link discord — reach this same Ward from another app",
-  "  /link wallet — verify a wallet you control, as a way back in if you lose this account",
-  "  /link — get a code to type in by hand · /link <code> — redeem one",
-  "  /unlink <channel> — detach an app · /unlink wallet <address> — drop a wallet",
-  "  /mcp — let Claude Code or Cursor use your Ward (they can read and ask, never spend,",
-  "         until you grant it)",
+  "  /whoami — which accounts and clients can reach your Ward",
+  "  /unlink <app> — detach an app · /unlink_wallet <address> — drop a wallet",
+  "  /unlink_mcp — disconnect every coding client",
   "  /newsession — a fresh conversation, your authorization unchanged",
   "  /defaultsession — go back to your default conversation",
 ].join("\n");
-
-/**
- * Registered with Telegram so typing "/" autocompletes instead of matching nothing,
- * and so the Menu button beside the text box has something in it. Both were empty.
- *
- * `/start` is deliberately absent — Telegram renders its own Start button for it, and
- * listing it again just spends a row. Descriptions are written for someone who has
- * never heard of MCP or of us.
- */
-export const BOT_COMMANDS: ReadonlyArray<{ command: string; description: string }> = [
-  { command: "help", description: "Everything I can do" },
-  { command: "whoami", description: "Which accounts share your authorization" },
-  { command: "link", description: "Reach this same Ward from another app, or verify a wallet" },
-  { command: "unlink", description: "Detach an app or a wallet" },
-  { command: "mcp", description: "Let Claude Code or Cursor use your Ward" },
-  { command: "newsession", description: "Start a fresh conversation" },
-  { command: "defaultsession", description: "Back to your default conversation" },
-];
 
 /**
  * Shown inside an empty chat, before anyone presses Start — the one piece of copy

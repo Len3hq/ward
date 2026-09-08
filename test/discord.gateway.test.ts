@@ -86,9 +86,9 @@ describe("slash commands", () => {
     }
   });
 
-  test("/link takes an optional code, so it can both mint and redeem", () => {
+  test("/link takes an optional argument, so it can both mint and redeem", () => {
     const link = SLASH_COMMANDS.find((c) => c.name === "link");
-    expect(link?.options?.[0]).toMatchObject({ name: "code", required: false });
+    expect(link?.options?.[0]).toMatchObject({ name: "args", required: false });
   });
 });
 

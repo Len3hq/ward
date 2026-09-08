@@ -55,7 +55,7 @@ export async function executeForToken(
       ok: false,
       message:
         "This client has no live execution grant, so it can't spend. Ask the user to run " +
-        '"/mcp grant" on Telegram or Discord, or use ward_propose_action instead.',
+        '"/mcp_grant" on Telegram or Discord, or use ward_propose_action instead.',
     };
   }
 
@@ -181,7 +181,7 @@ async function announce(
         `Request: "${receipt.request}"`,
         outcome.message,
         "",
-        `Stop it doing that again: "/mcp revoke ${ref}"`,
+        `Stop it doing that again: "/mcp_revoke ${ref}"`,
       ].join("\n")
     : [
         `MCP client ${ref} tried to spend on your Ward and was refused.`,
@@ -189,7 +189,7 @@ async function announce(
         `Request: "${receipt.request}"`,
         outcome.message,
         "",
-        `Nothing moved. "/mcp revoke ${ref}" removes its grant entirely.`,
+        `Nothing moved. "/mcp_revoke ${ref}" removes its grant entirely.`,
       ].join("\n");
 
   for (const account of await accountsFor(receipt.ward_user_id)) {

@@ -77,7 +77,7 @@ function unauthorized(): Response {
         code: -32001,
         message:
           "Not authorized. Send an Authorization: Bearer wardmcp_… token minted with " +
-          '"/link mcp" from Telegram or Discord.',
+          '"/link_mcp" from Telegram or Discord.',
       },
       id: null,
     }),

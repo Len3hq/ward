@@ -469,6 +469,9 @@ describe("injection", () => {
     expect(gateway).toMatch(guard);
     // …and it comes before the turn is ever started.
     expect(gateway.search(guard)).toBeLessThan(gateway.indexOf("await runTurn("));
-    expect(gateway).toMatch(/bot\.command\("link", identity\(linkCommand\)\)/);
+    // Registration is table-driven now, so the property is that identity commands are
+    // registered as Telegraf commands at all — never reached through the text handler.
+    expect(gateway).toMatch(/bot\.command\(spec\.name, identity\(spec\)\)/);
+    expect(gateway).toMatch(/isIdentityCommand\(spec\.base\)/);
   });
 });

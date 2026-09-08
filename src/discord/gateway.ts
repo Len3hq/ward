@@ -17,12 +17,19 @@ import { randomUUID } from "node:crypto";
 
 import type { WardGraph } from "../agent/graph.ts";
 import { BRAND } from "../config.ts";
-import { HELP, WELCOME } from "../gateway/help.ts";
+import { HELP, welcome } from "../gateway/help.ts";
+import {
+  DISCORD_COMMANDS,
+  commandArgument,
+  isIdentityCommand,
+  resolveCommand,
+  runIdentityCommand,
+} from "../gateway/commands.ts";
 import type { ChannelAdapter, SendMode } from "../gateway/adapter.ts";
 import { registerChannel, registerDmLink } from "../gateway/channels.ts";
 import { markCopyable } from "../gateway/format.ts";
 import { runTurn } from "../gateway/core.ts";
-import { linkCommand, mcpCommand, unlinkCommand, whoamiCommand } from "../identity/commands.ts";
+
 import { resolveExisting, resolveUser } from "../identity/index.ts";
 import { log, logError, preview } from "../log.ts";
 
@@ -216,9 +223,18 @@ async function runCommand(
   word: string,
   argument: string,
 ): Promise<string> {
-  switch (word.toLowerCase()) {
+  const spec = resolveCommand(word);
+  if (spec === undefined) return `I don't know that command.\n\n${HELP}`;
+
+  // The one-word aliases route here too: `/link_mcp` resolves to the `link` handler
+  // with "mcp" already in front of whatever the user typed.
+  if (isIdentityCommand(spec.base)) {
+    return runIdentityCommand(spec.base, ctx, commandArgument(spec, argument));
+  }
+
+  switch (spec.base) {
     case "start":
-      return WELCOME;
+      return welcome("discord");
     case "help":
       return HELP;
     case "newsession":
@@ -227,78 +243,40 @@ async function runCommand(
     case "defaultsession":
       s.seq = 1;
       return "Back to your default session.";
-    case "link":
-      return linkCommand(ctx, argument);
-    case "unlink":
-      return unlinkCommand(ctx, argument);
-    case "whoami":
-      return whoamiCommand(ctx);
-    case "mcp":
-      return mcpCommand(ctx, argument);
     default:
       return `I don't know that command.\n\n${HELP}`;
   }
 }
 
-/** Registered so Discord's client autocompletes them instead of matching nothing. */
-export const SLASH_COMMANDS: ChatInputApplicationCommandData[] = [
-  {
-    type: ApplicationCommandType.ChatInput,
-    name: "link",
-    description: "Reach this same Ward from another app — or redeem a code from one",
-    options: [
-      {
-        name: "code",
-        description:
-          "A channel to link (telegram), a code minted elsewhere, or 'mcp'. Omit to mint a code.",
-        type: ApplicationCommandOptionType.String,
-        required: false,
-      },
-    ],
-  },
-  {
-    type: ApplicationCommandType.ChatInput,
-    name: "unlink",
-    description: "Detach an app from your Ward",
-    options: [
-      {
-        name: "channel",
-        description: "telegram, discord or mcp",
-        type: ApplicationCommandOptionType.String,
-        required: true,
-      },
-    ],
-  },
-  {
-    type: ApplicationCommandType.ChatInput,
-    name: "whoami",
-    description: "Which accounts share your authorization",
-  },
-  {
-    type: ApplicationCommandType.ChatInput,
-    name: "newsession",
-    description: "Start a fresh conversation (your limits are unchanged)",
-  },
-  {
-    type: ApplicationCommandType.ChatInput,
-    name: "defaultsession",
-    description: "Go back to your default conversation",
-  },
-  {
-    type: ApplicationCommandType.ChatInput,
-    name: "mcp",
-    description: "Let Claude Code or Cursor use your Ward",
-    options: [
-      {
-        name: "args",
-        description: "tokens, grants, grant, confirm, revoke or stop. Omit for the list.",
-        type: ApplicationCommandOptionType.String,
-        required: false,
-      },
-    ],
-  },
-  { type: ApplicationCommandType.ChatInput, name: "help", description: "Everything Ward can do" },
-];
+/**
+ * Registered so Discord's client autocompletes them instead of matching nothing.
+ *
+ * Derived from the shared table rather than written out again: a command that is
+ * advertised here but unrouted in `runCommand` is the exact failure this project has
+ * already shipped once, and one list cannot disagree with itself.
+ *
+ * Every row takes a free-text argument. Discord would let each one declare typed
+ * options, but the handlers parse a string — the same string a typed `/link_mcp …`
+ * message produces — and giving one door a different shape than the other is how the
+ * two drift apart.
+ */
+export const SLASH_COMMANDS: ChatInputApplicationCommandData[] = DISCORD_COMMANDS.map((spec) => ({
+  type: ApplicationCommandType.ChatInput,
+  name: spec.name,
+  description: spec.description,
+  ...(spec.hint === undefined
+    ? {}
+    : {
+        options: [
+          {
+            name: "args",
+            description: spec.hint,
+            type: ApplicationCommandOptionType.String,
+            required: false,
+          },
+        ],
+      }),
+}));
 
 async function handleDirectMessage(
   graph: WardGraph,

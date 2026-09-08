@@ -80,7 +80,7 @@ const ctx = { channel: "telegram" as const, accountId: TG };
 /** Run `/mcp grant …`, pull the confirmation code out of the readback, and apply it. */
 async function grant(args: string): Promise<string> {
   const proposal = await mcpCommand(ctx, `grant ${args}`);
-  const code = /\/mcp confirm ([A-Z0-9]+)/.exec(proposal)?.[1];
+  const code = /\/mcp_confirm ([A-Z0-9]+)/.exec(proposal)?.[1];
   if (!code) return proposal;
   return mcpCommand(ctx, `confirm ${code}`);
 }
@@ -109,7 +109,7 @@ describe("granting takes two deliberate steps", () => {
   test("the proposal alone grants nothing", async () => {
     const proposal = await mcpCommand(ctx, `grant ${ref} x402 0.5 2 7`);
 
-    expect(proposal).toContain("/mcp confirm");
+    expect(proposal).toContain("/mcp_confirm");
     expect(await liveGrant(tokenAccountId(token))).toBeNull();
   });
 
@@ -117,7 +117,7 @@ describe("granting takes two deliberate steps", () => {
     const proposal = await mcpCommand(ctx, `grant ${ref} x402 0.5 2 7`);
 
     expect(proposal).toContain("without asking you first");
-    expect(proposal).toContain("$0.5 per action");
+    expect(proposal).toContain("$0.50 per action");
     expect(proposal).toContain("$2 per day");
     expect(proposal).toContain("7 days");
   });
@@ -136,7 +136,7 @@ describe("granting takes two deliberate steps", () => {
 
   test("a confirmation works exactly once", async () => {
     const proposal = await mcpCommand(ctx, `grant ${ref} x402 0.5 2 7`);
-    const code = /\/mcp confirm ([A-Z0-9]+)/.exec(proposal)![1]!;
+    const code = /\/mcp_confirm ([A-Z0-9]+)/.exec(proposal)![1]!;
 
     expect(await mcpCommand(ctx, `confirm ${code}`)).toContain("Granted");
     expect(await mcpCommand(ctx, `confirm ${code}`)).toContain("already been used");
@@ -148,7 +148,7 @@ describe("granting takes two deliberate steps", () => {
 
   test("a code shown to one principal is unusable by another", async () => {
     const proposal = await mcpCommand(ctx, `grant ${ref} x402 0.5 2 7`);
-    const code = /\/mcp confirm ([A-Z0-9]+)/.exec(proposal)![1]!;
+    const code = /\/mcp_confirm ([A-Z0-9]+)/.exec(proposal)![1]!;
 
     const other = await resolveUser("discord", "1234567890123456789");
     const result = await confirmGrant(code, other.userId, "discord");
@@ -170,7 +170,7 @@ describe("a grant needs somewhere for the money to come from", () => {
     const reply = await mcpCommand(ctx, `grant ${ref} x402 0.5 2 7`);
 
     expect(reply).toContain("no active on-chain spend permission");
-    expect(reply).not.toContain("/mcp confirm");
+    expect(reply).not.toContain("/mcp_confirm");
   });
 
   test("refuses when the permission has been revoked", async () => {
@@ -198,7 +198,7 @@ describe("a grant can only narrow, never widen", () => {
     const reply = await mcpCommand(ctx, `grant ${ref} x402 80 90 7`);
 
     expect(reply).toContain("above your own");
-    expect(reply).not.toContain("/mcp confirm");
+    expect(reply).not.toContain("/mcp_confirm");
   });
 
   test("refuses a daily limit above the user's own", async () => {
@@ -220,7 +220,7 @@ describe("a grant can only narrow, never widen", () => {
   /** The caps may have tightened between the readback and the confirmation. */
   test("re-checks against the record as it is at confirmation time", async () => {
     const proposal = await mcpCommand(ctx, `grant ${ref} x402 40 90 7`);
-    const code = /\/mcp confirm ([A-Z0-9]+)/.exec(proposal)![1]!;
+    const code = /\/mcp_confirm ([A-Z0-9]+)/.exec(proposal)![1]!;
 
     // Re-onboarding tighter caps: the record is replaced, not edited in place.
     const { backend } = await import("../memory/backend.ts");
@@ -292,7 +292,7 @@ describe("what the user can see", () => {
 
     expect(told).toHaveLength(1);
     expect(told[0]).toContain("without asking");
-    expect(told[0]).toContain(`/mcp revoke ${ref}`);
+    expect(told[0]).toContain(`/mcp_revoke ${ref}`);
   });
 
   test("an MCP client cannot grant itself authority", async () => {
