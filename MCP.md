@@ -11,7 +11,7 @@ So this surface is **propose-only by default**, and that default is the design.
 
 A client can be given an explicit, capped, expiring **execution grant** (Phase 16.3),
 issued from an authenticated DM and revocable in one message — but it has one only if
-the user deliberately gave it one, and until then there is no tool here that spends.
+the user deliberately gave it one, and until then nothing here can spend.
 
 ## What it can and cannot do
 
@@ -119,10 +119,12 @@ Granting is two steps on purpose: the first reads back, in plain language, what 
 token would be able to do _without asking you first_; the second applies it. Every
 grant is announced on every other linked account.
 
-**As of Phase 16.2 a grant permits nothing.** The object exists, can be granted,
-listed and revoked, and is reported back to the calling token — but no code path
-consults it when deciding a spend, and a fully granted token still exposes no tool
-that executes. That arrives in 16.3, and the claim above changes with it. See
+**A grant now permits exactly what it says (Phase 16.3).** `ward_execute_action`
+consults it before anything moves: the grant enters the ordinary gate as one more
+ceiling, so what a client may spend is `min(grant, the user's own cap, the on-chain
+allowance)`. Without a live grant naming that action type, the tool refuses and points
+at `ward_propose_action` instead. Every execution is announced on every linked human
+channel as it happens, because nobody was asked first. See
 [`PHASE-16.md`](./PHASE-16.md).
 
 ## Tools
@@ -134,6 +136,8 @@ that executes. That arrives in 16.3, and the claim above changes with it. See
 | `ward_recent_activity`    | Recent spend, x402 and ACP entries, newest first                                                                 |
 | `ward_link_status`        | Whether this client is bound, and which channel would confirm a proposal                                         |
 | `ward_propose_action`     | Queues a request for the user to confirm on a human channel; returns a proposal id                               |
+| `ward_execute_action`     | Spends within a live grant, without asking — refuses when there is none; returns a receipt id                    |
+| `ward_receipt`            | The status of a spend started that way: pending, done or failed                                                  |
 
 A token is never echoed back to the client that presented it, and neither is its
 digest — the digest is as good as the credential for lookup. Ledger rows carry

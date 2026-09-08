@@ -260,6 +260,7 @@ the spend. The memory is the authorization._
   Memory record would still be shared, but the link announcement would not arrive.
 - Don't show `/link mcp` on camera unless you intend to explain it — a bearer token
   on screen invites the wrong question. The MCP surface is a README/`MCP.md` story:
-  it can read and propose, and deliberately cannot approve.
+  it can read and propose, never approve, and it spends only inside a grant the user
+  issued from a human channel.
 - `scripts/forget-auth.ts` and `scripts/seed-acp.ts` both take either
   `telegram:<id>` or a `ward_<ulid>`, so you never need to look the principal up.

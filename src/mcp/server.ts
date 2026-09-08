@@ -167,7 +167,7 @@ export function createMcpServer(
             : `Authorization: on file (${record.risk_label}, $${record.standing_caps.daily_limit_usd}/day).`,
           "",
           "This client can read and propose. It cannot approve a spend — that happens on a",
-          "human channel.",
+          "human channel — and it can execute one only within a grant the user has given it.",
         ].join("\n"),
       );
     },
@@ -313,8 +313,9 @@ export function createMcpServer(
       description:
         "Ask the user to approve a spend. This does NOT execute anything: the request is " +
         "delivered to the user on Telegram or Discord and replayed through Ward's normal " +
-        "gate there, where they confirm or decline. Returns a proposal id. There is " +
-        "deliberately no tool that executes.",
+        "gate there, where they confirm or decline. Returns a proposal id. Use this " +
+        "whenever the user should be the one to decide, and always when this client has " +
+        "no execution grant.",
       inputSchema: {
         request: z
           .string()

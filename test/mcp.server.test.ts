@@ -155,8 +155,12 @@ describe("token binding", () => {
     const minted = reply.match(/wardmcp_[A-Za-z0-9_-]+/)?.[0];
     expect(minted).toBeDefined();
     expect(await resolveToken(minted!)).toBe(userId);
-    // The reply has to be honest about what the token cannot do.
-    expect(reply).toMatch(/cannot approve|can't move/i);
+    // The reply has to be honest about what the token cannot do — and it used to
+    // overclaim, promising a leaked token "can't move your money" after grants had
+    // already made that false.
+    expect(reply).toMatch(/cannot approve/i);
+    expect(reply).toMatch(/grant/i);
+    expect(reply).not.toMatch(/can't move your money/i);
 
     const refused = await linkCommand({ channel: "mcp", accountId: "whatever" }, "mcp");
     expect(refused).toMatch(/can't mint its own/i);
@@ -368,4 +372,43 @@ describe("delivery to a human channel", () => {
 
     expect(await readProposalQueue()).toHaveLength(1);
   });
+});
+
+/**
+ * The mitigation PHASE-16.md wrote down for itself and never implemented: "The docs
+ * keep claiming MCP cannot spend — a test greps for the stale claim."
+ *
+ * It was not written, and the claim duly survived 16.3 in five places — the mint
+ * reply promising a leaked token "can't move your money", `ward_propose_action`
+ * telling the calling model there is "deliberately no tool that executes", and
+ * MCP.md still announcing that a grant permits nothing.
+ *
+ * Only the UNQUALIFIED forms are forbidden. "A leaked token with no grant cannot move
+ * money" is true and stays.
+ */
+test("nothing still claims an MCP client can never spend", async () => {
+  const stale = [
+    "no tool that executes",
+    "no tool here that spends",
+    "a grant permits nothing",
+    "can't move your money",
+    "cannot move your money",
+  ];
+  const files = [
+    "MCP.md",
+    "DEMO.md",
+    "README.md",
+    "src/mcp/server.ts",
+    "src/mcp/execute.ts",
+    "src/identity/commands.ts",
+  ];
+
+  const found: string[] = [];
+  for (const file of files) {
+    const text = (await Bun.file(file).text()).toLowerCase();
+    for (const claim of stale) {
+      if (text.includes(claim)) found.push(`${file}: "${claim}"`);
+    }
+  }
+  expect(found).toEqual([]);
 });

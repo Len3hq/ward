@@ -135,15 +135,17 @@ async function mintMcpToken(ctx: CommandContext): Promise<string> {
   const existing = await tokenCount(userId);
 
   return [
-    "Add this to your MCP client config:",
+    "Add this to your client — Claude Code, Cursor or Zed:",
     "",
     `    WARD_USER_TOKEN=${token}`,
     "",
     "I won't show it again — mint another if you lose it.",
     "",
     "That client can read your limits, your spend history and your wallet, and it can " +
-      "*propose* a spend. It cannot approve one: every proposal comes back here for you " +
-      "to confirm. So a leaked token can't move your money.",
+      "*propose* a spend — every proposal comes back here for you to confirm. It cannot " +
+      "approve one, and it cannot spend on its own until you give it a grant with " +
+      '"/mcp grant" — then only up to what that grant allows, until you revoke it. ' +
+      "With no grant, a stolen token can only ask.",
     existing > 1 ? `\nYou now have ${existing} MCP tokens. "/unlink mcp" revokes all of them.` : "",
   ]
     .filter(Boolean)
