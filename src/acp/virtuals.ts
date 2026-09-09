@@ -3,6 +3,7 @@ import { encodeFunctionData, erc20Abi, formatUnits, parseUnits } from "viem";
 import { loadConfig } from "../config.ts";
 import type { Hex } from "../wallet/index.ts";
 import { walletProvider } from "../wallet/index.ts";
+import { withDeadline } from "../wallet/cdp.ts";
 import type { AcpCandidate, AcpJobRequest, AcpJobResult, AcpProvider } from "./provider.ts";
 
 /**
@@ -42,6 +43,18 @@ import type { AcpCandidate, AcpJobRequest, AcpJobResult, AcpProvider } from "./p
  * `buyerAddress` is whatever `agent.getAddress()` reports, so this is correct
  * regardless of which wallet backs the adapter.
  */
+
+/**
+ * How long the buyer-side refund may take before Ward stops waiting on it.
+ *
+ * Privy's approval window is 300s, and it spends all of it: two production turns
+ * were parked 339s and 325s, almost entirely here, waiting on a human to click
+ * approve in the Virtuals console for a transfer its policy had already denied.
+ * Nobody was going to click it. The refund still gets its attempt — this only stops
+ * a hold that will not be granted from holding the user's turn hostage while the
+ * fallback that CAN sign waits behind it.
+ */
+const BUYER_REFUND_TIMEOUT_MS = 30_000;
 
 const OFFERING_KEYWORD = "token risk";
 /**
@@ -414,7 +427,30 @@ export class VirtualsAcpProvider implements AcpProvider {
       if (unspent > 0) {
         try {
           const { smartAccount } = await wallet.connect(accountKey);
-          let sent = await refundFromBuyer(adapter, chainId, buyerAddress, smartAccount, unspent);
+          // A THROW here must not skip the spender fallback below.
+          //
+          // Production, 2026-09-09: a $0.01 hire failed at the funding wait, and the
+          // refund never happened — "[refund of $0.01 failed — owed to user]" — even
+          // though the money was reachable. `refundFromBuyer` moves USDC out of the
+          // Virtuals ACP wallet, which Privy policy-gates: it printed "Manual approval
+          // required … Reason: RPC request denied due to policy violation", blocked the
+          // user's turn for the full 300s approval window, then threw. That throw went
+          // straight past the `short > DUST_USD` fallback — the one route that CAN
+          // sign, the CDP spender — and into the outer catch. Two users, same turn.
+          //
+          // Treat a failed buyer-side refund as "moved nothing" rather than as the end
+          // of the attempt, and let the fallback run. The user's money is the point.
+          let sent = 0;
+          try {
+            sent = await withDeadline("ACP wallet refund", BUYER_REFUND_TIMEOUT_MS, () =>
+              refundFromBuyer(adapter, chainId, buyerAddress, smartAccount, unspent),
+            );
+          } catch (buyerErr) {
+            console.error(
+              `ACP refund from the ACP wallet failed, trying the spender: ` +
+                `${buyerErr instanceof Error ? buyerErr.message : String(buyerErr)}`,
+            );
+          }
           let short = round6(unspent - sent);
 
           // The money is only at `buyerAddress` if escrow ever released it. When the

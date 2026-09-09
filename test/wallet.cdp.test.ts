@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { isGasShortfall } from "../src/agent/nodes/wallet.ts";
-import { cdpAccountName } from "../src/wallet/cdp.ts";
+import { cdpAccountName, isRateLimited, withRpcRetry } from "../src/wallet/cdp.ts";
 import { resetWalletProvider, walletProvider } from "../src/wallet/index.ts";
 
 /**
@@ -124,4 +124,84 @@ describe.skipIf(!enabled)("CdpWalletProvider (live)", () => {
 
 test.skipIf(enabled)("CDP live suite is skipped (set WARD_CDP_TEST=1 + CDP keys to run)", () => {
   expect(enabled).toBe(false);
+});
+
+/**
+ * The failure this guards against, from production: a `hire an agent` job died with
+ * viem's `RpcRequestError` — "RPC Request failed … Details: over rate limit" — on a
+ * `balanceOf` against `https://mainnet.base.org`, mid-settlement, and the refund that
+ * followed failed the same way ("refund of $0.01 failed — owed to user").
+ *
+ * Two things had to be true for that. The reads went to the free public endpoint
+ * because `BASE_RPC_URL` was documented in `.env.example` but never read by
+ * `loadConfig`; and viem does not retry Base's throttle, because it reports one as
+ * JSON-RPC `-32016` in a 200 body, which matches none of the codes `shouldRetry`
+ * knows (-32005, -32603, 429) nor any HTTP status.
+ */
+describe("isRateLimited", () => {
+  test("Base's public gateway throttle — the code viem does not retry", () => {
+    expect(isRateLimited({ code: -32016, message: "over rate limit" })).toBe(true);
+  });
+
+  test("the throttle shapes other providers use", () => {
+    expect(isRateLimited({ code: -32005 })).toBe(true);
+    expect(isRateLimited({ code: 429 })).toBe(true);
+    expect(isRateLimited({ status: 429 })).toBe(true);
+    expect(isRateLimited(new Error("429 Too Many Requests"))).toBe(true);
+  });
+
+  /** Matching on message text as well as code, since the wrapper is what callers see. */
+  test("a wrapped viem error still reads as a throttle", () => {
+    const wrapped = new Error(
+      "RPC Request failed.\nURL: https://mainnet.base.org\nDetails: over rate limit",
+    );
+    expect(isRateLimited(wrapped)).toBe(true);
+  });
+
+  /**
+   * The half that matters most. A revert is a real answer about where the money is —
+   * retrying it would waste the settle budget and could turn a clean failure into an
+   * ambiguous one.
+   */
+  test("a revert is not a throttle", () => {
+    expect(isRateLimited(new Error("ERC20: transfer amount exceeds balance"))).toBe(false);
+    expect(isRateLimited({ code: -32000, message: "execution reverted" })).toBe(false);
+    expect(isRateLimited(undefined)).toBe(false);
+  });
+});
+
+describe("withRpcRetry", () => {
+  test("a throttled read is retried and its answer returned", async () => {
+    let calls = 0;
+    const value = await withRpcRetry(async () => {
+      calls++;
+      if (calls < 3) throw { code: -32016, message: "over rate limit" };
+      return 0.73;
+    });
+    expect(value).toBe(0.73);
+    expect(calls).toBe(3);
+  });
+
+  test("a revert fails immediately — no retry, no delay", async () => {
+    let calls = 0;
+    await expect(
+      withRpcRetry(async () => {
+        calls++;
+        throw new Error("execution reverted");
+      }),
+    ).rejects.toThrow("execution reverted");
+    expect(calls).toBe(1);
+  });
+
+  /** An endpoint that is throttling us for good must still surface, not hang forever. */
+  test("a persistent throttle gives up and reports the throttle", async () => {
+    let calls = 0;
+    await expect(
+      withRpcRetry(async () => {
+        calls++;
+        throw new Error("over rate limit");
+      }),
+    ).rejects.toThrow("over rate limit");
+    expect(calls).toBe(4);
+  });
 });

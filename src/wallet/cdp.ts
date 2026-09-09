@@ -74,6 +74,74 @@ const USDC_EPSILON = 1e-9;
  */
 const UNWIND_BALANCE_ATTEMPTS = 5;
 const UNWIND_BALANCE_INTERVAL_MS = 1_500;
+
+/**
+ * How often to ask whether the pull is mined.
+ *
+ * Was 750ms, which over the 45s budget is ~120 requests to a single endpoint for one
+ * pull — `waitForTransactionReceipt` polls the block number AND the receipt each
+ * tick. Against the free public Base RPC that alone is enough to get rate-limited,
+ * and the reads that follow it are the ones that decide whether a user gets refunded.
+ * A pull confirms in a block or two; 2s costs at most a second of latency and cuts
+ * the request count by nearly two thirds.
+ */
+const PULL_POLL_INTERVAL_MS = 2_000;
+
+/** Backoff for a read the RPC refused because we asked too fast. */
+const RPC_RETRY_ATTEMPTS = 4;
+const RPC_RETRY_BASE_MS = 400;
+
+/**
+ * Whether an RPC failure is "you asked too fast" rather than "the answer is no".
+ *
+ * viem retries rate limits it recognises — HTTP 429, and the JSON-RPC codes -32005
+ * and 429 — but Base's public gateway reports them as **-32016 `over rate limit`** in
+ * a 200 response body, which matches none of those, so viem passes it straight
+ * through as a hard `RpcRequestError` and one throttled read fails the whole job.
+ * Match on the code and the message both, since the shape varies by provider.
+ */
+export function isRateLimited(error: unknown): boolean {
+  const code = (error as { code?: unknown })?.code;
+  if (code === -32016 || code === -32005 || code === 429) return true;
+  if ((error as { status?: unknown })?.status === 429) return true;
+  const text = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    text.includes("over rate limit") ||
+    text.includes("rate limit") ||
+    text.includes("too many requests")
+  );
+}
+
+/**
+ * Run an on-chain read, backing off when the endpoint throttles us.
+ *
+ * Every caller of this is deciding where a user's money is, so "the endpoint was
+ * busy" must not be allowed to read as "the transfer did not land" — that answer
+ * refunds money that already moved, or fails a job that was fine. Retry the throttle
+ * and let every other error through untouched.
+ */
+function makeRpcClient(network: "base" | "base-sepolia", rpcUrl: string | undefined) {
+  return createPublicClient({
+    chain: network === "base" ? base : baseSepolia,
+    // `batch` coalesces reads issued in the same tick into one JSON-RPC call, which is
+    // what the balance polling and viem's own receipt polling both produce.
+    transport: http(rpcUrl, { batch: { wait: 16 }, retryCount: 3 }),
+  });
+}
+
+export async function withRpcRetry<T>(work: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      if (attempt >= RPC_RETRY_ATTEMPTS - 1 || !isRateLimited(error)) throw error;
+      // Exponential, with jitter — Ward's reads come in bursts from the settle loops,
+      // and a fixed delay just re-collides them against the same window.
+      const delay = RPC_RETRY_BASE_MS * 2 ** attempt * (0.5 + Math.random());
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 /**
  * Fields carried BACK to the reason are the ones that might name what was wrong.
  * These are not: they are the reason itself, or x402's own scaffolding, and repeating
@@ -339,6 +407,12 @@ export class CdpWalletProvider implements WalletProvider {
    * always needs ETH regardless.
    */
   #paymasterUrl: string | undefined;
+  /** See `CdpConfig.rpcUrl` — unset falls back to the rate-limited public endpoint. */
+  #rpcUrl: string | undefined;
+  /** Built once and reused; see `#rpc`. */
+  #rpcClient: ReturnType<typeof makeRpcClient> | undefined;
+  /** Memoized chain-id check; see `#read`. */
+  #rpcChecked: Promise<void> | undefined;
   /** See `CdpConfig.timeoutMs` — the budget for calls that submit nothing. */
   #timeoutMs: number;
 
@@ -351,6 +425,7 @@ export class CdpWalletProvider implements WalletProvider {
     });
     this.#network = network;
     this.#paymasterUrl = config.paymasterUrl;
+    this.#rpcUrl = config.rpcUrl;
     this.#timeoutMs = config.timeoutMs;
   }
 
@@ -676,19 +751,69 @@ export class CdpWalletProvider implements WalletProvider {
     return { heldBefore };
   }
 
+  /**
+   * The one public client every on-chain read shares.
+   *
+   * Built once, not per call: each `createPublicClient` carries its own request
+   * scheduler, so building a fresh one for every `balanceOf` meant the settle loops'
+   * reads could never be batched together and each arrived at the endpoint as a
+   * separate HTTP request — precisely the pattern the public RPC throttles.
+   *
+   * `http(undefined)` silently falls back to `chain.rpcUrls.default` — for Base that
+   * is `https://mainnet.base.org`, shared and rate-limited per IP. Set `BASE_RPC_URL`
+   * (see `CdpConfig.rpcUrl`); the fallback stays so local dev works with no config.
+   */
+  get #rpc() {
+    return (this.#rpcClient ??= makeRpcClient(this.#network, this.#rpcUrl));
+  }
+
+  /**
+   * Every on-chain read goes through here: chain verified once, then retried on a
+   * throttle.
+   *
+   * The chain check exists because `BASE_RPC_URL` is a bare URL and nothing about it
+   * says which network it serves. Production had `BASE_NETWORK=base` with the RPC
+   * pointed at `https://sepolia.base.org` — and a mainnet USDC address queried on
+   * Sepolia does not error, it answers **zero**. Every balance would have read empty,
+   * which in this file means "the transfer did not arrive": Ward would refund money
+   * that had already moved and fail jobs that were fine. A wrong answer about where
+   * a user's money is, is the one failure that must never be silent.
+   */
+  async #read<T>(work: () => Promise<T>): Promise<T> {
+    await (this.#rpcChecked ??= this.#assertChain());
+    return withRpcRetry(work);
+  }
+
+  async #assertChain(): Promise<void> {
+    const expected = this.#network === "base" ? base.id : baseSepolia.id;
+    let actual: number;
+    try {
+      actual = await withRpcRetry(() => this.#rpc.getChainId());
+    } catch (error) {
+      // Don't cache a network blip as a permanent verdict — the next read retries.
+      this.#rpcChecked = undefined;
+      throw error;
+    }
+    if (actual !== expected) {
+      throw new Error(
+        `BASE_RPC_URL serves chain ${actual}, but BASE_NETWORK is ${this.#network} ` +
+          `(chain ${expected}) — balances would read zero on the wrong chain. ` +
+          `Point BASE_RPC_URL at a ${this.#network} endpoint.`,
+      );
+    }
+  }
+
   /** Block until the pull is mined, or say plainly that it never confirmed. */
   async #waitForPull(hash: Hex): Promise<void> {
-    const client = createPublicClient({
-      chain: this.#network === "base" ? base : baseSepolia,
-      transport: http(),
-    });
     let receipt;
     try {
-      receipt = await client.waitForTransactionReceipt({
-        hash,
-        timeout: PULL_CONFIRM_TIMEOUT_MS,
-        pollingInterval: 750,
-      });
+      receipt = await this.#read(() =>
+        this.#rpc.waitForTransactionReceipt({
+          hash,
+          timeout: PULL_CONFIRM_TIMEOUT_MS,
+          pollingInterval: PULL_POLL_INTERVAL_MS,
+        }),
+      );
     } catch {
       throw new Error(
         `the USDC transfer into the agent wallet did not confirm within ` +
@@ -743,24 +868,22 @@ export class CdpWalletProvider implements WalletProvider {
 
   /** `balanceOf` at `latest` — the only reading that cannot lag a mined transfer. */
   async #usdcOnChain(address: Hex): Promise<number> {
-    const client = createPublicClient({
-      chain: this.#network === "base" ? base : baseSepolia,
-      transport: http(),
-    });
-    const raw = await client.readContract({
-      address: this.#token("USDC"),
-      abi: [
-        {
-          type: "function",
-          name: "balanceOf",
-          stateMutability: "view",
-          inputs: [{ name: "account", type: "address" }],
-          outputs: [{ name: "", type: "uint256" }],
-        },
-      ] as const,
-      functionName: "balanceOf",
-      args: [address],
-    });
+    const raw = await this.#read(() =>
+      this.#rpc.readContract({
+        address: this.#token("USDC"),
+        abi: [
+          {
+            type: "function",
+            name: "balanceOf",
+            stateMutability: "view",
+            inputs: [{ name: "account", type: "address" }],
+            outputs: [{ name: "", type: "uint256" }],
+          },
+        ] as const,
+        functionName: "balanceOf",
+        args: [address],
+      }),
+    );
     return Number(formatUnits(raw, USDC_DECIMALS));
   }
 

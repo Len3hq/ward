@@ -31,6 +31,17 @@ export interface CdpConfig {
    */
   paymasterUrl: string | undefined;
   /**
+   * Base JSON-RPC endpoint for Ward's own on-chain reads (`BASE_RPC_URL`).
+   *
+   * Unset, viem falls back to the chain's public endpoint — `https://mainnet.base.org`
+   * — which is free, shared, and rate-limited per IP. A single ACP hire makes on the
+   * order of a hundred reads against it (receipt polling plus two `balanceOf` settle
+   * loops), so on a shared Railway egress IP the public endpoint answers
+   * `-32016 over rate limit` partway through and the job dies mid-settlement. Point
+   * this at a dedicated endpoint (CDP Node, Alchemy, QuickNode) in any real deploy.
+   */
+  rpcUrl: string | undefined;
+  /**
    * How long any CDP call that has NOT submitted a transaction may take before Ward
    * gives up on it, in ms (`CDP_TIMEOUT_MS`, default 15s).
    *
@@ -118,6 +129,7 @@ function cdpConfig(): CdpConfig | undefined {
       apiKeySecret,
       walletSecret,
       paymasterUrl: optional("CDP_PAYMASTER_URL"),
+      rpcUrl: optional("BASE_RPC_URL"),
       timeoutMs: Number(optional("CDP_TIMEOUT_MS") ?? "15000") || 15_000,
     };
   }
