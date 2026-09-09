@@ -7,12 +7,15 @@ import type { AcpJobResult } from "./provider.ts";
  * the risk call was actually right needs hindsight, which is recorded separately
  * (and pre-seeded for the demo, per the plan). Here:
  *
+ *   Ward's own failure    →  0     (our RPC/wallet/config — tells us nothing)
  *   did not settle        → -0.3   (took the job, didn't deliver)
  *   settled, flagged      → -0.4   (delivered junk / tried to inject)
  *   settled, thin         → -0.1   (delivered, but empty)
  *   settled, substantive  → +0.3
  */
 export function jobTrustDelta(result: AcpJobResult, validationFlagged: boolean): number {
+  // A failure we caused is not evidence about them. See `AcpJobResult.wardFault`.
+  if (result.wardFault) return 0;
   if (!result.settled) return -0.3;
   if (validationFlagged) return -0.4;
   return hasSubstance(result.rawResult) ? 0.3 : -0.1;

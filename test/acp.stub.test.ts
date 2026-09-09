@@ -56,6 +56,24 @@ describe("jobTrustDelta", () => {
     expect(jobTrustDelta({ settled: false, rawResult: null } as never, false)).toBe(-0.3);
     expect(jobTrustDelta({ settled: true, rawResult: null } as never, false)).toBe(-0.1);
   });
+
+  /**
+   * Production, 2026-09-09: two hires died on Ward's own RPC — one rate-limited, one
+   * pointed at the wrong chain — and the seller was charged for both, 0.50 → 0.44 →
+   * 0.40, for work it was never given the chance to do. Trust decides who Ward hires
+   * next, so an outage on our side must not quietly demote every honest agent it
+   * touches.
+   */
+  test("a failure on Ward's side costs the counterparty nothing", () => {
+    const ours = { settled: false, rawResult: null, wardFault: true } as never;
+    expect(jobTrustDelta(ours, false)).toBe(0);
+  });
+
+  /** The flag must not become a way to launder a genuinely bad deliverable. */
+  test("wardFault does not excuse a counterparty that actually failed", () => {
+    expect(jobTrustDelta({ settled: false, rawResult: null } as never, false)).toBe(-0.3);
+    expect(jobTrustDelta({ settled: true, rawResult: null } as never, true)).toBe(-0.4);
+  });
 });
 
 describe("runAcpJob write-back", () => {

@@ -338,15 +338,22 @@ export class VirtualsAcpProvider implements AcpProvider {
                 );
               }
               funded = asked;
-              ({ pulledUsd } = await wallet.fundAgentFromUser(accountKey, asked));
-              const spender = (await wallet.connect(accountKey)).agentSpender;
-              if (spender.toLowerCase() !== buyerAddress.toLowerCase()) {
-                ({ txHash: fundingTx } = await wallet.transferUsdcFromSpender(
-                  buyerAddress,
-                  pulledUsd,
-                ));
-              }
-              await session.fund(); // draws `funded`, which the gate already capped at `budget`
+              // Everything below is Ward's own machinery — the Spend Permission pull,
+              // the forward, the on-chain reads that confirm them, escrow funding. The
+              // seller has done nothing but name a price we accepted, so a failure in
+              // here is ours and must not cost them trust. The two checks above stay
+              // outside the wrapper: those ARE the seller's doing.
+              await wardSide(async () => {
+                ({ pulledUsd } = await wallet.fundAgentFromUser(accountKey, asked));
+                const spender = (await wallet.connect(accountKey)).agentSpender;
+                if (spender.toLowerCase() !== buyerAddress.toLowerCase()) {
+                  ({ txHash: fundingTx } = await wallet.transferUsdcFromSpender(
+                    buyerAddress,
+                    pulledUsd,
+                  ));
+                }
+                await session.fund(); // draws `funded`, already capped at `budget`
+              });
             } else if (entry.event.type === "job.submitted") {
               // `JobSubmittedEvent.deliverable` is the counterparty's output, carried
               // on the event itself — NOT a `contentType: "deliverable"` message. An
@@ -385,6 +392,7 @@ export class VirtualsAcpProvider implements AcpProvider {
                 job,
                 err instanceof Error ? err.message : "job handler failed",
                 provider.walletAddress,
+                err instanceof WardSideError,
               ),
             );
             await agent.stop().catch(() => undefined);
@@ -615,7 +623,12 @@ function round6(usd: number): number {
  * named `agent://0x3bc3…0fff`. The failure has to land on the counterparty that
  * failed, or the memory that decides who to hire next learns nothing from it.
  */
-export function notSettled(job: AcpJobRequest, why: string, counterparty?: string): AcpJobResult {
+export function notSettled(
+  job: AcpJobRequest,
+  why: string,
+  counterparty?: string,
+  wardFault = false,
+): AcpJobResult {
   return {
     counterpartyId: counterparty ? `agent://${counterparty}` : "agent://unknown",
     jobType: job.jobType,
@@ -623,5 +636,31 @@ export function notSettled(job: AcpJobRequest, why: string, counterparty?: strin
     rawResult: null,
     settled: false,
     amountUsd: 0,
+    ...(wardFault ? { wardFault: true } : {}),
   };
+}
+
+/**
+ * Marks a failure as Ward's own, so it does not land on the counterparty's trust.
+ *
+ * A predicate over error text would be guesswork. Instead the funding block wraps
+ * itself: everything inside is Ward's wallet, Ward's RPC and Ward's config, so
+ * anything it throws is ours by construction — while the seller-priced-it-wrong
+ * checks stay outside and keep scoring against the seller.
+ */
+class WardSideError extends Error {
+  override readonly cause: unknown;
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "WardSideError";
+    this.cause = cause;
+  }
+}
+
+async function wardSide<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    throw error instanceof WardSideError ? error : new WardSideError(error);
+  }
 }

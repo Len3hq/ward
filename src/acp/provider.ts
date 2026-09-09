@@ -55,6 +55,20 @@ export interface AcpJobResult {
   /** true only when the job settled end-to-end. */
   settled: boolean;
   /**
+   * The job failed on WARD'S side — our RPC, our wallet, our config — not the
+   * counterparty's.
+   *
+   * Trust is the signal that decides who Ward hires next, so it may only move on
+   * evidence about the counterparty. Production, 2026-09-09: two hires failed on a
+   * rate-limited RPC and a mis-set `BASE_RPC_URL`, and the seller — which never got
+   * the chance to do anything — was charged -0.3 each time, 0.50 → 0.44 → 0.40. Left
+   * alone, an outage on Ward's side quietly demotes every honest agent it touches.
+   *
+   * Set only where Ward knows its own machinery threw; a counterparty that rejects,
+   * expires, times out or over-prices is still their fault and still scores.
+   */
+  wardFault?: boolean;
+  /**
    * The on-chain USDC movement this job caused, on Base.
    *
    * Escrow itself settles inside the SDK, which does not hand back a hash — what Ward
