@@ -327,6 +327,23 @@ export async function performSpend(request: SpendRequest): Promise<SpendOutcome>
     // USDC into the agent spender. The provider marks the errors where it has
     // accounted for the money, and those messages speak for themselves.
     const accounted = typeof error === "object" && error !== null && "moneyAccounted" in error;
+
+    // An unfunded (or short) wallet fails deep in the pull with "the USDC pull did
+    // not reach the agent wallet" or an ERC20 balance revert — accurate, and useless
+    // to the person who just needs to add money. Rewrite it to the fix. Only when the
+    // provider did NOT account for money: an accounted failure already moved funds,
+    // and "nothing was spent" would be a lie.
+    if (!accounted && /pull did not reach|transfer amount exceeds balance/i.test(message)) {
+      const wallet = await readWallet(userId).catch(() => null);
+      const where = wallet
+        ? ` Send USDC to \`${wallet.smart_account}\` on Base and try again.`
+        : "";
+      return {
+        ok: false,
+        message: `Your wallet doesn't have enough USDC for this — nothing was spent.${where}`,
+      };
+    }
+
     return {
       ok: false,
       message: `Execution failed: ${message}.${accounted ? "" : " Nothing was charged beyond gas."}`,

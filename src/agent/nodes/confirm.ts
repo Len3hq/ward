@@ -278,6 +278,29 @@ export async function confirmNode(
     return { messages: [new AIMessage(`Can't do that — ${gate.reason}`)] };
   }
 
+  // The gate checks caps and allowance, not what the wallet actually holds. For the
+  // two actions that pull USDC, an empty wallet otherwise gets a confirmation, a
+  // "yes", and an on-chain failure that names "the agent wallet". Catch it here so
+  // the answer is one instruction instead. A read failure falls through — execution
+  // still refuses, with the same message.
+  if ((action === "x402_data_purchase" || action === "acp_job") && wallet) {
+    const held = await provider
+      .balances(wallet.smart_account as `0x${string}`)
+      .then((b) => b.usdcUsd)
+      .catch(() => null);
+    if (held !== null && held < 0.01) {
+      return {
+        messages: [
+          new AIMessage(
+            `Your wallet has no USDC yet, so there's nothing to spend. Send USDC to ` +
+              `\`${wallet.smart_account}\` on ${provider.network()} and ask me again — that address ` +
+              `is what x402 data and ACP hires draw on.`,
+          ),
+        ],
+      };
+    }
+  }
+
   const memRemaining = Math.max(0, record.standing_caps.daily_limit_usd - spent);
   const onchainLine =
     onchainAllowanceUsd === null

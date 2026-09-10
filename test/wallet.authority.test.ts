@@ -105,15 +105,17 @@ describe("a question never executes the action it asks about", () => {
 });
 
 describe("granting a permission asks first", () => {
-  test("the prompt names the amount, the token, the spender and the gas cost", async () => {
+  test("the prompt names the amount, the token and the gas cost", async () => {
     const graph = await readyToGrant("g-ask");
 
     const prompt = await askAction(graph, "g-ask", "grant a $40 daily permission");
 
     expect(prompt).toContain("$40 USDC per day");
-    expect(prompt).toMatch(/costs gas/i);
-    expect(prompt).toMatch(/0x[0-9a-fA-F]{40}/); // the spender being authorised
+    expect(prompt).toMatch(/costs? (a little )?gas/i);
     expect(prompt).toMatch(/yes \/ no/i);
+    // The agent spender is a shared internal account — never surfaced to the user,
+    // who has no reason to see it and every reason to not send funds to it.
+    expect(prompt).not.toMatch(/0x[0-9a-fA-F]{40}/);
   });
 
   test("declining grants nothing and says so", async () => {

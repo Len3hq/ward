@@ -61,11 +61,21 @@ export async function balanceReport(userId: string): Promise<string> {
   ];
 
   const permission = wallet.spend_permission;
+  const permissionActive = permission !== null && permission.status === "active";
   lines.push(
-    permission === null || permission.status !== "active"
-      ? "Spend permission: none active — I can't move anything until you grant one."
-      : `Spend permission: active, $${permission.allowance_usd} USDC per ${permission.period_seconds / 86_400} day.`,
+    permissionActive
+      ? `Spend permission: active, $${permission!.allowance_usd} USDC per ${permission!.period_seconds / 86_400} day.`
+      : "Spend permission: none active — I can't move anything until you grant one.",
   );
+
+  // The permission is authority, not money. A funded permission over an empty wallet
+  // is the state a fresh setup lands in, and the on-chain failure it produces reads
+  // like a bug — so say the one thing that fixes it, right where the $0.00 is shown.
+  if (permissionActive && balances.usdcUsd < 0.01) {
+    lines.push(
+      `Send USDC to the address above on ${network} to start — x402 data and ACP hires spend from it.`,
+    );
+  }
 
   if (record !== null) {
     const cap = record.standing_caps.daily_limit_usd;

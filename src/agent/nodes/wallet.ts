@@ -51,9 +51,8 @@ export function isGasShortfall(error: unknown): boolean {
 
 function gasFundingHelp(smartAccount: string): string {
   return [
-    `${smartAccount} holds no ETH, and nothing is sponsoring its gas.`,
-    "Either send it a small amount of ETH on Base (a few cents covers many operations),",
-    "or set CDP_PAYMASTER_URL so CDP sponsors it and you only ever hold USDC.",
+    `\`${smartAccount}\` has no ETH for gas.`,
+    "Send it a little ETH on Base — under a dollar covers many transactions. (v2 will be gasless.)",
   ].join("\n");
 }
 
@@ -81,10 +80,9 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       messages: [
         new AIMessage(
           [
-            `Wallet generated on ${provider.network()}.`,
-            `Your smart account: ${wallet.smartAccount}`,
-            `Agent spender: ${wallet.agentSpender}`,
-            `Next: grant a spend permission — say "grant a $${record.standing_caps.daily_limit_usd} daily permission".`,
+            `Wallet generated on ${provider.network()}. Your address — the only one you fund or check:`,
+            `\`${wallet.smartAccount}\``,
+            `Next: send it a little ETH for gas — under a dollar is plenty, and v2 will be gasless — then say "grant a $${record.standing_caps.daily_limit_usd} daily permission".`,
           ].join("\n"),
         ),
       ],
@@ -116,12 +114,12 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
     const decision = interrupt({
       type: "confirm_action",
       action: "grant_permission",
-      summary: `Grant $${allowance} USDC per day to ${wallet.agent_spender}`,
+      summary: `Grant $${allowance} USDC/day of spend authority`,
       amount_usd: allowance,
       text: [
-        `Grant an on-chain spend permission: $${allowance} USDC per day, spender ${wallet.agent_spender}.`,
-        `This is a transaction on ${provider.network()} and costs gas.`,
-        `It lets me move up to that much USDC without asking again — x402 data and ACP hires draw on it.`,
+        `Grant an on-chain spend permission: up to $${allowance} USDC per day.`,
+        `This is a transaction on ${provider.network()} and costs a little gas (ETH).`,
+        `It lets me move up to that much of your USDC without asking again — x402 data and ACP hires draw on it.`,
         `Confirm? (yes / no)`,
       ].join("\n"),
     }) as { approved: boolean };
@@ -144,7 +142,7 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       return {
         messages: [
           new AIMessage(
-            `I couldn't grant the permission — the transaction has no gas.\n${gasFundingHelp(wallet.smart_account)}\nNothing was granted, so I still can't spend anything.`,
+            `I couldn't grant the permission — nothing happened.\n${gasFundingHelp(wallet.smart_account)}\nSend the ETH and ask me again.`,
           ),
         ],
       };
@@ -163,9 +161,13 @@ export async function walletNode(state: WardStateType): Promise<Partial<WardStat
       messages: [
         new AIMessage(
           [
-            `Granted an on-chain spend permission: $${permission.allowanceUsd} USDC per ${permission.periodSeconds / 86_400} day, spender ${wallet.agent_spender}.`,
+            `Granted an on-chain spend permission: $${permission.allowanceUsd} USDC per ${permission.periodSeconds / 86_400} day.`,
             permission.grantedTx ? `tx ${permission.grantedTx}` : "",
             `I now act within min(your $${record.standing_caps.daily_limit_usd} memory cap, this $${permission.allowanceUsd} on-chain allowance). Revoke on-chain any time.`,
+            "",
+            `Last step: fund the wallet with USDC. Send USDC on ${provider.network()} to`,
+            `\`${wallet.smart_account}\``,
+            "x402 data costs cents; an ACP hire runs under a dollar.",
           ]
             .filter(Boolean)
             .join("\n"),
